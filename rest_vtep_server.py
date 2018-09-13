@@ -4,7 +4,6 @@ from ryu.app.wsgi import Response
 from ryu.base import app_manager
 from ryu.exception import RyuException
 from ryu.lib.ovs import bridge as ovs_bridge
-from ryu.lib.ovs import vsctl
 from ryu.lib.packet.bgp import _RouteDistinguisher
 from ryu.lib.packet.bgp import EvpnNLRI
 from ryu.lib.stringify import StringifyMixin
@@ -66,7 +65,7 @@ def ssh_command(hostname, username, password, port, cmd):
     except (paramiko.BadHostKeyException, paramiko.AuthenticationException, paramiko.SSHException, socket.error) as e:
         err = e
     client.close()
-    return {'out': out, 'err': err}
+    return {'out': json.dumps(out), 'err': err}
 
 def to_int(i, base):
     return int(str(i), base)
@@ -199,6 +198,10 @@ class RestVtep(app_manager.RyuApp):
         self.cmd_dpid = 'ovs-vsctl get Bridge br-int datapath_id'
         self.cmd_lsp_add = 'ovn-nbctl lsp-add {} {}'
         self.cmd_lsp_del = 'ovn-nbctl lsp-del {} {}'
+        self.cmd_lsp_get = 'ovn-nbctl -f json get Logical_Switch_Port {} addresses {}'
+        self.cmd_lsp_set_addr = 'ovn-nbctl lsp-set-addresses {} {}'
+        self.cmd_lsp_set_sec = 'ovn-nbctl lsp-set-port-security {} {}'
+
     def _get_datapath(self):
         return ssh_command(
             hostname=self.speaker.datapath_addr,
@@ -337,11 +340,43 @@ class RestVtep(app_manager.RyuApp):
                               'vxlan_%s_%s' % (ev.nexthop, ev.path.nlri.vni))
             return
 
-        network.clients[ev.path.nlri.mac_addr] = EvpnClient(
-            port=vxlan_port,
-            mac=ev.path.nlri.mac_addr,
-            ip=ev.path.nlri.ip_addr,
-            next_hop=ev.nexthop)
+        # TODO update Logical VXLAN port
+        # Get addresses from Logical VXLAN port
+        cmd = self.cmd_lsp_get.format(vxlan_port)
+        # TODO check operation
+        res = ssh_command(
+            hostname=self.speaker.ovncentr_addr,
+            username=USER,
+            password=SECRET,
+            port=PORT_SSH,
+            cmd=cmd)
+        if res['err']:
+            return
+        addresses = list(res['out'])
+        address = ' '.join([ev.path.nlri.mac_addr, ev.path.nlri.ip_addr])
+        if address in addresses:
+            return
+        addresses.append(address)
+
+        # Set addresses on Logical VXLAN port
+        cmd = self.cmd_lsp_set_addr.format(vxlan_port, *addresses)
+        # TODO check operation
+        ssh_command(
+            hostname=self.speaker.ovncentr_addr,
+            username=USER,
+            password=SECRET,
+            port=PORT_SSH,
+            cmd=cmd)
+
+        # Set security on Logical VXLAN port
+        cmd = self.cmd_lsp_set_sec.format(vxlan_port, *addresses)
+        # TODO check operation
+        ssh_command(
+            hostname=self.speaker.ovncentr_addr,
+            username=USER,
+            password=SECRET,
+            port=PORT_SSH,
+            cmd=cmd)
 
     def _evpn_incl_mcast_etag_route_handler(self, ev):
         # Note: For the VLAN Based service, we use RT(=RD) assigned
@@ -382,6 +417,52 @@ class RestVtep(app_manager.RyuApp):
         if datapath['err']:
             self.logger.debug(datapath['err'])
             return
+
+        vxlan_port = self._add_vxlan_port(
+            remote_ip=ev.nexthop,
+            key=ev.path.nlri.vni)
+        if vxlan_port is None:
+            self.logger.debug('there is no VXLAN port: %s',
+                              'vxlan_%s_%s' % (ev.nexthop, ev.path.nlri.vni))
+            return
+
+        # TODO update Logical VXLAN port
+        # Get addresses from Logical VXLAN port
+        cmd = self.cmd_lsp_get.format(vxlan_port)
+        # TODO check operation
+        res = ssh_command(
+            hostname=self.speaker.ovncentr_addr,
+            username=USER,
+            password=SECRET,
+            port=PORT_SSH,
+            cmd=cmd)
+        if res['err']:
+            return
+        addresses = list(res['out'])
+        address = ' '.join([ev.path.nlri.mac_addr, ev.path.nlri.ip_addr])
+        if address not in addresses:
+            return
+        addresses.remove(address)
+
+        # Set addresses on Logical VXLAN port
+        cmd = self.cmd_lsp_set_addr.format(vxlan_port, *addresses)
+        # TODO check operation
+        ssh_command(
+            hostname=self.speaker.ovncentr_addr,
+            username=USER,
+            password=SECRET,
+            port=PORT_SSH,
+            cmd=cmd)
+
+        # Set security on Logical VXLAN port
+        cmd = self.cmd_lsp_set_sec.format(vxlan_port, *addresses)
+        # TODO check operation
+        ssh_command(
+            hostname=self.speaker.ovncentr_addr,
+            username=USER,
+            password=SECRET,
+            port=PORT_SSH,
+            cmd=cmd)
 
         client = network.clients.get(ev.path.nlri.mac_addr, None)
         if client is None:
