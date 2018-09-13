@@ -213,13 +213,11 @@ class RestVtepController(ControllerBase):
             ========== ============================================
             datapath_addr   IP address of OVSDB server on node. (e.g. "172.17.0.2")
             ovncentr_addr   IP address of OVN Northbound  DB server. (e.g. "172.17.0.2")
-            dpid       ID of Datapath binding to speaker. (e.g. 1)
             as_number  AS number. (e.g. 65000)
             router_id  Router ID. (e.g. "172.17.0.1")
             ========== ============================================
         Example::
             $ curl -X POST -d '{
-             "dpid": 1,
              "as_number": 65000,
              "router_id": "172.17.0.1"
              }' http://localhost:8080/vtep/speakers | python -m json.tool
@@ -228,7 +226,6 @@ class RestVtepController(ControllerBase):
                 "172.17.0.1": {
                     "EvpnSpeaker": {
                         "as_number": 65000,
-                        "dpid": 1,
                         "neighbors": {},
                         "router_id": "172.17.0.1"
                     }
@@ -305,7 +302,6 @@ class RestVtepController(ControllerBase):
                 "172.17.0.1": {
                     "EvpnSpeaker": {
                         "as_number": 65000,
-                        "dpid": 1,
                         "neighbors": {},
                         "router_id": "172.17.0.1"
                     }
