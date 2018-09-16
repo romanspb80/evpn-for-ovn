@@ -35,16 +35,13 @@ https://docs.openstack.org/nova/latest/reference/rpc.html
 https://docs.openstack.org/oslo.messaging/latest/index.html
 
 ## Usage Example and the sequence of actions
-1. From the Cloud Manager App:
-- Send post-requests to Neutron:
-  - Create network (openstack network create <net_1>)
-  - Create subnet (openstack subnet create <net_1> <net_1_subnet_a>)
-  - Create port (openstack port create --network <net_1> <port_1>)
-2. From the Cloud Manager App (send post-requests to rest_vtep_client) and the External system:
-  - Create a BGPSpeaker
-  - Register the neighbors
-  - Define VXLAN network (for rest_vtep_client: VNI and Neutron network_id)
-3. From the Cloud Manager App (send post-requests to rest_vtep_client) and the External system:
-  - Add client
+The main VTEP configuration steps are described in RYU doc:
+https://ryu.readthedocs.io/en/latest/app/rest_vtep.html
+There are some differences in REST API for rest_vtep_client.py. The descriptions are in docstring.
 
-## Installation
+## Enviroment installation
+1. DevStack with OVN installation
+https://docs.openstack.org/networking-ovn/latest/contributor/testing.html
+
+2. RYU installation
+https://ryu.readthedocs.io/en/latest/getting_started.html
