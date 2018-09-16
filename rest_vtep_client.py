@@ -10,6 +10,12 @@ from ryu.exception import RyuException
 from oslo_config import cfg
 import oslo_messaging as om
 
+
+# Settings for RabbitMQ Server connection (DEVSTACK)
+RABBITMQ_SERVER = '192.168.123.231'
+RABBIT_USER = 'stackrabbit'
+RABBIT_PASSWORD='password'
+
 API_NAME = 'restvtep'
 
 OVSDB_PORT = 6640  # The IANA registered port for OVSDB [RFC7047]
@@ -23,8 +29,8 @@ TABLE_ID_EGRESS = 1
 
 # Utility functions
 
-def to_int(i, base):
-    return int(str(i), base)
+def to_int(i):
+    return int(str(i), 0)
 
 
 def to_str_list(l):
@@ -176,7 +182,8 @@ class RestVtepController(ControllerBase):
         #Invoke "get_transport". This call will set default Configurations required to Create Messaging Transport
         self.transport = om.get_transport(cfg.CONF)
 
-        cfg.CONF.set_override('transport_url', 'rabbit://guest:cloud@192.168.123.13:5672//')
+        cfg.CONF.set_override(
+            'transport_url', 'rabbit://{}:{}@{}:5672//'.format(RABBIT_USER, RABBIT_PASSWORD, RABBITMQ_SERVER))
 
         #Create Messaging Transport
         self.transport = om.get_transport(cfg.CONF)
@@ -195,8 +202,6 @@ class RestVtepController(ControllerBase):
         keywords={
             "as_number": to_int,
             "router_id": str,
-            "datapath_addr": str,
-            "ovncentr_addr": str
         })
     def add_speaker(self, **kwargs):
         """
@@ -211,8 +216,6 @@ class RestVtepController(ControllerBase):
             ========== ============================================
             Attribute  Description
             ========== ============================================
-            datapath_addr   IP address of OVSDB server on node. (e.g. "172.17.0.2")
-            ovncentr_addr   IP address of OVN Northbound  DB server. (e.g. "172.17.0.2")
             as_number  AS number. (e.g. 65000)
             router_id  Router ID. (e.g. "172.17.0.1")
             ========== ============================================
@@ -485,6 +488,7 @@ class RestVtepController(ControllerBase):
     @post_method(
         keywords={
             "vni": to_int,
+            "network_id": str,
         })
     def add_network(self, **kwargs):
         """
