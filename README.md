@@ -47,3 +47,7 @@ https://docs.openstack.org/networking-ovn/latest/contributor/testing.html
 
 2. RYU installation
 https://ryu.readthedocs.io/en/latest/getting_started.html
+
+# Further development
+1. Use Docker for RYU applications.
+2. Developing a plugin for OpenStack
