@@ -23,23 +23,20 @@ import eventlet
 eventlet.monkey_patch()
 
 
-##Invoke "get_transport". This call will set default Configurations required to Create Messaging Transport
-transport = om.get_transport(cfg.CONF)
-
-##Set/Override Configurations required to Create Messaging Transport
-cfg.CONF.set_override('transport_url', 'rabbit://guest:cloud@192.168.123.13:5672//')
-
-##Create Messaging Transport
-transport = om.get_transport(cfg.CONF)
-
-##Create Target (Exchange, Topic and Server to listen on)
-target = om.Target(topic='ovn_bus', server='192.168.123.13')
-
-DATAPATH_ADDRESS = '192.168.123.231'
-#Settings for SSH connection to DEVSTACK
+# Settings for SSH connection to host with Neutron (DEVSTACK)
 USER = 'root'
-SECRET = 'password'
+PASSWORD = 'password'
 PORT_SSH = 22
+
+# Network Node IP address (OVS bridge)
+DATAPATH_ADDR = '192.168.123.231'
+# Neutron Server (OVN Central) IP address
+OVNCENTR_ADDR = '192.168.123.231'
+
+# Settings for RabbitMQ Server connection (DEVSTACK)
+RABBITMQ_SERVER = '192.168.123.231'
+RABBIT_USER = 'stackrabbit'
+RABBIT_PASSWORD='password'
 
 API_NAME = 'restvtep'
 
@@ -51,6 +48,19 @@ PRIORITY_ARP_REPLAY = 2
 TABLE_ID_INGRESS = 0
 TABLE_ID_EGRESS = 1
 
+# Invoke "get_transport". This call will set default Configurations required to Create Messaging Transport
+transport = om.get_transport(cfg.CONF)
+
+# Set/Override Configurations required to Create Messaging Transport
+cfg.CONF.set_override(
+    'transport_url', 'rabbit://{}:{}@{}:5672//'.format(RABBIT_USER, RABBIT_PASSWORD, RABBITMQ_SERVER))
+
+# Create Messaging Transport
+transport = om.get_transport(cfg.CONF)
+
+# Create Target (Exchange, Topic and Server to listen on)
+target = om.Target(topic='ovn_bus', server=RABBITMQ_SERVER)
+
 # Utility functions
 
 def ssh_command(hostname, username, password, port, cmd):
@@ -60,12 +70,26 @@ def ssh_command(hostname, username, password, port, cmd):
     try:
         client.connect(hostname=hostname, username=username, password=password, port=port)
         stdin, stdout, stderr = client.exec_command(cmd)
-        out = stdout.read().decode('ascii').strip("\n")
-        err = stderr.read().decode('ascii').strip("\n")
+        out = stdout.read().decode('ascii').strip('"\n')
+        err = stderr.read().decode('ascii').strip('"\n')
     except (paramiko.BadHostKeyException, paramiko.AuthenticationException, paramiko.SSHException, socket.error) as e:
         err = e
     client.close()
-    return {'out': json.dumps(out), 'err': err}
+    return {'out': out, 'err': err}
+
+def ssh_command_json(hostname, username, password, port, cmd):
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    out, err = (None, None)
+    try:
+        client.connect(hostname=hostname, username=username, password=password, port=port)
+        stdin, stdout, stderr = client.exec_command(cmd)
+        out = json.loads(stdout.read())
+        err = stderr.read().decode('ascii').strip('"\n')
+    except (paramiko.BadHostKeyException, paramiko.AuthenticationException, paramiko.SSHException, socket.error) as e:
+        err = e
+    client.close()
+    return {'out': out, 'err': err}
 
 def to_int(i, base):
     return int(str(i), base)
@@ -92,9 +116,7 @@ class EvpnSpeaker(BGPSpeaker, StringifyMixin):
         ],
     }
 
-    def __init__(self, dpid, datapath_addr,
-                 ovncentr_addr,
-                 as_number, router_id,
+    def __init__(self, dpid, as_number, router_id,
                  best_path_change_handler,
                  peer_down_handler, peer_up_handler,
                  neighbors=None):
@@ -107,8 +129,6 @@ class EvpnSpeaker(BGPSpeaker, StringifyMixin):
             ssh_console=True)
 
         self.dpid = dpid
-        self.datapath_addr = datapath_addr
-        self.ovncentr_addr = ovncentr_addr
         self.as_number = as_number
         self.router_id = router_id
         self.neighbors = neighbors or {}
@@ -133,6 +153,7 @@ class EvpnNetwork(StringifyMixin):
     _TYPE = {
         'ascii': [
             'route_dist',
+            'logical_switch',
         ],
     }
 
@@ -160,7 +181,8 @@ class EvpnClient(StringifyMixin):
         'ascii': [
             'mac',
             'ip',
-            'next_hop'
+            'next_hop',
+            'port',
         ],
     }
 
@@ -198,19 +220,29 @@ class RestVtep(app_manager.RyuApp):
         self.cmd_dpid = 'ovs-vsctl get Bridge br-int datapath_id'
         self.cmd_lsp_add = 'ovn-nbctl lsp-add {} {}'
         self.cmd_lsp_del = 'ovn-nbctl lsp-del {} {}'
-        self.cmd_lsp_get = 'ovn-nbctl -f json get Logical_Switch_Port {} addresses {}'
-        self.cmd_lsp_set_addr = 'ovn-nbctl lsp-set-addresses {} {}'
-        self.cmd_lsp_set_sec = 'ovn-nbctl lsp-set-port-security {} {}'
+        self.cmd_lsp_get = 'ovn-nbctl -f json get Logical_Switch_Port {} addresses'
+        self.cmd_lsp_set_addr = 'ovn-nbctl lsp-set-addresses {}'
+        self.cmd_lsp_set_sec = 'ovn-nbctl lsp-set-port-security {}'
+        self.cmd_set_manager_ovsdb = 'ovs-vsctl set-manager ptcp:{}'
 
     def _get_datapath(self):
         return ssh_command(
-            hostname=self.speaker.datapath_addr,
+            hostname=DATAPATH_ADDR,
             username=USER,
-            password=SECRET,
+            password=PASSWORD,
             port=PORT_SSH,
             cmd=self.cmd_dpid)
 
     # Utility methods related to OVSDB
+
+    # Set manager-ovsdb
+    def _set_manager_ovsdb(self):
+        return ssh_command(
+            hostname=DATAPATH_ADDR,
+            username=USER,
+            password=PASSWORD,
+            port=PORT_SSH,
+            cmd=self.cmd_set_manager_ovsdb.format(OVSDB_PORT))
 
     def _get_ovs_bridge(self):
         datapath = self._get_datapath()
@@ -219,7 +251,7 @@ class RestVtep(app_manager.RyuApp):
             return None
         dpid = to_int(datapath['out'], 16)
 
-        ovsdb_addr = 'tcp:%s:%d' % (self.speaker.datapath_addr, OVSDB_PORT)
+        ovsdb_addr = 'tcp:%s:%d' % (DATAPATH_ADDR, OVSDB_PORT)
         if (self.ovs is not None
                 and self.ovs.datapath_id == dpid
                 and self.ovs.vsctl.remote == ovsdb_addr):
@@ -272,9 +304,9 @@ class RestVtep(app_manager.RyuApp):
         )
         # TODO check operation
         ssh_command(
-            hostname=self.speaker.ovncentr_addr,
+            hostname=OVNCENTR_ADDR,
             username=USER,
-            password=SECRET,
+            password=PASSWORD,
             port=PORT_SSH,
             cmd=cmd)
 
@@ -306,9 +338,9 @@ class RestVtep(app_manager.RyuApp):
         )
         # TODO check operation
         ssh_command(
-            hostname=self.speaker.ovncentr_addr,
+            hostname=OVNCENTR_ADDR,
             username=USER,
-            password=SECRET,
+            password=PASSWORD,
             port=PORT_SSH,
             cmd=cmd)
 
@@ -344,27 +376,30 @@ class RestVtep(app_manager.RyuApp):
         # Get addresses from Logical VXLAN port
         cmd = self.cmd_lsp_get.format(vxlan_port)
         # TODO check operation
-        res = ssh_command(
-            hostname=self.speaker.ovncentr_addr,
+        res = ssh_command_json(
+            hostname=OVNCENTR_ADDR,
             username=USER,
-            password=SECRET,
+            password=PASSWORD,
             port=PORT_SSH,
             cmd=cmd)
+
         if res['err']:
             return
-        addresses = list(res['out'])
+        addresses = res['out']
         address = ' '.join([ev.path.nlri.mac_addr, ev.path.nlri.ip_addr])
         if address in addresses:
             return
         addresses.append(address)
 
         # Set addresses on Logical VXLAN port
-        cmd = self.cmd_lsp_set_addr.format(vxlan_port, *addresses)
+        cmd = self.cmd_lsp_set_addr.format(vxlan_port)
+        for address in addresses:
+            cmd += ' "' + address + '"'
         # TODO check operation
-        ssh_command(
-            hostname=self.speaker.ovncentr_addr,
+        res = ssh_command(
+            hostname=OVNCENTR_ADDR,
             username=USER,
-            password=SECRET,
+            password=PASSWORD,
             port=PORT_SSH,
             cmd=cmd)
 
@@ -372,9 +407,9 @@ class RestVtep(app_manager.RyuApp):
         cmd = self.cmd_lsp_set_sec.format(vxlan_port, *addresses)
         # TODO check operation
         ssh_command(
-            hostname=self.speaker.ovncentr_addr,
+            hostname=OVNCENTR_ADDR,
             username=USER,
-            password=SECRET,
+            password=PASSWORD,
             port=PORT_SSH,
             cmd=cmd)
 
@@ -431,9 +466,9 @@ class RestVtep(app_manager.RyuApp):
         cmd = self.cmd_lsp_get.format(vxlan_port)
         # TODO check operation
         res = ssh_command(
-            hostname=self.speaker.ovncentr_addr,
+            hostname=OVNCENTR_ADDR,
             username=USER,
-            password=SECRET,
+            password=PASSWORD,
             port=PORT_SSH,
             cmd=cmd)
         if res['err']:
@@ -448,9 +483,9 @@ class RestVtep(app_manager.RyuApp):
         cmd = self.cmd_lsp_set_addr.format(vxlan_port, *addresses)
         # TODO check operation
         ssh_command(
-            hostname=self.speaker.ovncentr_addr,
+            hostname=OVNCENTR_ADDR,
             username=USER,
-            password=SECRET,
+            password=PASSWORD,
             port=PORT_SSH,
             cmd=cmd)
 
@@ -458,9 +493,9 @@ class RestVtep(app_manager.RyuApp):
         cmd = self.cmd_lsp_set_sec.format(vxlan_port, *addresses)
         # TODO check operation
         ssh_command(
-            hostname=self.speaker.ovncentr_addr,
+            hostname=OVNCENTR_ADDR,
             username=USER,
-            password=SECRET,
+            password=PASSWORD,
             port=PORT_SSH,
             cmd=cmd)
 
@@ -546,20 +581,20 @@ class RestVtep(app_manager.RyuApp):
     def add_speaker(self, ctx, arg):
         as_number = arg['as_number']
         router_id = arg['router_id']
-        datapath_addr = arg['datapath_addr']
-        ovncentr_addr = arg['ovncentr_addr']
         datapath = self._get_datapath()
         # Check the datapath 'br-int'
         if datapath['err']:
             self.logger.debug(datapath['err'])
-            if datapath['out'] is None:
-                return {'DatapathNotFound': dict(datapath='br-int')}
+            # TODO return exception
+        if datapath['out'] is 'null':
+            return {'DatapathNotFound': dict(datapath='br-int')}
         dpid = to_int(datapath['out'], 16)
+
+        # TODO check exception
+        self._set_manager_ovsdb()
 
         self.speaker = EvpnSpeaker(
             dpid=dpid,
-            datapath_addr=datapath_addr,
-            ovncentr_addr=ovncentr_addr,
             as_number=as_number,
             router_id=str(router_id),
             best_path_change_handler=self._best_path_change_handler,
@@ -593,6 +628,8 @@ class RestVtep(app_manager.RyuApp):
         return {speaker.router_id: speaker.to_jsondict()}
 
     def add_neighbor(self, ctx, arg):
+        self.logger.debug(arg)
+        self.logger.debug(type(arg))
         address = str(arg['address'])
         remote_as = arg['remote_as']
         if self.speaker is None:
@@ -611,7 +648,7 @@ class RestVtep(app_manager.RyuApp):
         return {address: neighbor.to_jsondict()}
 
     def get_neighbors(self, ctx, arg):
-        address = arg.get['address']
+        address = arg.get('address')
         if self.speaker is None:
             return {'BGPSpeakerNotFound': dict(address='')}
 
@@ -678,6 +715,7 @@ class RestVtep(app_manager.RyuApp):
             logical_switch=logical_switch,
             route_dist=route_dist,
             ethernet_tag_id=0)
+
         self.networks[vni] = network
 
         return {vni: network.to_jsondict()}
@@ -739,10 +777,10 @@ class RestVtep(app_manager.RyuApp):
         return {vni: network.to_jsondict()}
 
     def add_client(self, ctx, arg):
-        vni = arg.get['vni']
-        port = arg.get['port']
-        mac = arg.get['mac']
-        ip = arg.get['ip']
+        vni = arg.get('vni')
+        port = str(arg.get('port'))
+        mac = str(arg.get('mac'))
+        ip = str(arg.get('ip'))
         if self.speaker is None:
             return {'BGPSpeakerNotFound': dict(address='')}
 
@@ -777,6 +815,8 @@ class RestVtep(app_manager.RyuApp):
             ip=ip,
             next_hop=self.speaker.router_id)
         network.clients[mac] = client
+
+        self.logger.debug(client)
 
         return {vni: client.to_jsondict()}
 
