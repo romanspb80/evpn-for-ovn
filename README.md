@@ -36,7 +36,9 @@ https://docs.openstack.org/oslo.messaging/latest/index.html
 
 ## Usage Example and the sequence of actions
 The main VTEP configuration steps are described in RYU doc:
+
 https://ryu.readthedocs.io/en/latest/app/rest_vtep.html
+
 There are some differences in REST API for rest_vtep_client.py. The descriptions are in docstring.
 
 ## Enviroment installation
