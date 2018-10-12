@@ -1,0 +1,23 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  # The most common configuration options are documented and commented below.
+  # For a complete reference, please see the online documentation at
+  # https://docs.vagrantup.com.
+  config.vm.define "devstack" do |devstack|
+    devstack.vm.box = "peru/ubuntu-16.04-server-amd64"
+    devstack.vm.synced_folder "synced_folders/", "/home/vagrant"
+    devstack.vm.network "private_network", ip: "192.168.123.10"
+    devstack.vm.hostname = "devstack-ovn"
+    devstack.vm.provision "shell", inline: "./install_git.sh"
+    devstack.vm.provision "shell", inline: "./install_devstack.sh"
+    devstack.vm.provider "libvirt" do |libvirt|
+      libvirt.memory = "4096"
+      libvirt.cpus = 1
+      libvirt.nested = true
+      libvirt.volume_cache = 'none'
+    end
+  end
+
+end
