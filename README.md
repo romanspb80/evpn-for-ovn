@@ -42,10 +42,12 @@ https://ryu.readthedocs.io/en/latest/app/rest_vtep.html
 There are some differences in REST API for rest_vtep_client.py. The descriptions are in docstring.
 
 ## Enviroment installation
-1. DevStack with OVN installation
-https://docs.openstack.org/networking-ovn/latest/contributor/testing.html
 
-2. RYU installation
+cd ./evpn-for-ovn/vagrant/
+vagrant up
+
+See installation details for DevStack with OVN and RYU:
+https://docs.openstack.org/networking-ovn/latest/contributor/testing.html
 https://ryu.readthedocs.io/en/latest/getting_started.html
 
 # Further development
