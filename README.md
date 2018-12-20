@@ -46,7 +46,9 @@ There are some differences in REST API for rest_vtep_client.py. The descriptions
 cd ./evpn-for-ovn/vagrant/
 vagrant up
 
+
 See installation details for DevStack with OVN and RYU:
+
 https://docs.openstack.org/networking-ovn/latest/contributor/testing.html
 https://ryu.readthedocs.io/en/latest/getting_started.html
 
