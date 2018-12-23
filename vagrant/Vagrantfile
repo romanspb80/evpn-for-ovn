@@ -12,6 +12,7 @@ Vagrant.configure("2") do |config|
     devstack.vm.network "private_network", ip: "192.168.123.10"
     devstack.vm.hostname = "devstack-ovn"
     devstack.vm.provision "shell", inline: "./install_devstack.sh"
+    devstack.vm.provision "shell", inline: "./install_ryu.sh"
     devstack.vm.provider "libvirt" do |libvirt|
       libvirt.memory = "8192"
       libvirt.cpus = 2
