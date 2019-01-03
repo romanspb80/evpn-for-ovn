@@ -12,7 +12,7 @@ import oslo_messaging as om
 
 
 # Settings for RabbitMQ Server connection (DEVSTACK)
-RABBITMQ_SERVER = '192.168.123.231'
+RABBITMQ_SERVER = '192.168.123.140'
 RABBIT_USER = 'stackrabbit'
 RABBIT_PASSWORD='password'
 

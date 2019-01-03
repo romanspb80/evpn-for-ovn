@@ -29,12 +29,12 @@ PASSWORD = 'password'
 PORT_SSH = 22
 
 # Network Node IP address (OVS bridge)
-DATAPATH_ADDR = '192.168.123.231'
+DATAPATH_ADDR = '192.168.123.140'
 # Neutron Server (OVN Central) IP address
-OVNCENTR_ADDR = '192.168.123.231'
+OVNCENTR_ADDR = '192.168.123.140'
 
 # Settings for RabbitMQ Server connection (DEVSTACK)
-RABBITMQ_SERVER = '192.168.123.231'
+RABBITMQ_SERVER = '192.168.123.140'
 RABBIT_USER = 'stackrabbit'
 RABBIT_PASSWORD='password'
 
