@@ -38,15 +38,9 @@ RABBITMQ_SERVER = '192.168.123.140'
 RABBIT_USER = 'stackrabbit'
 RABBIT_PASSWORD='password'
 
-API_NAME = 'restvtep'
 
 OVSDB_PORT = 6640  # The IANA registered port for OVSDB [RFC7047]
 
-PRIORITY_D_PLANE = 1
-PRIORITY_ARP_REPLAY = 2
-
-TABLE_ID_INGRESS = 0
-TABLE_ID_EGRESS = 1
 
 # Invoke "get_transport". This call will set default Configurations required to Create Messaging Transport
 transport = om.get_transport(cfg.CONF)
@@ -473,7 +467,7 @@ class RestVtep(app_manager.RyuApp):
             cmd=cmd)
         if res['err']:
             return
-        addresses = list(res['out'])
+        addresses = json.loads(res['out'])
         address = ' '.join([ev.path.nlri.mac_addr, ev.path.nlri.ip_addr])
         if address not in addresses:
             return

@@ -18,14 +18,6 @@ RABBIT_PASSWORD='password'
 
 API_NAME = 'restvtep'
 
-OVSDB_PORT = 6640  # The IANA registered port for OVSDB [RFC7047]
-
-PRIORITY_D_PLANE = 1
-PRIORITY_ARP_REPLAY = 2
-
-TABLE_ID_INGRESS = 0
-TABLE_ID_EGRESS = 1
-
 
 # Utility functions
 
@@ -743,7 +735,7 @@ class RestVtepController(ControllerBase):
         })
     def del_client(self, **kwargs):
         """
-        Registers a new client to the specified network.
+        Delete the client (with specified mac-address) from the specified network.
         Usage:
             ======= ===================================
             Method  URI
