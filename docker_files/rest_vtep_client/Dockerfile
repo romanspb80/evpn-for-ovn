@@ -1,6 +1,7 @@
 FROM osrg/ryu:latest
-COPY rest_vtep_client.py /root/ryu/ryu/app/rest_vtep_client.py
-COPY ryu-ovn_client.py /root/ryu/ryu/app/ryu-ovn_client.py
+WORKDIR /root/ryu/ryu/app
+COPY rest_vtep_client.py .
+COPY rest_vtep_client.sh .
 RUN pip install oslo.messaging 
-ENTRYPOINT ["python", "/root/ryu/ryu/app/ryu-ovn_client.py"]
+ENTRYPOINT /root/ryu/ryu/app/rest_vtep_client.sh
 
