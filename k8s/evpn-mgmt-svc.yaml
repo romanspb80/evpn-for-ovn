@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: evpn-mgmt-svc
+spec:
+  ports:
+  - port: 8081
+    targetPort: http
+  selector:
+    app: evpn-api

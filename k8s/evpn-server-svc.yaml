@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: evpn-server-svc
+spec:
+  type: NodePort
+  ports:
+  - port: 179
+    targetPort: bgp
+    nodePort: 179
+  selector:
+    app: evpn-server
