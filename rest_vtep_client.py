@@ -7,14 +7,11 @@ from ryu.app.wsgi import WSGIApplication
 from ryu.base import app_manager
 from ryu.exception import RyuException
 
+from app_settings import RABBITMQ_SERVER, RABBIT_USER, RABBIT_PASSWORD
+
 from oslo_config import cfg
 import oslo_messaging as om
 
-
-# Settings for RabbitMQ Server connection (DEVSTACK)
-RABBITMQ_SERVER = '192.168.123.140'
-RABBIT_USER = 'stackrabbit'
-RABBIT_PASSWORD='password'
 
 API_NAME = 'restvtep'
 

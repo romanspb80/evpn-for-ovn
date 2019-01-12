@@ -16,28 +16,14 @@ from ryu.services.protocols.bgp.info_base.evpn import EvpnPath
 import paramiko
 import socket
 
+from app_settings import USER, PASSWORD, PORT_SSH, DATAPATH_ADDR, OVNCENTR_ADDR, RABBITMQ_SERVER, RABBIT_USER, \
+    RABBIT_PASSWORD
+
 from oslo_config import cfg
 import oslo_messaging as om
 import time
 import eventlet
 eventlet.monkey_patch()
-
-
-# Settings for SSH connection to host with Neutron (DEVSTACK)
-USER = 'root'
-PASSWORD = 'password'
-PORT_SSH = 22
-
-# Network Node IP address (OVS bridge)
-DATAPATH_ADDR = '192.168.123.140'
-# Neutron Server (OVN Central) IP address
-OVNCENTR_ADDR = '192.168.123.140'
-
-# Settings for RabbitMQ Server connection (DEVSTACK)
-RABBITMQ_SERVER = '192.168.123.140'
-RABBIT_USER = 'stackrabbit'
-RABBIT_PASSWORD='password'
-
 
 OVSDB_PORT = 6640  # The IANA registered port for OVSDB [RFC7047]
 

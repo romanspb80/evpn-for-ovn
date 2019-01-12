@@ -1,6 +1,6 @@
 FROM osrg/ryu:latest
 WORKDIR /root/ryu/ryu/app
-COPY rest_vtep_server.py .
+COPY ../../rest_vtep_server.py .
 RUN pip install eventlet
 RUN pip install paramiko
 RUN pip install oslo.messaging 
