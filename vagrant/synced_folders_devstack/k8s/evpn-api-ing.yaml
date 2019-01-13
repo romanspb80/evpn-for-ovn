@@ -1,13 +1,13 @@
 apiVersion: extensions/v1beta1
 kind: Ingress
 metadata:
-  name: evpn-mgmt-ing
+  name: evpn-api-ing
 spec:
   rules:
-  - host: evpn-mgmt.domain-x.com
+  - host: evpn-api.domain-x.com
     http:
       paths:
       - path: /
         backend:
-          serviceName: evpn-mgmt-svc
+          serviceName: evpn-api-svc
           servicePort: 8081

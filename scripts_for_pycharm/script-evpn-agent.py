@@ -9,7 +9,7 @@ from ryu.cmd import manager
 def main():
     sys.argv.append('--ofp-tcp-listen-port')
     sys.argv.append('6633')
-    sys.argv.append('rest_vtep_client.py')
+    sys.argv.append('evpn-agent.py')
     sys.argv.append('--verbose')
     sys.argv.append('--enable-debugger')
     manager.main()

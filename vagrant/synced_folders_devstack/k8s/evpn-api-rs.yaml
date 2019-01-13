@@ -1,7 +1,7 @@
 apiVersion: apps/v1beta2
 kind: ReplicaSet
 metadata:
-  name: evpn-mgmt-rs
+  name: evpn-api-rs
 spec:
   replicas: 1
   selector:
@@ -14,7 +14,15 @@ spec:
     spec:
       containers:
       - name: evpn-api
-        image: 28041980/rest_vtep_client
+        image: 28041980/evpn-api
+        volumeMounts:
+        - name: app-settings
+          mountPath: ~/ryu/ryu/app/app-settings.py
+          subPath: app-settings.py
         ports:
         - name: http
           containerPort: 8080
+      volumes:
+      - name: app-settings
+        configMap:
+          name: app-settings

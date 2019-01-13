@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: evpn-mgmt-svc
+  name: evpn-api-svc
 spec:
   ports:
   - port: 8081
