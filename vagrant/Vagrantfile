@@ -8,9 +8,8 @@ Vagrant.configure("2") do |config|
 
   config.vm.define "devstack" do |devstack|
     devstack.vm.box = "peru/ubuntu-16.04-server-amd64"
-    devstack.env.enable
     devstack.vm.synced_folder "synced_folders_devstack/", "/home/vagrant"
-    devstack.vm.network "private_network", ip: ENV["DATAPATH_ADDR"]
+    devstack.vm.network "private_network", ip: "192.168.10.100"
     devstack.vm.hostname = "devstack-ovn"
     devstack.vm.provision "shell", inline: "./install_devstack.sh"
     devstack.vm.provision "shell", inline: "cp ./rabbitmq.config /etc/rabbitmq/ && systemctl restart rabbitmq-server"
@@ -25,9 +24,8 @@ Vagrant.configure("2") do |config|
   
   config.vm.define "ryu" do |ryu|
     ryu.vm.box = "peru/ubuntu-16.04-server-amd64"
-    ryu.env.enable
     ryu.vm.synced_folder "synced_folders_ryu/", "/home/vagrant"
-    ryu.vm.network "private_network", ip: ENV["RYU_ADDR"]
+    ryu.vm.network "private_network", ip: "192.168.10.10"
     ryu.vm.hostname = "ryu"
     ryu.vm.provision "shell", inline: "./install_mn.sh"
     ryu.vm.provision "shell", inline: "./install_ryu.sh"

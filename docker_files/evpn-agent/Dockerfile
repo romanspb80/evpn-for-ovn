@@ -5,4 +5,4 @@ RUN pip install eventlet
 RUN pip install paramiko
 RUN pip install oslo.messaging 
 ENTRYPOINT ["python", "/root/ryu/bin/ryu-manager"]
-CMD ["--verbose", "/root/ryu/ryu/app/rest_vtep_server.py"]
+CMD ["--verbose", "/root/ryu/ryu/app/evpn-agent.py"]
