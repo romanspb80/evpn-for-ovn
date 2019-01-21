@@ -2,11 +2,12 @@
 
 sudo systemctl disable firewalld && sudo systemctl stop firewalld
 sudo apt install -y docker.io
+sudo apt install snapd
 sudo snap install microk8s --classic
 cd ./k8s
-microk8s.kubectl create -f evpn-api-ing.yaml
-microk8s.kubectl create -f evpn-api-rs.yaml
-microk8s.kubectl create -f evpn-api-svc.yaml
-microk8s.kubectl create -f evpn-agent-rs.yaml
-microk8s.kubectl create -f evpn-agent-svc.yaml
-microk8s.kubectl create configmap app-settings --from-file=settings
+sudo microk8s.kubectl create -f evpn-api-ing.yaml
+sudo microk8s.kubectl create -f evpn-api-rs.yaml
+sudo microk8s.kubectl create -f evpn-api-svc.yaml
+sudo microk8s.kubectl create -f evpn-agent-rs.yaml
+sudo microk8s.kubectl create -f evpn-agent-svc.yaml
+sudo microk8s.kubectl create configmap app-settings --from-file=settings
