@@ -6,21 +6,48 @@ Vagrant.configure("2") do |config|
   # For a complete reference, please see the online documentation at
   # https://docs.vagrantup.com.
 
+  config.vm.define "ryu" do |ryu|
+    ryu.vm.box = "peru/ubuntu-16.04-server-amd64"
+    ryu.vm.synced_folder "synced_folders_ryu/", "/home/vagrant"
+    ryu.vm.network "private_network", ip: "192.168.10.10"
+    ryu.vm.hostname = "ryu"
+    ryu.vm.provision "shell", inline: "./install_mn.sh"
+    ryu.vm.provision "shell", inline: "./install_ryu.sh"
+    ryu.vm.provider "libvirt" do |libvirt|
+      libvirt.memory = "1536"
+      libvirt.cpus = 1
+      libvirt.nested = false
+      libvirt.volume_cache = 'none'
+    end
+  end
+
+  config.vm.define "k8s" do |k8s|
+    k8s.vm.box = "peru/ubuntu-16.04-server-amd64"
+    k8s.vm.synced_folder "synced_folders_k8s/", "/home/vagrant"
+    k8s.vm.network "private_network", ip: "192.168.10.20"
+    k8s.vm.hostname = "k8s"
+    k8s.vm.provision "shell", inline: "./install_microk8s.sh"
+    k8s.vm.provider "libvirt" do |libvirt|
+      libvirt.memory = "1536"
+      libvirt.cpus = 1
+      libvirt.nested = false
+      libvirt.volume_cache = 'none'
+    end
+  end
+
   config.vm.define "devstack" do |devstack|
     devstack.vm.box = "peru/ubuntu-16.04-server-amd64"
     devstack.vm.synced_folder "synced_folders_devstack/", "/home/vagrant"
-    devstack.vm.network "private_network", ip: "192.168.10.100"
+    devstack.vm.network "private_network", ip: "192.168.10.200"
     devstack.vm.hostname = "devstack-ovn"
     devstack.vm.provision "shell", inline: "./install_devstack.sh"
-    devstack.vm.provision "shell", inline: "cp ./rabbitmq.config /etc/rabbitmq/ && systemctl restart rabbitmq-server"
-    devstack.vm.provision "shell", inline: "./install_microk8s.sh"
+    devstack.vm.provision "shell", inline: "sudo cp ./rabbitmq.config /etc/rabbitmq/ && sudo systemctl restart rabbitmq-server"
     devstack.vm.provider "libvirt" do |libvirt|
-      libvirt.memory = "8192"
+      libvirt.memory = "7068"
       libvirt.cpus = 2
       libvirt.nested = true
       libvirt.volume_cache = 'none'
     end
   end
-
 
 end

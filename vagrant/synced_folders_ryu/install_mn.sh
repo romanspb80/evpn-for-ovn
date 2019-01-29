@@ -2,5 +2,4 @@
 
 sudo apt-get update
 sudo apt-get install -y git
-
-sudo apt-get install mininet
+sudo apt-get install -y mininet

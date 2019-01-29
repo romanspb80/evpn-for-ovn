@@ -7,6 +7,5 @@ spec:
   ports:
   - port: 179
     targetPort: bgp
-    nodePort: 179
   selector:
     app: evpn-agent
