@@ -17,8 +17,7 @@ spec:
         image: 28041980/evpn-api
         volumeMounts:
         - name: app-settings
-          mountPath: ~/ryu/ryu/app/app-settings.py
-          subPath: app-settings.py
+          mountPath: /config
         ports:
         - name: http
           containerPort: 8080
