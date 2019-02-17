@@ -16,6 +16,8 @@ from ryu.services.protocols.bgp.info_base.evpn import EvpnPath
 import paramiko
 import socket
 
+import sys
+sys.path.append('/config')
 from app_settings import USER, PASSWORD, PORT_SSH, DATAPATH_ADDR,OVNCENTR_ADDR, RABBITMQ_SERVER, RABBIT_USER, RABBIT_PASSWORD
 
 from oslo_config import cfg
