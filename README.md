@@ -16,7 +16,7 @@ The diagram shows the following elements:
 - The new RYU-applications for EVPN-VXLAN implementation.
 - Some kind of a Cloud Manager Appliction (Management application for Openstack).
 
-![scheme](https://user-images.githubusercontent.com/30826451/45481494-52dab180-b754-11e8-8060-8beb4625733c.jpg)
+![scheme2](https://user-images.githubusercontent.com/30826451/52918497-c9ce3480-3308-11e9-8fd0-b0a153bf8b62.jpg)
 ## Idea description
 There is the task to organize a L2VPN (distributed L2 network) between sites (Data Centers) using EVPN-VXLAN . One of them is our Openstack Platform (DevStack with OVN). The other is external system (with EVPN-VXLAN support). The key step is the implementation of EVPN-VXLAN on Neutron side. To do this, it is necessary to extend our Cloud Platform with the functionality of building vxlan tunnels and the implementation of the MP-BGP Protocol.
 
