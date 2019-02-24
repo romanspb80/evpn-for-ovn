@@ -60,6 +60,10 @@ Three virtual machines will be run: **devstack**, **k8s** ,**ryu**. In accordanc
 IP addresses of virtual machines are represented in vagrant/Vagrantfile.
 Login/Password: vagrant/vagrant
 
+Also it is necessary to add "192.168.10.20  evpn-api.domain-x.com" to /etc/hosts where from will be done requests.
+
+## Usage Example
+
 
 # Further development
 1. Separate function "BGP Speaker" from **evpn-agent.py** and develop new application.
