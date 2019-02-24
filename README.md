@@ -56,11 +56,10 @@ cd ./evpn-for-ovn/vagrant/
 
 vagrant up
 
+Three virtual machines will be run: **devstack**, **k8s** ,**ryu**. In accordance with diagram DataCenter X is associated with the **ryu**, DataCenter Y - with **devstack** and **k8s**.
+IP addresses of virtual machines are represented in vagrant/Vagrantfile.
+Login/Password: vagrant/vagrant
 
-See installation details for DevStack with OVN and RYU:
-
-https://docs.openstack.org/networking-ovn/latest/contributor/testing.html
-https://ryu.readthedocs.io/en/latest/getting_started.html
 
 # Further development
 1. Separate function "BGP Speaker" from **evpn-agent.py** and develop new application.
