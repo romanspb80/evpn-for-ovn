@@ -1,6 +1,7 @@
 FROM osrg/ryu:latest
 WORKDIR /root/ryu/ryu/app
 COPY evpn-api.py .
+RUN echo "root:ryu" | chpasswd
 RUN pip install oslo.messaging
 RUN apt-get update && apt-get install -y ssh
 RUN sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config
