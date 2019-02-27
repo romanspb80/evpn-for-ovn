@@ -1,12 +1,12 @@
 FROM osrg/ryu:latest
 WORKDIR /root/ryu/ryu/app
 COPY evpn-agent.py .
+RUN apt-get update && apt-get install -y ssh python3-dev python3-pip
+RUN pip3 install oslo.messaging
 RUN pip install eventlet
 RUN pip install paramiko
-RUN pip install oslo.messaging
-RUN echo "root:ryu" | chpasswd
-RUN apt-get update && apt-get install -y ssh
 RUN sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config
 RUN service ssh start
+RUN echo "root:ryu" | chpasswd
 ENTRYPOINT ["python", "/root/ryu/bin/ryu-manager"]
 CMD ["--verbose", "/root/ryu/ryu/app/evpn-agent.py"]
