@@ -19,8 +19,10 @@ spec:
         - name: app-settings
           mountPath: /config
         ports:
-        - name: bgp
-          containerPort: 179
+        - containerPort: 179
+          name: bgp
+        - containerPort: 22
+          name: ssh
       volumes:
       - name: app-settings
         configMap:
