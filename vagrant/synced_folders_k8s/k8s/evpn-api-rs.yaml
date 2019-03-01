@@ -19,10 +19,10 @@ spec:
         - name: app-settings
           mountPath: /config
         ports:
-          - containerPort: 8080
-            name: http
-          - containerPort: 22
-            name: ssh
+        - containerPort: 8080
+          name: http
+        - containerPort: 22
+          name: ssh
       volumes:
       - name: app-settings
         configMap:
