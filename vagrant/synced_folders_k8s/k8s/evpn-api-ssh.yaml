@@ -3,6 +3,7 @@ kind: Service
 metadata:
   name: evpn-api-ssh
 spec:
+  type: NodePort
   ports:
   - port: 2222
     targetPort: ssh

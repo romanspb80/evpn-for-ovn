@@ -8,7 +8,6 @@ RUN pip install oslo.messaging
 RUN pip install eventlet
 RUN pip install paramiko
 RUN sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config
-RUN service ssh start
 RUN echo "root:ryu" | chpasswd
 ENTRYPOINT ["python", "/root/ryu/bin/ryu-manager"]
 CMD ["--verbose", "/root/ryu/ryu/app/evpn-agent.py"]
