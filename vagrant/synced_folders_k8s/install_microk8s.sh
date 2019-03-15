@@ -9,7 +9,7 @@ cd ./k8s
 sudo microk8s.enable dns
 sudo microk8s.kubectl create configmap app-settings --from-file=settings/app_settings.py
 sudo microk8s.kubectl create -f evpn-api-ing.yaml
-sudo microk8s.kubectl create -f evpn-api-rs.yaml
+sudo microk8s.kubectl create -f evpn-api-rs_debug.yaml
 sudo microk8s.kubectl create -f evpn-api-svc.yaml
-sudo microk8s.kubectl create -f evpn-agent-rs.yaml
+sudo microk8s.kubectl create -f evpn-agent-rs_debug.yaml
 sudo microk8s.kubectl create -f evpn-agent-svc.yaml

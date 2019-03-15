@@ -1,0 +1,31 @@
+apiVersion: apps/v1beta2
+kind: ReplicaSet
+metadata:
+  name: evpn-agent-rs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: evpn-agent
+  template:
+    metadata:
+      labels:
+        app: evpn-agent
+    spec:
+      containers:
+      - name: evpn-agent
+        command: ["python", "/root/ryu/bin/ryu-manager"]
+        args: ["--verbose"]
+        image: 28041980/evpn-agent
+        volumeMounts:
+        - name: app-settings
+          mountPath: /config
+        ports:
+        - containerPort: 179
+          name: bgp
+        - containerPort: 22
+          name: ssh
+      volumes:
+      - name: app-settings
+        configMap:
+          name: app-settings

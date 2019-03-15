@@ -7,6 +7,6 @@ RUN pip install wheel
 RUN pip install oslo.messaging
 RUN sed -i 's/PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config
 RUN echo "root:ryu" | chpasswd
-RUN service ssh start
+RUN service ssh restart
 ENTRYPOINT ["python", "/root/ryu/bin/ryu-manager"]
 CMD ["--verbose", "/root/ryu/ryu/app/evpn-api.py"]

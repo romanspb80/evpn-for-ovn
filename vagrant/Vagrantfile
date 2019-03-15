@@ -14,7 +14,7 @@ Vagrant.configure("2") do |config|
     ryu.vm.provision "shell", inline: "./install_mn.sh"
     ryu.vm.provision "shell", inline: "./install_ryu.sh"
     ryu.vm.provider "libvirt" do |libvirt|
-      libvirt.memory = "1024"
+      libvirt.memory = "2048"
       libvirt.cpus = 1
       libvirt.nested = false
       libvirt.volume_cache = 'none'
@@ -28,7 +28,7 @@ Vagrant.configure("2") do |config|
     k8s.vm.hostname = "k8s"
     k8s.vm.provision "shell", inline: "./install_microk8s.sh"
     k8s.vm.provider "libvirt" do |libvirt|
-      libvirt.memory = "1536"
+      libvirt.memory = "4096"
       libvirt.cpus = 1
       libvirt.nested = false
       libvirt.volume_cache = 'none'
@@ -43,7 +43,7 @@ Vagrant.configure("2") do |config|
     devstack.vm.provision "shell", inline: "./install_devstack.sh"
     devstack.vm.provision "shell", inline: "sudo cp ./rabbitmq.config /etc/rabbitmq/ && sudo systemctl restart rabbitmq-server"
     devstack.vm.provider "libvirt" do |libvirt|
-      libvirt.memory = "7068"
+      libvirt.memory = "8192"
       libvirt.cpus = 2
       libvirt.nested = true
       libvirt.volume_cache = 'none'
