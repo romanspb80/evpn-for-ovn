@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq-svc
+spec:
+  ports:
+  - name: "rabbitmq"
+    protocol: "TCP"
+    port: 5672
+    nodePort: 0

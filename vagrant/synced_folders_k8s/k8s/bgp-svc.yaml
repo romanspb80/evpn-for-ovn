@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: bgp-svc
+spec:
+  ports:
+  - name: "bgp"
+    protocol: "TCP"
+    port: 179
+    nodePort: 0

@@ -11,5 +11,10 @@ sudo microk8s.kubectl create configmap app-settings --from-file=settings/app_set
 sudo microk8s.kubectl create -f evpn-api-ing.yaml
 sudo microk8s.kubectl create -f evpn-api-rs_debug.yaml
 sudo microk8s.kubectl create -f evpn-api-svc.yaml
-sudo microk8s.kubectl create -f evpn-agent-rs_debug.yaml
-sudo microk8s.kubectl create -f evpn-agent-svc.yaml
+#sudo microk8s.kubectl create -f evpn-agent-rs_debug.yaml
+#sudo microk8s.kubectl create -f evpn-agent-svc.yaml
+sudo microk8s.kubectl create -f evpn-agent-ds_debug.yaml
+sudo microk8s.kubectl create -f rabbitmq-svc.yaml
+sudo microk8s.kubectl create -f rabbitmq-endpnt.yaml
+sudo microk8s.kubectl create -f bgp-svc.yaml
+sudo microk8s.kubectl create -f bgp-endpnt.yaml

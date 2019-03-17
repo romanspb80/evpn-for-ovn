@@ -13,6 +13,7 @@ Vagrant.configure("2") do |config|
     ryu.vm.hostname = "ryu"
     ryu.vm.provision "shell", inline: "./install_mn.sh"
     ryu.vm.provision "shell", inline: "./install_ryu.sh"
+    ryu.vm.provision "shell", inline: "./root_ssh.sh"
     ryu.vm.provider "libvirt" do |libvirt|
       libvirt.memory = "2048"
       libvirt.cpus = 1

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: bgp-svc
+subsets:
+  - addresses:
+    - ip: 192.168.10.10
+    ports:
+    - name: "bgp"
+      port: 179
