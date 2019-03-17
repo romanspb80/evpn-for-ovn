@@ -18,7 +18,7 @@ The diagram shows the following elements.
 - The K8S Cluster with new RYU-applications for OVN EVPN-VXLAN implementation.
 - Some kind of a Cloud Manager Appliction (Orchestrator).
 
-![scheme2](https://user-images.githubusercontent.com/30826451/52918497-c9ce3480-3308-11e9-8fd0-b0a153bf8b62.jpg)
+![Scheme3](https://user-images.githubusercontent.com/30826451/54495883-65979400-48f9-11e9-9e8a-8bca2208e19c.gif)
 ## Idea description
 There is the task to organize a L2VPN (distributed L2 network) between sites (Data Centers) using EVPN-VXLAN . One of them is our Openstack Platform (DevStack with OVN) - DataCenter Y. The other is external system (with EVPN-VXLAN support) - DataCenter X. The key step is the implementation of EVPN-VXLAN on Neutron side. To do this, it is necessary to extend our Cloud Platform with the functionality of building vxlan tunnels and the implementation of the MP-BGP Protocol.
 
