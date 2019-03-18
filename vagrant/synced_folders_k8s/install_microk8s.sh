@@ -18,3 +18,5 @@ sudo microk8s.kubectl create -f rabbitmq-svc.yaml
 sudo microk8s.kubectl create -f rabbitmq-endpnt.yaml
 sudo microk8s.kubectl create -f bgp-svc.yaml
 sudo microk8s.kubectl create -f bgp-endpnt.yaml
+sudo microk8s.kubectl create -f devstack-ssh-svc.yaml
+sudo microk8s.kubectl create -f devstack-ssh-endpnt.yaml

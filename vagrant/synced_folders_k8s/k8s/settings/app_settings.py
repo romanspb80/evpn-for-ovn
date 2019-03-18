@@ -10,9 +10,9 @@ PASSWORD='password'
 PORT_SSH=22
 
 # Network Node IP address (OVS bridge)
-DATAPATH_ADDR='192.168.10.200'
+DATAPATH_ADDR='devstack-ssh-svc'
 # Neutron Server (OVN Central) IP address
-OVNCENTR_ADDR='192.168.10.200'
+OVNCENTR_ADDR='devstack-ssh-svc'
 
 # IP address of the External system
 RYU_ADDR='192.168.10.10'
