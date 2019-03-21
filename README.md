@@ -65,6 +65,8 @@ Also it is necessary to add "192.168.10.20  evpn-api.domain-x.com" to /etc/hosts
 
 
 # Further development
-1. Separate function "BGP Speaker" from **evpn-agent.py** and develop new application.
-2. Develop a plugin for OpenStack instead of **evpn-agent.py**.
+1. Split the **evpn-agent.py** into two applications: "BGP Speaker" and "OVS/OVN Configurator". These apps will be connected via RabbitMQ. "OVS/OVN Configurator" would be get requests from different sources via Queue.
+2. Orchestrate the app "BGP Speaker" with NodePort-type Service for associate containers with host-interfaces. This would get the opportunity to run several "BGP Speaker" on one host.
+3. Implement monitoring subsystem. 
+2. Develop a plugin for OpenStack instead of current solution. It would be better to extend Neutron API and use only one Endpoint.
 3. Develop WiKi.
