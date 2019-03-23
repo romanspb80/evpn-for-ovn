@@ -69,7 +69,7 @@ Also it is necessary to add "192.168.10.20  evpn-api.domain-x.com" to /etc/hosts
 ##Usage Example
 This example supposes the following environment:
 
-![Scheme_text](https://user-images.githubusercontent.com/30826451/54871610-fb369600-4dc7-11e9-806f-1ff92f9fa5b1.jpeg)
+![imageedit_2_9662679720](https://user-images.githubusercontent.com/30826451/54871695-95e3a480-4dc9-11e9-986d-28fd3ae103cf.jpg)
 
 **Pre configuration**
 
