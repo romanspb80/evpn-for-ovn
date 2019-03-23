@@ -84,9 +84,9 @@ Host **ryu** (192.168.10.10)             Host **k8s** (192.168.10.20)
  10.0.0.11      |                        10.0.0.22       
 +--------+  +--------+                   +--------+  
 | s1h1   |  | s1h2   |                   | vm-test|  
-+--------+  +--------+                   +--------+  
++--------+  +--------+                   +--------+
 
-###Pre configuration
+**Pre configuration**
 On **ryu**:
 *sudo mn --controller=remote,ip=127.0.0.1 --topo=single,2 --switch=ovsk,protocols=OpenFlow13 --mac
 py h1.intf('h1-eth0').setMAC('02:ac:10:ff:00:11')
@@ -96,7 +96,7 @@ On **devstack**:
 IMAGE=$(openstack image list -f value -c Name | grep cirros)
 openstack server create --flavor cirros256 --image $IMAGE --port port-test vm-test*
 
-###Configuration steps
+**Configuration steps**
 1. Creates a new BGPSpeaker instance on each host
 On **ryu**:
 curl -X POST -d '{"dpid": 1, "as_number": 65000, "router_id": "192.168.10.10"}' http://192.168.10.10:8080/vtep/speakers | python -m json.tool
