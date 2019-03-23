@@ -496,6 +496,10 @@ class RestVtepController(ControllerBase):
             vni              Virtual Network Identifier. (e.g. 10)
             network_id       Neutron Network Identifier.
                              (e.g. 95c5a37c-4597-45cb-ba67-10a9c5aca3ba)
+                             It is associated with Logical Switch in OVN
+                             Commands (requests) for list getting:
+                             openstack network list
+                             ovn-nbctl ls-list
             ================ ========================================
         Example::
             $ curl -X POST -d '{
@@ -699,7 +703,7 @@ class RestVtepController(ControllerBase):
             =========== ===========================================================
         Example::
             $ curl -X POST -d '{
-             "port": "s1-eth1",
+             "port": "f9ba032a-0446-4e7c-b30b-454318e195b4",
              "mac": "aa:bb:cc:dd:ee:ff",
              "ip": "10.0.0.1"
              }' http://localhost:8080/vtep/networks/10/clients |

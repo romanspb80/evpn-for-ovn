@@ -1,6 +1,7 @@
 #!/bin/bash
 
 sudo su
+ovs-vsctl set-manager ptcp:6640
 apt-get install -y python-dev python-setuptools python-pip iptables
 pip install paramiko
 cd ~

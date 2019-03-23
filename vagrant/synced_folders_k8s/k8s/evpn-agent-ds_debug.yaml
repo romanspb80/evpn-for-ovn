@@ -11,6 +11,7 @@ spec:
       labels:
         app: evpn-agent
     spec:
+      hostNetwork: true
       containers:
       - name: evpn-agent
         command: ["python", "/root/ryu/bin/ryu-manager"]
