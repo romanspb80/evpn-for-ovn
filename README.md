@@ -90,58 +90,95 @@ Host **ryu** (192.168.10.10)             Host **k8s** (192.168.10.20)
 **Pre configuration**
 
 On **ryu**:
+
 *sudo mn --controller=remote,ip=127.0.0.1 --topo=single,2 --switch=ovsk,protocols=OpenFlow13 --mac
-py h1.intf('h1-eth0').setMAC('02:ac:10:ff:00:11')
-py h1.intf('h1-eth0').setIP('10.0.0.11/24')*
+
+*py h1.intf('h1-eth0').setMAC('02:ac:10:ff:00:11')
+
+*py h1.intf('h1-eth0').setIP('10.0.0.11/24')*
+
 On **devstack**:
+
 *openstack port create --network private --mac 02:ac:10:ff:00:22 --fixed-ip subnet=private-subnet,ip-address=10.0.0.22 port-test
-IMAGE=$(openstack image list -f value -c Name | grep cirros)
-openstack server create --flavor cirros256 --image $IMAGE --port port-test vm-test*
+
+*IMAGE=$(openstack image list -f value -c Name | grep cirros)
+
+*openstack server create --flavor cirros256 --image $IMAGE --port port-test vm-test*
 
 **Configuration steps**
 
+
 1. Creates a new BGPSpeaker instance on each host
+
 On **ryu**:
+
 curl -X POST -d '{"dpid": 1, "as_number": 65000, "router_id": "192.168.10.10"}' http://192.168.10.10:8080/vtep/speakers | python -m json.tool
+
 On **k8s**:
+
 curl -X POST -d '{"as_number": 65000, "router_id": "192.168.10.20"}' http://evpn-api.domain-x.com/vtep/speakers | python -m json.tool
 
+
 2. Registers the neighbor for the speakers on each host
+
 On **ryu**:
+
 curl -X POST -d '{"address": "192.168.10.20", "remote_as": 65000}' http://192.168.10.10:8080/vtep/neighbors | python -m json.tool
+
 On **k8s**:
+
 curl -X POST -d '{"address": "192.168.10.10", "remote_as": 65000}' http://evpn-api.domain-x.com/vtep/neighbors | python -m json.tool
 
+
 3. Defines a new VXLAN network(VNI=10)
+
 On **ryu**:
+
 curl -X POST -d '{"vni": 10}' http://192.168.10.10:8080/vtep/networks |python -m json.tool
+
 On **k8s**:
+
 curl -X POST -d '{"vni": 10, "network_id": "7d29da33-5d12-4c04-95de-1672709ae946"}' http://evpn-api.domain-x.com/vtep/networks |python -m json.tool
+
 Where param "network_id" is a Neutron Network Identifier. It is associated with Logical Switch in OVN.
 Commands (requests) for list getting:
+
 *openstack network list
-ovn-nbctl ls-list*
+
+*ovn-nbctl ls-list
+
 
 4. Registers the clients to the VXLAN network.
+
 On **ryu**:
+
 curl -X POST -d '{"port": "s1-eth1", "mac": "02:ac:10:ff:00:11", "ip": "10.0.10.11"} ' http://192.168.10.10:8080/vtep/networks/10/clients | python -m json.tool
+
 On **k8s**:
+
 curl -X POST -d '{"port": "8f93d2ba-527a-44ea-9b4f-3ce2c6067588", "mac": "02:ac:10:ff:00:22", "ip": "10.0.0.22"} ' http://evpn-api.domain-x.com/vtep/networks/10/clients | python -m json.tool
+
 Where param port (for **k8s**) is OVN Logical Port. It corresponds with Port ID Neutron:
 
 *stack@devstack-ovn:~/devstack$ ovn-nbctl show
-switch ae3ef4dc-5c15-4964-b282-77d1ec430cd3 (neutron-7d29da33-5d12-4c04-95de-1672709ae946) (aka private)
+
+*switch ae3ef4dc-5c15-4964-b282-77d1ec430cd3 (neutron-7d29da33-5d12-4c04-95de-1672709ae946) (aka private)
+
 ......................................................................................
-    port **8f93d2ba-527a-44ea-9b4f-3ce2c6067588** (aka port-test)
-        addresses: ["02:ac:10:ff:00:22 10.0.0.22 fd97:23a0:78dc:0:ac:10ff:feff:22"]
+
+*    port **8f93d2ba-527a-44ea-9b4f-3ce2c6067588** (aka port-test)
+*        addresses: ["02:ac:10:ff:00:22 10.0.0.22 fd97:23a0:78dc:0:ac:10ff:feff:22"]
 ......................................................................................*
 
 *openstack port show port-test -f value -c id
 **8f93d2ba-527a-44ea-9b4f-3ce2c6067588***
 
 5. Testing
+
 (s1h1)$ ping 10.0.0.22 (from mininet shell)
+
 (vm-test)$ ping 10.0.0.11
+
 
 # Further development
 1. Split the **evpn-agent.py** into two applications: "BGP Speaker" and "OVS/OVN Configurator". These apps will be connected via RabbitMQ. "OVS/OVN Configurator" would be get requests from different sources via Queue.
