@@ -94,15 +94,15 @@ Host **ryu** (192.168.10.10)             Host **k8s** (192.168.10.20)
 
 On **ryu**:
 
-*sudo mn --controller=remote,ip=127.0.0.1 --topo=single,2 --switch=ovsk,protocols=OpenFlow13 --mac*
+*$ sudo mn --controller=remote,ip=127.0.0.1 --topo=single,2 --switch=ovsk,protocols=OpenFlow13 --mac*
 
-*py h1.intf('h1-eth0').setMAC('02:ac:10:ff:00:11')*
+*mininet> py h1.intf('h1-eth0').setMAC('02:ac:10:ff:00:11')*
 
-*py h1.intf('h1-eth0').setIP('10.0.0.11/24')*
+*mininet> py h1.intf('h1-eth0').setIP('10.0.0.11/24')*
 
 On **devstack**:
 
-*openstack port create --network private --mac 02:ac:10:ff:00:22 --fixed-ip subnet=private-subnet,ip-address=10.0.0.22 port-test*
+*$ openstack port create --network private --mac 02:ac:10:ff:00:22 --fixed-ip subnet=private-subnet,ip-address=10.0.0.22 port-test*
 
 *IMAGE=$(openstack image list -f value -c Name | grep cirros)*
 
@@ -146,9 +146,9 @@ curl -X POST -d '{"vni": 10, "network_id": "7d29da33-5d12-4c04-95de-1672709ae946
 Where param "network_id" is a Neutron Network Identifier. It is associated with Logical Switch in OVN.
 Commands (requests) for list getting:
 
-*openstack network list
+*$ openstack network list
 
-*ovn-nbctl ls-list
+*$ ovn-nbctl ls-list
 
 
 4. Registers the clients to the VXLAN network.
