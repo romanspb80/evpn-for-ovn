@@ -68,8 +68,24 @@ Also it is necessary to add "192.168.10.20  evpn-api.domain-x.com" to /etc/hosts
 
 ##Usage Example
 This example supposes the following environment:
-
-![imageedit_2_9662679720](https://user-images.githubusercontent.com/30826451/54871695-95e3a480-4dc9-11e9-986d-28fd3ae103cf.jpg)
+'''
+Host **ryu** (192.168.10.10)             Host **k8s** (192.168.10.20)
++--------------------+                   +--------------------+
+|  Ryu (rest_vtep)   | --- BGP(EVPN) --- |  Ryu (**evpn-api**)|
++--------------------+                   +--------------------+
+        |                                       |
+        |                                       |
+        |                                Host **devstack** (192.168.10.200)
++--------------------+                   +--------------------+
+|   s1 (OVS)         | ===== vxlan ===== |   br-int (OVS)     |
++--------------------+                   +--------------------+
+(s1-eth1)    (s1-eth2)                   (port-test)   
+    |           |                            |
+ 10.0.0.11      |                        10.0.0.22       
++--------+  +--------+                   +--------+  
+| s1h1   |  | s1h2   |                   | vm-test|  
++--------+  +--------+                   +--------+
+'''
 
 **Pre configuration**
 
