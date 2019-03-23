@@ -59,7 +59,9 @@ vagrant up
 Three virtual machines will be run: **devstack**, **k8s** ,**ryu**. In accordance with diagram DataCenter X is associated with the **ryu**, DataCenter Y - with **devstack** and **k8s**.
 The IP addresses of virtual machines are represented in vagrant/Vagrantfile:
 192.168.10.10 **ryu**
+
 192.168.10.20 **k8s**
+
 192.168.10.200 **devstack**
 
 Login/Password: vagrant/vagrant
@@ -87,26 +89,27 @@ Host **ryu** (192.168.10.10)             Host **k8s** (192.168.10.20)
 +--------+  +--------+                   +--------+
 ```
 
+
 **Pre configuration**
 
 On **ryu**:
 
-*sudo mn --controller=remote,ip=127.0.0.1 --topo=single,2 --switch=ovsk,protocols=OpenFlow13 --mac
+*sudo mn --controller=remote,ip=127.0.0.1 --topo=single,2 --switch=ovsk,protocols=OpenFlow13 --mac*
 
-*py h1.intf('h1-eth0').setMAC('02:ac:10:ff:00:11')
+*py h1.intf('h1-eth0').setMAC('02:ac:10:ff:00:11')*
 
 *py h1.intf('h1-eth0').setIP('10.0.0.11/24')*
 
 On **devstack**:
 
-*openstack port create --network private --mac 02:ac:10:ff:00:22 --fixed-ip subnet=private-subnet,ip-address=10.0.0.22 port-test
+*openstack port create --network private --mac 02:ac:10:ff:00:22 --fixed-ip subnet=private-subnet,ip-address=10.0.0.22 port-test*
 
-*IMAGE=$(openstack image list -f value -c Name | grep cirros)
+*IMAGE=$(openstack image list -f value -c Name | grep cirros)*
 
 *openstack server create --flavor cirros256 --image $IMAGE --port port-test vm-test*
 
-**Configuration steps**
 
+**Configuration steps**
 
 1. Creates a new BGPSpeaker instance on each host
 
@@ -159,19 +162,21 @@ On **k8s**:
 curl -X POST -d '{"port": "8f93d2ba-527a-44ea-9b4f-3ce2c6067588", "mac": "02:ac:10:ff:00:22", "ip": "10.0.0.22"} ' http://evpn-api.domain-x.com/vtep/networks/10/clients | python -m json.tool
 
 Where param port (for **k8s**) is OVN Logical Port. It corresponds with Port ID Neutron:
+```
+$ ovn-nbctl show
 
-*stack@devstack-ovn:~/devstack$ ovn-nbctl show
-
-*switch ae3ef4dc-5c15-4964-b282-77d1ec430cd3 (neutron-7d29da33-5d12-4c04-95de-1672709ae946) (aka private)
+switch ae3ef4dc-5c15-4964-b282-77d1ec430cd3 (neutron-7d29da33-5d12-4c04-95de-1672709ae946) (aka private)
 
 ......................................................................................
 
-*    port **8f93d2ba-527a-44ea-9b4f-3ce2c6067588** (aka port-test)
-*        addresses: ["02:ac:10:ff:00:22 10.0.0.22 fd97:23a0:78dc:0:ac:10ff:feff:22"]
-......................................................................................*
+    port 8f93d2ba-527a-44ea-9b4f-3ce2c6067588 (aka port-test)
+        addresses: ["02:ac:10:ff:00:22 10.0.0.22 fd97:23a0:78dc:0:ac:10ff:feff:22"]
+......................................................................................
+```
 
-*openstack port show port-test -f value -c id
-**8f93d2ba-527a-44ea-9b4f-3ce2c6067588***
+*$ openstack port show port-test -f value -c id*
+***8f93d2ba-527a-44ea-9b4f-3ce2c6067588***
+
 
 5. Testing
 
