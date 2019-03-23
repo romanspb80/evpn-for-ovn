@@ -39,7 +39,7 @@ There are two main functions of **evpn-agent.py**:
 1. VXLAN-Port configuration for OVS and OVN. 
 2. BGP Speaker (MP-BGP signaling).
 
-In case of getting requests from **evpn-api.py** the **evpn-agent.py** sent appropriate requests to an External System by MP-BGP. The requests can be such as "Connect to Neighbor", "Create new network", "Sent new client mac:ip.addr", etc. In case of **evpn-agent.py** get requests by MP-BGP from Neighbor (External System) it makes appropriate activities on OVN and OVS sides: VXLAN-Port creating, mac:ip.addr creating or deleting in OVN Logical_Switch.
+In case of getting requests from **evpn-api.py** the **evpn-agent.py** sent appropriate requests to an External System by MP-BGP. The requests can be such as "Connect to Neighbor", "Create new network", "Sent new client mac:ip.addr", etc. In case of **evpn-agent.py** get requests by MP-BGP from Neighbor (External System) it makes appropriate activities on OVN and OVS sides: VXLAN-Port creating on "br-int" OVS bridge and mapping it to OVN Logical Port, mac:ip.addr creating or deleting in OVN Logical Switch, sending mac:ip.addr updates of clients to the Neighbor (Ext. System) by MP-BGP.
 
 
 ## Usage Example and the sequence of actions
