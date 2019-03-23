@@ -69,24 +69,10 @@ Also it is necessary to add "192.168.10.20  evpn-api.domain-x.com" to /etc/hosts
 ##Usage Example
 This example supposes the following environment:
 
-Host **ryu** (192.168.10.10)             Host **k8s** (192.168.10.20)
-+--------------------+                   +--------------------+
-|  Ryu (rest_vtep)  | --- BGP(EVPN) --- |  Ryu (**evpn-api**) |
-+--------------------+                   +--------------------+
-        |                                       |
-        |                                       |
-        |                                Host **devstack** (192.168.10.200)
-+--------------------+                   +--------------------+
-|   s1 (OVS)         | ===== vxlan ===== |   br-int (OVS)     |
-+--------------------+                   +--------------------+
-(s1-eth1)    (s1-eth2)                   (port-test)   
-    |           |                            |
- 10.0.0.11      |                        10.0.0.22       
-+--------+  +--------+                   +--------+  
-| s1h1   |  | s1h2   |                   | vm-test|  
-+--------+  +--------+                   +--------+
+![Scheme_text](https://user-images.githubusercontent.com/30826451/54871610-fb369600-4dc7-11e9-806f-1ff92f9fa5b1.jpeg)
 
 **Pre configuration**
+
 On **ryu**:
 *sudo mn --controller=remote,ip=127.0.0.1 --topo=single,2 --switch=ovsk,protocols=OpenFlow13 --mac
 py h1.intf('h1-eth0').setMAC('02:ac:10:ff:00:11')
@@ -97,6 +83,7 @@ IMAGE=$(openstack image list -f value -c Name | grep cirros)
 openstack server create --flavor cirros256 --image $IMAGE --port port-test vm-test*
 
 **Configuration steps**
+
 1. Creates a new BGPSpeaker instance on each host
 On **ryu**:
 curl -X POST -d '{"dpid": 1, "as_number": 65000, "router_id": "192.168.10.10"}' http://192.168.10.10:8080/vtep/speakers | python -m json.tool
@@ -125,13 +112,14 @@ curl -X POST -d '{"port": "s1-eth1", "mac": "02:ac:10:ff:00:11", "ip": "10.0.10.
 On **k8s**:
 curl -X POST -d '{"port": "8f93d2ba-527a-44ea-9b4f-3ce2c6067588", "mac": "02:ac:10:ff:00:22", "ip": "10.0.0.22"} ' http://evpn-api.domain-x.com/vtep/networks/10/clients | python -m json.tool
 Where param port (for **k8s**) is OVN Logical Port. It corresponds with Port ID Neutron:
-stack@devstack-ovn:~/devstack$ ovn-nbctl show
+
+*stack@devstack-ovn:~/devstack$ ovn-nbctl show
 switch ae3ef4dc-5c15-4964-b282-77d1ec430cd3 (neutron-7d29da33-5d12-4c04-95de-1672709ae946) (aka private)
 ......................................................................................
     port **8f93d2ba-527a-44ea-9b4f-3ce2c6067588** (aka port-test)
         addresses: ["02:ac:10:ff:00:22 10.0.0.22 fd97:23a0:78dc:0:ac:10ff:feff:22"]
-......................................................................................
- 
+......................................................................................*
+
 *openstack port show port-test -f value -c id
 **8f93d2ba-527a-44ea-9b4f-3ce2c6067588***
 
