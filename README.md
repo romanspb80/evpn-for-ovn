@@ -111,6 +111,7 @@ On **devstack**:
 
 **Configuration steps**
 
+
 1. Creates a new BGPSpeaker instance on each host
 
 On **ryu**:
@@ -122,6 +123,7 @@ On **k8s**:
 curl -X POST -d '{"as_number": 65000, "router_id": "192.168.10.20"}' http://evpn-api.domain-x.com/vtep/speakers | python -m json.tool
 
 
+
 2. Registers the neighbor for the speakers on each host
 
 On **ryu**:
@@ -131,6 +133,7 @@ curl -X POST -d '{"address": "192.168.10.20", "remote_as": 65000}' http://192.16
 On **k8s**:
 
 curl -X POST -d '{"address": "192.168.10.10", "remote_as": 65000}' http://evpn-api.domain-x.com/vtep/neighbors | python -m json.tool
+
 
 
 3. Defines a new VXLAN network(VNI=10)
@@ -149,6 +152,7 @@ Commands (requests) for list getting:
 *$ openstack network list
 
 *$ ovn-nbctl ls-list
+
 
 
 4. Registers the clients to the VXLAN network.
@@ -175,12 +179,14 @@ switch ae3ef4dc-5c15-4964-b282-77d1ec430cd3 (neutron-7d29da33-5d12-4c04-95de-167
 ```
 
 *$ openstack port show port-test -f value -c id*
+
 ***8f93d2ba-527a-44ea-9b4f-3ce2c6067588***
+
 
 
 5. Testing
 
-(s1h1)$ ping 10.0.0.22 (from mininet shell)
+(s1h1)mininet> ping 10.0.0.22
 
 (vm-test)$ ping 10.0.0.11
 
