@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: evpn-agent-ds
+spec:
+  selector:
+    matchLabels:
+      app: evpn-agent
+  template:
+    metadata:
+      labels:
+        app: evpn-agent
+    spec:
+      hostNetwork: true
+      containers:
+      - name: evpn-agent
+        image: 28041980/evpn-agent
+        volumeMounts:
+        - name: app-settings
+          mountPath: /config
+        ports:
+        - containerPort: 179
+          hostPort: 179
+          name: bgp
+        - containerPort: 22
+          name: ssh
+      volumes:
+      - name: app-settings
+        configMap:
+          name: app-settings

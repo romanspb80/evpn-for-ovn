@@ -9,14 +9,14 @@ cd ./k8s
 sudo microk8s.enable dns ingress
 sudo microk8s.kubectl create configmap app-settings --from-file=settings/app_settings.py
 sudo microk8s.kubectl create -f evpn-api-ing.yaml
-sudo microk8s.kubectl create -f evpn-api-rs_debug.yaml
+sudo microk8s.kubectl create -f evpn-api-rs.yaml
 sudo microk8s.kubectl create -f evpn-api-svc.yaml
 #sudo microk8s.kubectl create -f evpn-agent-rs_debug.yaml
 #sudo microk8s.kubectl create -f evpn-agent-svc.yaml
-sudo microk8s.kubectl create -f evpn-agent-ds_debug.yaml
+sudo microk8s.kubectl create -f evpn-agent-ds.yaml
 sudo microk8s.kubectl create -f rabbitmq-svc.yaml
 sudo microk8s.kubectl create -f rabbitmq-endpnt.yaml
-sudo microk8s.kubectl create -f bgp-svc.yaml
-sudo microk8s.kubectl create -f bgp-endpnt.yaml
-sudo microk8s.kubectl create -f devstack-ssh-svc.yaml
-sudo microk8s.kubectl create -f devstack-ssh-endpnt.yaml
+#sudo microk8s.kubectl create -f bgp-svc.yaml
+#sudo microk8s.kubectl create -f bgp-endpnt.yaml
+#sudo microk8s.kubectl create -f devstack-ssh-svc.yaml
+#sudo microk8s.kubectl create -f devstack-ssh-endpnt.yaml
