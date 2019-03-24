@@ -9,12 +9,13 @@ from ryu.exception import RyuException
 
 import sys
 sys.path.append('/config')
-from app_settings import RABBITMQ_SERVER, RABBIT_USER, RABBIT_PASSWORD
+from app_settings import RABBIT_USER, RABBIT_PASSWORD
 from oslo_config import cfg
 import oslo_messaging as om
 
 
 API_NAME = 'restvtep'
+RABBITMQ_SERVER = 'rabbitmq-svc'
 
 
 # Utility functions
