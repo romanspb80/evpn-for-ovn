@@ -1,7 +1,7 @@
 #!/bin/bash
 
 sudo apt-get install -y snapd
-sudo snap install microk8s --classic
+sudo snap install microk8s --classic --channel=1.13/stable
 sudo snap disable microk8s
 sudo snap enable microk8s
 sudo sleep 1m
