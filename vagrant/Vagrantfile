@@ -2,18 +2,12 @@
 # vi: set ft=ruby :
 
 Vagrant.configure("2") do |config|
-  # The most common configuration options are documented and commented below.
-  # For a complete reference, please see the online documentation at
-  # https://docs.vagrantup.com.
+  config.ssh.insert_key = false
 
   config.vm.define "ryu" do |ryu|
     ryu.vm.box = "peru/ubuntu-16.04-server-amd64"
-    ryu.vm.synced_folder "synced_folders_ryu/", "/home/vagrant"
     ryu.vm.network "private_network", ip: "192.168.10.10"
     ryu.vm.hostname = "ryu"
-    ryu.vm.provision "shell", inline: "./install_mn.sh"
-    ryu.vm.provision "shell", inline: "./install_ryu.sh"
-    ryu.vm.provision "shell", inline: "./root_ssh.sh"
     ryu.vm.provider "libvirt" do |libvirt|
       libvirt.memory = "2048"
       libvirt.cpus = 1
@@ -27,7 +21,6 @@ Vagrant.configure("2") do |config|
     k8s.vm.synced_folder "synced_folders_k8s/", "/home/vagrant"
     k8s.vm.network "private_network", ip: "192.168.10.20"
     k8s.vm.hostname = "k8s"
-    k8s.vm.provision "shell", inline: "./install_microk8s.sh"
     k8s.vm.provider "libvirt" do |libvirt|
       libvirt.memory = "4096"
       libvirt.cpus = 1
@@ -41,14 +34,15 @@ Vagrant.configure("2") do |config|
     devstack.vm.synced_folder "synced_folders_devstack/", "/home/vagrant"
     devstack.vm.network "private_network", ip: "192.168.10.200"
     devstack.vm.hostname = "devstack-ovn"
-    devstack.vm.provision "shell", inline: "./install_devstack.sh"
-    devstack.vm.provision "shell", inline: "sudo rabbitmqctl set_user_tags stackrabbit administrator"
-    devstack.vm.provision "shell", inline: "sudo cp ./rabbitmq.config /etc/rabbitmq/ && sudo systemctl restart rabbitmq-server"
     devstack.vm.provider "libvirt" do |libvirt|
       libvirt.memory = "8192"
       libvirt.cpus = 2
       libvirt.nested = true
       libvirt.volume_cache = 'none'
+    end
+    devstack.vm.provision "ansible" do |ansible|
+      ansible.limit = 'all'
+      ansible.playbook = "playbook.yml"
     end
   end
 
