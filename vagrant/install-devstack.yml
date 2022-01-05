@@ -1,0 +1,109 @@
+- name: VM initialization
+  hosts: all
+  become: yes
+  become_user: root
+  tasks:
+    - name: Add the 'stack' user for devstack
+      user:
+        name: stack
+        comment: Dev stack user
+        shell: /bin/bash
+        # Definition of a custom user HOME directory, according to the DevStack recommendation
+        home: /opt/stack
+
+    - name: Make 'stack' a privileged user
+      copy:
+        content: "stack ALL=(ALL) NOPASSWD: ALL"
+        dest: /etc/sudoers.d/stack
+        mode: 0440
+
+    # Without the `acl` package you may (and probably will) experience permission related issues
+    - name: Install acl to fix unprivileged user error
+      package:
+        name: acl
+        state: present
+
+    # DevStack scripts uses `python` directly to system has to ensure `python` command availability and map it to the Python 3
+    - name: Install python-is-python3 to ensures that python means python3
+      package:
+        name: python-is-python3
+        state: present
+
+- name: DevStack setup as 'stack' user
+  hosts: all
+  become: yes
+  become_user: stack
+  vars:
+    proj_path: "/home/vagrant/evpn-for-ovn"
+  tasks:
+    - name: Clone devstack
+      git:
+        repo: https://opendev.org/openstack/devstack
+        dest: /opt/stack/devstack
+        version: stable/victoria
+
+    - name: Copy file with configuration
+      copy:
+        src: ./devstack/local.conf
+        dest: /opt/stack/devstack/local.conf
+
+    - name: Install devstack
+      shell:
+        chdir: /opt/stack/devstack
+        cmd: ./stack.sh
+      register: devstack_output
+
+    - debug: var=devstack_output.stdout_lines
+
+    - name: Set the permissions for the RabbitMQ user
+        rabbitmq_user:
+          user: "stackrabbit"
+          tags: "administrator"
+          state: present
+        become: yes
+
+    - name: Update RabbitMQ config
+      lineinfile:
+        path: /etc/rabbitmq/rabbitmq.config
+        line: '[{rabbit, [{loopback_users, []}]}].'
+
+    - name: Restart RabbitMQ
+      systemd:
+        state: restarted
+        daemon_reload: yes
+        name: rabbitmq-server
+      become: yes
+      become_user: rabbitmq
+
+# Forward port 179 to 30179 for BGP interconnection
+#- name: Set iptables
+#  iptables:
+#    table: nat
+#    chain: PREROUTING
+#    protocol: tcp
+#    match: tcp
+#    destination_port: 179
+#    jump: REDIRECT
+#    to_ports: 30179
+#    comment: Redirect BGP traffic to Node port 30179
+#  become: yes
+
+- name: microk8s install & kubernetes cluster deployment
+  hosts: all
+    become: yes
+    become_user: root
+    tasks:
+      - name: microk8s install
+        snap:
+          name: microk8s
+          classic: yes
+          channel: 1.21/stable
+      - name: Wait for microk8s to be ready
+        shell: "microk8s status --wait-ready"
+        changed_when: False
+      - name: microk8s - enable dns, ingress
+        shell: "microk8s enable dns ingress"
+      - name: Create alias for microk8s.kubectl
+        shell: "snap alias microk8s.kubectl kubectl"
+      - name: kubernetes cluster deployment
+        shell: {{proj_path}}/vagrant/synced_folders_k8s/install_microk8s.sh >> k8s_install.log

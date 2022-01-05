@@ -1,13 +1,16 @@
-apiVersion: extensions/v1beta1
+apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: evpn-api-ing
 spec:
   rules:
-  - host: evpn-api.domain-x.com
+  - host: "evpn-api.domain-x.com"
     http:
       paths:
       - path: /
+        pathType: Prefix
         backend:
-          serviceName: evpn-api-svc
-          servicePort: 8081
+          service:
+            name: evpn-api-svc
+            port:
+              number: 5000

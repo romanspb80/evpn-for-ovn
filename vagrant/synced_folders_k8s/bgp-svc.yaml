@@ -4,7 +4,7 @@ metadata:
   name: bgp-svc
 spec:
   ports:
-  - name: "bgp"
+  - name: "bgp-remote"
     protocol: "TCP"
     port: 179
     nodePort: 0

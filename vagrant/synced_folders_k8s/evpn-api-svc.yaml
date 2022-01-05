@@ -4,7 +4,7 @@ metadata:
   name: evpn-api-svc
 spec:
   ports:
-  - port: 8081
-    targetPort: http
+  - port: 5000
+    targetPort: 5000
   selector:
     app: evpn-api

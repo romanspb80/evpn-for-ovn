@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovsdb
+spec:
+  ports:
+  - name: "ovnnb"
+    protocol: "TCP"
+    port: 6641
+    targetPort: 6641
+    nodePort: 0
+  - name: "ovs"
+    protocol: "TCP"
+    port: 6640
+    targetPort: 6640
+    nodePort: 0

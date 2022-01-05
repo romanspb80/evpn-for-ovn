@@ -1,0 +1,19 @@
+- name: ryu deployment
+  hosts: all
+  gather_facts: no
+  tasks:
+    - name: install apt packages
+      apt: pkg={{ item }} update_cache=yes cache_valid_time=3600
+      become: True
+      with_items:
+        - git
+        - mininet
+        - python-dev
+        - python-setuptools
+        - python-pip
+        - python3-pip
+        - iptables
+        - ryu
+    - name: openvswitch setup
+      shell: ovs-vsctl set-manager ptcp:6640
+      become: True
