@@ -24,16 +24,15 @@ Vagrant.configure("2") do |config|
   config.vm.define "devstack" do |devstack|
     devstack.vm.box = "focal-server-cloudimg-amd64-vagrant"
     devstack.vm.box_url = "https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64-vagrant.box"
+    #devstack.vm.box = "ubuntu/focal64"
     devstack.vm.network "private_network", ip: "192.168.10.20", nic_type: "virtio"  
     ssh_pub_key = File.readlines("#{Dir.home}/.ssh/id_rsa.pub").first.strip
     devstack.vm.provision 'shell', inline: 'mkdir -p /root/.ssh'
     devstack.vm.provision 'shell', inline: "echo #{ssh_pub_key} >> /root/.ssh/authorized_keys"
     devstack.vm.provision 'shell', inline: "echo #{ssh_pub_key} >> /home/vagrant/.ssh/authorized_keys", privileged: false
-    devstack.vm.provision 'shell', inline: 'sed -i "s/^#PasswordAuthentication no/PasswordAuthentication yes/" /etc/ssh/sshd_config'
-    devstack.vm.provision 'shell', inline: "systemctl reload ssh"
     devstack.vm.provider "virtualbox" do |virtualbox|
-      virtualbox.memory = 8192
-      virtualbox.cpus = 2
+      virtualbox.memory = 6144
+      virtualbox.cpus = 1
       virtualbox.customize ["modifyvm", :id, "--nested-hw-virt", "on"]
       virtualbox.customize ["modifyvm", :id, "--nicpromisc2", "allow-all"]
     end

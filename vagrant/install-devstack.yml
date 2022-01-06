@@ -29,38 +29,52 @@
         name: python-is-python3
         state: present
 
+- name: Clone evpn-for-ovn
+  hosts: all
+  become: yes
+  become_user: vagrant
+  tasks:
+    - name: Clone devstack
+      git:
+        repo: https://github.com/romanspb80/evpn-for-ovn.git
+        dest: /home/vagrant/evpn-for-ovn
+
 - name: DevStack setup as 'stack' user
   hosts: all
   become: yes
   become_user: stack
   vars:
-    proj_path: "/home/vagrant/evpn-for-ovn"
+    proj_path: /home/vagrant/evpn-for-ovn
+  environment:
+    GIT_TRACE_PACKET: 1
+    GIT_TRACE: 1
+    GIT_CURL_VERBOSE: 1
   tasks:
     - name: Clone devstack
       git:
-        repo: https://opendev.org/openstack/devstack
+        repo: https://opendev.org/openstack/devstack.git
         dest: /opt/stack/devstack
         version: stable/victoria
 
     - name: Copy file with configuration
       copy:
-        src: ./devstack/local.conf
+        src: "{{ proj_path }}/devstack/local.conf"
         dest: /opt/stack/devstack/local.conf
 
     - name: Install devstack
       shell:
         chdir: /opt/stack/devstack
-        cmd: ./stack.sh
+        cmd: ./stack.sh >> ./devstack_install.log
       register: devstack_output
 
     - debug: var=devstack_output.stdout_lines
 
     - name: Set the permissions for the RabbitMQ user
-        rabbitmq_user:
-          user: "stackrabbit"
-          tags: "administrator"
-          state: present
-        become: yes
+      rabbitmq_user:
+        user: "stackrabbit"
+        tags: "administrator"
+        state: present
+      become: yes
 
     - name: Update RabbitMQ config
       lineinfile:
@@ -90,20 +104,22 @@
 
 - name: microk8s install & kubernetes cluster deployment
   hosts: all
-    become: yes
-    become_user: root
-    tasks:
-      - name: microk8s install
-        snap:
-          name: microk8s
-          classic: yes
-          channel: 1.21/stable
-      - name: Wait for microk8s to be ready
-        shell: "microk8s status --wait-ready"
-        changed_when: False
-      - name: microk8s - enable dns, ingress
-        shell: "microk8s enable dns ingress"
-      - name: Create alias for microk8s.kubectl
-        shell: "snap alias microk8s.kubectl kubectl"
-      - name: kubernetes cluster deployment
-        shell: {{proj_path}}/vagrant/synced_folders_k8s/install_microk8s.sh >> k8s_install.log
+  become: yes
+  become_user: root
+  tasks:
+    - name: microk8s install
+      snap:
+        name: microk8s
+        classic: yes
+        channel: 1.21/stable
+    - name: Wait for microk8s to be ready
+      shell: "microk8s status --wait-ready"
+      changed_when: False
+    - name: microk8s - enable dns, ingress
+      shell: "microk8s enable dns ingress"
+    - name: Create alias for microk8s.kubectl
+      shell: "snap alias microk8s.kubectl kubectl"
+    - name: kubernetes cluster deployment
+      shell:
+        chdir: "{{proj_path}}/vagrant/synced_folders_k8s"
+        cmd: ./install_microk8s.sh >> ./k8s_install.log"
