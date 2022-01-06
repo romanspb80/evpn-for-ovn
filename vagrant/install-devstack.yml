@@ -50,11 +50,10 @@
     GIT_TRACE_PACKET: 1
     GIT_TRACE: 1
     GIT_CURL_VERBOSE: 1
-    GIT_BASE: "https://git.openstack.org"
   tasks:
     - name: Clone devstack
       git:
-        repo: https://opendev.org/openstack/devstack.git
+        repo: https://github.com/openstack/devstack.git
         dest: /opt/stack/devstack
         version: stable/victoria
 
@@ -62,7 +61,7 @@
       shell: "cp {{ proj_path }}/vagrant/devstack/local.conf /opt/stack/devstack/local.conf"
 
     - name: Fix cinder repo path
-      shell: "sed -i 's/${GIT_BASE}\/openstack\/cinder/github.com\/openstack\/cinder/g' /opt/stack/devstack/stackrc"
+      shell: "sed -i 's/opendev.org/github.com/g' /opt/stack/devstack/stackrc"
 
     - name: Install devstack
       shell:
