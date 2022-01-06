@@ -59,7 +59,7 @@
 
     - name: Copy file with configuration
       copy:
-        src: "{{ proj_path }}/devstack/local.conf"
+        src: "{{ proj_path }}/vagrant/devstack/local.conf"
         dest: /opt/stack/devstack/local.conf
 
     - name: Install devstack
