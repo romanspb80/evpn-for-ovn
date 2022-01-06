@@ -50,6 +50,7 @@
     GIT_TRACE_PACKET: 1
     GIT_TRACE: 1
     GIT_CURL_VERBOSE: 1
+    GIT_BASE: "https://git.openstack.org"
   tasks:
     - name: Clone devstack
       git:
@@ -58,9 +59,7 @@
         version: stable/victoria
 
     - name: Copy file with configuration
-      copy:
-        src: "{{ proj_path }}/vagrant/devstack/local.conf"
-        dest: /opt/stack/devstack/local.conf
+      shell: "cp {{ proj_path }}/vagrant/devstack/local.conf /opt/stack/devstack/local.conf"
 
     - name: Install devstack
       shell:
