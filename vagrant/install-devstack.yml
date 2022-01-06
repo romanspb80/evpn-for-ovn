@@ -61,6 +61,9 @@
     - name: Copy file with configuration
       shell: "cp {{ proj_path }}/vagrant/devstack/local.conf /opt/stack/devstack/local.conf"
 
+    - name: Fix cinder repo path
+      shell: "sed -i 's/${GIT_BASE}\/openstack\/cinder/github.com\/openstack\/cinder/g' /opt/stack/devstack/stackrc"
+
     - name: Install devstack
       shell:
         chdir: /opt/stack/devstack
