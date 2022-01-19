@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ .Values.agent.name }}-ds
+  labels:
+    app: {{ .Values.agent.name }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.agent.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.agent.name }}
+    spec:
+      hostNetwork: true
+      containers:
+      - name: {{ .Values.agent.name }}
+        image: {{ .Values.agent.DaemonSet.containers.image }}
+        volumeMounts:
+        - name: {{ .Values.common.configMap }}
+          mountPath: /config
+        ports:
+        - name: bgp
+          hostPort: 179
+          containerPort: 179
+        - name: ssh
+          containerPort: 22
+      volumes:
+      - name: {{ .Values.common.configMap }}
+        configMap:
+          name: {{ .Values.common.configMap }}
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.agent.name }}-svc
+spec:
+  type: NodePort
+  ports:
+  - port: 179
+    targetPort: bgp
+    nodePort: 30179
+  selector:
+    app: evpn-agent
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.externalServuces.rabbitmq.name }}-svc
+spec:
+  ports:
+  - name: {{ .Values.externalServuces.rabbitmq.name }}
+    protocol: TCP
+    port: 5672
+    nodePort: 0
+
+---
+
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: {{ .Values.externalServuces.rabbitmq.name }}-svc
+subsets:
+  - addresses:
+    - ip: {{ .Values.externalServuces.rabbitmq.Endpoints.ip }}
+    ports:
+    - name: {{ .Values.externalServuces.rabbitmq.name }}
+      port: 5672
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.externalServuces.bgp.name }}-svc
+spec:
+  ports:
+  - name: {{ .Values.externalServuces.bgp.name }}-remote
+    protocol: TCP
+    port: 179
+    nodePort: 0
+
+---
+
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: {{ .Values.externalServuces.bgp.name }}-svc
+subsets:
+  - addresses:
+    - ip: {{ .Values.externalServuces.bgp.Endpoints.ip }}
+    ports:
+    - name: {{ .Values.externalServuces.bgp.name }}-remote
+      port: 179
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.externalServuces.ovsdb.name }}
+spec:
+  ports:
+  - name: ovnnb
+    protocol: TCP
+    port: 6641
+    targetPort: 6641
+    nodePort: 0
+  - name: ovs
+    protocol: TCP
+    port: 6640
+    targetPort: 6640
+    nodePort: 0
+
+---
+
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: {{ .Values.externalServuces.ovsdb.name }}
+subsets:
+  - addresses:
+    - ip: {{ .Values.externalServuces.ovsdb.Endpoints.ip }}
+    ports:
+    - name: ovnnb
+      port: 6641
+    - name: ovs
+      port: 6640

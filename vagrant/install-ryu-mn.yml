@@ -17,6 +17,14 @@
     - name: install ryu
       pip:
         name: ryu
+    - name: install paramiko
+        become_user: root
+        pip:
+          name: paramiko
+    - name: install eventlet
+      become_user: root
+      pip:
+        name: eventlet==0.30.2
     - name: openvswitch setup
       shell: ovs-vsctl set-manager ptcp:6640
       become: True

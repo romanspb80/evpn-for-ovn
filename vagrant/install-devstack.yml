@@ -2,6 +2,7 @@
   hosts: all
   become: yes
   become_user: root
+  gather_facts: no
   tasks:
     - name: Add the 'stack' user for devstack
       user:
@@ -33,6 +34,7 @@
   hosts: all
   become: yes
   become_user: vagrant
+  gather_facts: no
   tasks:
     - name: Clone devstack
       git:
@@ -50,6 +52,7 @@
     GIT_TRACE_PACKET: 1
     GIT_TRACE: 1
     GIT_CURL_VERBOSE: 1
+  gather_facts: no
   tasks:
     - name: Clone devstack
       git:
@@ -71,25 +74,33 @@
 
     - debug: var=devstack_output.stdout_lines
 
-    - name: Set the permissions for the RabbitMQ user
+- name: Set RabbitMQ up
+  hosts: all
+  become: yes
+  become_user: root
+  gather_facts: no
+  tasks:
+    - name: Set RabbitMQ user
       rabbitmq_user:
         user: "stackrabbit"
         tags: "administrator"
+        permissions:
+          - vhost: /
+            configure_priv: .*
+            read_priv: .*
+            write_priv: .*
         state: present
-      become: yes
 
     - name: Update RabbitMQ config
-      lineinfile:
-        path: /etc/rabbitmq/rabbitmq.config
-        line: '[{rabbit, [{loopback_users, []}]}].'
+      copy:
+        dest: /etc/rabbitmq/rabbitmq-env.conf
+        content: 'loopback_users = none'
 
     - name: Restart RabbitMQ
       systemd:
         state: restarted
         daemon_reload: yes
         name: rabbitmq-server
-      become: yes
-      become_user: rabbitmq
 
 # Forward port 179 to 30179 for BGP interconnection
 #- name: Set iptables
@@ -108,6 +119,9 @@
   hosts: all
   become: yes
   become_user: root
+  gather_facts: no
+  vars:
+    proj_path: /home/vagrant/evpn-for-ovn
   tasks:
     - name: microk8s install
       snap:
@@ -118,10 +132,12 @@
       shell: "microk8s status --wait-ready"
       changed_when: False
     - name: microk8s - enable dns, ingress
-      shell: "microk8s enable dns ingress"
+      shell: "microk8s enable dns ingress helm"
+      register: stdout
+      failed_when: "stdout.rc not in [ 0, 1 ]"
     - name: Create alias for microk8s.kubectl
       shell: "snap alias microk8s.kubectl kubectl"
     - name: kubernetes cluster deployment
       shell:
         chdir: "{{proj_path}}/vagrant/synced_folders_k8s"
-        cmd: ./install_microk8s.sh >> ./k8s_install.log"
+        cmd: ./install_microk8s.sh >> ./k8s_install.log
