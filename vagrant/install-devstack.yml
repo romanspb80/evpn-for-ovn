@@ -69,6 +69,8 @@
       become: yes
 
     - name: Install devstack
+      become: yes
+      become_user: stack
       shell:
         chdir: /opt/stack/devstack
         cmd: ./stack.sh
