@@ -62,15 +62,11 @@
 
     - name: Copy file with configuration
       shell: "cp {{ proj_path }}/vagrant/devstack/local.conf /opt/stack/devstack/local.conf"
-      become: yes
 
     - name: Fix cinder repo path
       shell: "sed -i 's/opendev.org/github.com/g' /opt/stack/devstack/stackrc"
-      become: yes
 
     - name: Install devstack
-      become: yes
-      become_user: stack
       shell:
         chdir: /opt/stack/devstack
         cmd: ./stack.sh
