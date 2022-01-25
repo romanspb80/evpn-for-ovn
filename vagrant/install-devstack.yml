@@ -58,7 +58,7 @@
       git:
         repo: https://github.com/openstack/devstack.git
         dest: /opt/stack/devstack
-        version: stable/victoria
+        version: stable/ussuri
 
     - name: Copy file with configuration
       shell: "cp {{ proj_path }}/vagrant/devstack/local.conf /opt/stack/devstack/local.conf"
