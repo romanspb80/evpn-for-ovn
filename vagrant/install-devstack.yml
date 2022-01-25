@@ -62,14 +62,16 @@
 
     - name: Copy file with configuration
       shell: "cp {{ proj_path }}/vagrant/devstack/local.conf /opt/stack/devstack/local.conf"
+      become: yes
 
     - name: Fix cinder repo path
       shell: "sed -i 's/opendev.org/github.com/g' /opt/stack/devstack/stackrc"
+      become: yes
 
     - name: Install devstack
       shell:
         chdir: /opt/stack/devstack
-        cmd: ./stack.sh >> ./devstack_install.log
+        cmd: ./stack.sh
       register: devstack_output
 
     - debug: var=devstack_output.stdout_lines
@@ -80,21 +82,10 @@
   become_user: root
   gather_facts: no
   tasks:
-    - name: Set RabbitMQ user
-      rabbitmq_user:
-        user: "stackrabbit"
-        tags: "administrator"
-        permissions:
-          - vhost: /
-            configure_priv: .*
-            read_priv: .*
-            write_priv: .*
-        state: present
-
-    - name: Update RabbitMQ config
-      copy:
-        dest: /etc/rabbitmq/rabbitmq-env.conf
-        content: 'loopback_users = none'
+    - name: Set RabbitMQ permissions for user
+      shell: 'rabbitmqctl set_permissions stackrabbit ".*" ".*" ".*"'
+    - name: Set RabbitMQ tag for user
+      shell: "rabbitmqctl set_user_tags stackrabbit administrator"
 
     - name: Restart RabbitMQ
       systemd:
@@ -132,7 +123,7 @@
       shell: "microk8s status --wait-ready"
       changed_when: False
     - name: microk8s - enable dns, ingress
-      shell: "microk8s enable dns ingress helm"
+      shell: "microk8s enable dns ingress helm3"
       register: stdout
       failed_when: "stdout.rc not in [ 0, 1 ]"
     - name: Create alias for microk8s.kubectl
