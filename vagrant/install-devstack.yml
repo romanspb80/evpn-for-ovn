@@ -18,13 +18,13 @@
         dest: /etc/sudoers.d/stack
         mode: 0440
 
-    # Without the `acl` package you may (and probably will) experience permission related issues
-    - name: Install acl to fix unprivileged user error
-      package:
-        name: acl
-        state: present
+#    # Without the `acl` package you may (and probably will) experience permission related issues
+#    - name: Install acl to fix unprivileged user error
+#      package:
+#        name: acl
+#        state: present
 
-    # DevStack scripts uses `python` directly to system has to ensure `python` command availability and map it to the Python 3
+    # DevStack scripts uses python3
     - name: Install python-is-python3 to ensures that python means python3
       package:
         name: python-is-python3
@@ -58,13 +58,19 @@
       git:
         repo: https://github.com/openstack/devstack.git
         dest: /opt/stack/devstack
-        version: stable/ussuri
+        version: stable/yoga
 
     - name: Copy file with configuration
       shell: "cp {{ proj_path }}/vagrant/devstack/local.conf /opt/stack/devstack/local.conf"
 
-    - name: Fix cinder repo path
-      shell: "sed -i 's/opendev.org/github.com/g' /opt/stack/devstack/stackrc"
+#    - name: Set devstack configuration
+#      shell:
+#        chdir: /opt/stack/devstack
+#        cmd: "cp ../neutron/devstack/ovn-local.conf.sample local.conf"
+#      register: devstack_output
+#
+#    - name: Fix cinder repo path
+#      shell: "sed -i 's/opendev.org/github.com/g' /opt/stack/devstack/stackrc"
 
     - name: Install devstack
       shell:
