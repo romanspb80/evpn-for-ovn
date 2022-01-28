@@ -18,11 +18,11 @@
         dest: /etc/sudoers.d/stack
         mode: 0440
 
-#    # Without the `acl` package you may (and probably will) experience permission related issues
-#    - name: Install acl to fix unprivileged user error
-#      package:
-#        name: acl
-#        state: present
+    # Without the `acl` package you may (and probably will) experience permission related issues
+    - name: Install acl to fix unprivileged user error
+      package:
+        name: acl
+        state: present
 
     # DevStack scripts uses python3
     - name: Install python-is-python3 to ensures that python means python3
