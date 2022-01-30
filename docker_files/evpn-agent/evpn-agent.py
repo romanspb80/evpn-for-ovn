@@ -189,6 +189,8 @@ class RestVtep(app_manager.RyuApp):
             return None
 
         # Update addresses
+        if type(addresses) != list:
+            addresses = [addresses]
         addresses = set(list(addresses))
         getattr(addresses, action)(address)
         args = ['Logical_Switch_Port', port, ('addresses', list(addresses))]
