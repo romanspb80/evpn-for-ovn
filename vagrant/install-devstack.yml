@@ -104,27 +104,27 @@
         daemon_reload: yes
         name: rabbitmq-server
 
-- name: microk8s install & kubernetes cluster deployment
-  hosts: all
-  become: yes
-  become_user: root
-  gather_facts: no
-  tasks:
-    - name: microk8s install
-      snap:
-        name: microk8s
-        classic: yes
-        channel: 1.21/stable
-    - name: Wait for microk8s to be ready
-      shell: microk8s status --wait-ready
-      changed_when: False
-    - name: microk8s - enable dns, ingress
-      shell: microk8s enable dns ingress helm3
-      register: stdout
-      failed_when: "stdout.rc not in [ 0, 1 ]"
-    - name: Create alias for microk8s.kubectl
-      shell: snap alias microk8s.kubectl kubectl
-    - name: Create alias for microk8s.helm3
-      shell: snap alias microk8s.helm3 helm3
-    - name: kubernetes cluster deployment
-      shell: helm3 install evpnOVN /home/roman/projects/evpn-for-ovn/vagrant/helm_chart/evpnOVN
+#- name: microk8s install & kubernetes cluster deployment
+#  hosts: all
+#  become: yes
+#  become_user: root
+#  gather_facts: no
+#  tasks:
+#    - name: microk8s install
+#      snap:
+#        name: microk8s
+#        classic: yes
+#        channel: 1.21/stable
+#    - name: Wait for microk8s to be ready
+#      shell: microk8s status --wait-ready
+#      changed_when: False
+#    - name: microk8s - enable dns, ingress
+#      shell: microk8s enable dns ingress helm3
+#      register: stdout
+#      failed_when: "stdout.rc not in [ 0, 1 ]"
+#    - name: Create alias for microk8s.kubectl
+#      shell: snap alias microk8s.kubectl kubectl
+#    - name: Create alias for microk8s.helm3
+#      shell: snap alias microk8s.helm3 helm3
+#    - name: kubernetes cluster deployment
+#      shell: helm3 install evpnOVN /home/vagrant/evpn-for-ovn/vagrant/helm_chart/evpnOVN
