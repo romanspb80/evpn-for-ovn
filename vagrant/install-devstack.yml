@@ -80,6 +80,15 @@
 
     - debug: var=devstack_output.stdout_lines
 
+
+- name: OpenVSwitch setup
+  hosts: all
+  become: yes
+  become_user: root
+  gather_facts: no
+  tasks:
+    - shell: "ovs-vsctl set-manager ptcp:6640"
+
 - name: Set RabbitMQ up
   hosts: all
   become: yes
@@ -96,19 +105,6 @@
         state: restarted
         daemon_reload: yes
         name: rabbitmq-server
-
-# Forward port 179 to 30179 for BGP interconnection
-#- name: Set iptables
-#  iptables:
-#    table: nat
-#    chain: PREROUTING
-#    protocol: tcp
-#    match: tcp
-#    destination_port: 179
-#    jump: REDIRECT
-#    to_ports: 30179
-#    comment: Redirect BGP traffic to Node port 30179
-#  become: yes
 
 - name: microk8s install & kubernetes cluster deployment
   hosts: all

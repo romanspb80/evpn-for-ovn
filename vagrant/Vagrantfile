@@ -5,7 +5,7 @@ Vagrant.configure("2") do |config|
 
   config.vm.define "ryu" do |ryu|
     ryu.vm.box = "focal-server-cloudimg-amd64-vagrant"
-    devstack.vm.box_url = "https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64-vagrant.box"
+    ryu.vm.box_url = "https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64-vagrant.box"
     ryu.vm.network "private_network", ip: "192.168.10.10", nic_type: "virtio"
     ryu.vm.hostname = "ryu"
     ssh_pub_key = File.readlines("#{Dir.home}/.ssh/id_rsa.pub").first.strip
@@ -13,7 +13,7 @@ Vagrant.configure("2") do |config|
     ryu.vm.provision 'shell', inline: "echo #{ssh_pub_key} >> /root/.ssh/authorized_keys"
     ryu.vm.provision 'shell', inline: "echo #{ssh_pub_key} >> /home/vagrant/.ssh/authorized_keys", privileged: false
     ryu.vm.provider "virtualbox" do |virtualbox|
-      virtualbox.memory = "2048"
+      virtualbox.memory = 2048
       virtualbox.cpus = 1
       virtualbox.customize ["modifyvm", :id, "--nicpromisc2", "allow-all"]
     end
