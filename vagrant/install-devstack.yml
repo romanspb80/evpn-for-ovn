@@ -46,8 +46,6 @@
   hosts: all
   become: yes
   become_user: stack
-  vars:
-    proj_path: /home/vagrant/evpn-for-ovn
   environment:
     GIT_TRACE_PACKET: 1
     GIT_TRACE: 1
@@ -61,7 +59,7 @@
 #        version: stable/yoga
 
     - name: Copy file with configuration
-      shell: "cp {{ proj_path }}/vagrant/devstack/local.conf /opt/stack/devstack/local.conf"
+      shell: "cp /home/vagrant/evpn-for-ovn/vagrant/devstack/local.conf /opt/stack/devstack/local.conf"
 
 #    - name: Set devstack configuration
 #      shell:
@@ -87,7 +85,7 @@
   become_user: root
   gather_facts: no
   tasks:
-    - shell: "ovs-vsctl set-manager ptcp:6640"
+    - shell: ovs-vsctl set-manager ptcp:6640
 
 - name: Set RabbitMQ up
   hosts: all
@@ -96,9 +94,9 @@
   gather_facts: no
   tasks:
     - name: Set RabbitMQ permissions for user
-      shell: 'rabbitmqctl set_permissions stackrabbit ".*" ".*" ".*"'
+      shell: rabbitmqctl set_permissions stackrabbit ".*" ".*" ".*"
     - name: Set RabbitMQ tag for user
-      shell: "rabbitmqctl set_user_tags stackrabbit administrator"
+      shell: rabbitmqctl set_user_tags stackrabbit administrator
 
     - name: Restart RabbitMQ
       systemd:
@@ -111,8 +109,6 @@
   become: yes
   become_user: root
   gather_facts: no
-  vars:
-    proj_path: /home/vagrant/evpn-for-ovn
   tasks:
     - name: microk8s install
       snap:
@@ -120,15 +116,15 @@
         classic: yes
         channel: 1.21/stable
     - name: Wait for microk8s to be ready
-      shell: "microk8s status --wait-ready"
+      shell: microk8s status --wait-ready
       changed_when: False
     - name: microk8s - enable dns, ingress
-      shell: "microk8s enable dns ingress helm3"
+      shell: microk8s enable dns ingress helm3
       register: stdout
       failed_when: "stdout.rc not in [ 0, 1 ]"
     - name: Create alias for microk8s.kubectl
-      shell: "snap alias microk8s.kubectl kubectl"
+      shell: snap alias microk8s.kubectl kubectl
+    - name: Create alias for microk8s.helm3
+      shell: snap alias microk8s.helm3 helm3
     - name: kubernetes cluster deployment
-      shell:
-        chdir: "{{proj_path}}/vagrant/synced_folders_k8s"
-        cmd: ./install_microk8s.sh >> ./k8s_install.log
+      shell: helm3 install evpnOVN /home/roman/projects/evpn-for-ovn/vagrant/helm_chart/evpnOVN
