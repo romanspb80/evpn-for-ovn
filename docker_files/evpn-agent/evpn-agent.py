@@ -152,7 +152,13 @@ class RestVtep(app_manager.RyuApp):
                 return OVSDB_SCHEMA[schema]['conn']
             # The python-ovs Idl class (Open vSwitch Database Interface Definition Language).
             # Take it from server's database
-            i = connection.OvsdbIdl.from_server(conn, schema)
+            try:
+                # The ovsdbapp Connection object
+                i = connection.OvsdbIdl.from_server(conn, schema)
+            except Exception as e:
+                self.logger.exception('Could not retrieve schema {} from {}'.format(schema, conn))
+                return None
+
             try:
                 # The ovsdbapp Connection object
                 conn = connection.Connection(idl=i, timeout=3)
