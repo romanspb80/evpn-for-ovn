@@ -1,35 +1,3 @@
-- name: VM initialization
-  hosts: all
-  become: yes
-  become_user: root
-  gather_facts: no
-  tasks:
-    - name: Add the 'stack' user for devstack
-      user:
-        name: stack
-        comment: Dev stack user
-        shell: /bin/bash
-        # Definition of a custom user HOME directory, according to the DevStack recommendation
-        home: /opt/stack
-
-    - name: Make 'stack' a privileged user
-      copy:
-        content: "stack ALL=(ALL) NOPASSWD: ALL"
-        dest: /etc/sudoers.d/stack
-        mode: 0440
-
-    # Without the `acl` package you may (and probably will) experience permission related issues
-    - name: Install acl to fix unprivileged user error
-      package:
-        name: acl
-        state: present
-
-    # DevStack scripts uses python3
-    - name: Install python-is-python3 to ensures that python means python3
-      package:
-        name: python-is-python3
-        state: present
-
 - name: Clone evpn-for-ovn
   hosts: all
   become: yes
@@ -76,6 +44,8 @@
   become_user: root
   gather_facts: no
   tasks:
+    - name: Add RabbitMQ user
+      shell: rabbitmqctl add_user stackrabbit secret
     - name: Set RabbitMQ permissions for user
       shell: rabbitmqctl set_permissions stackrabbit ".*" ".*" ".*"
     - name: Set RabbitMQ tag for user
