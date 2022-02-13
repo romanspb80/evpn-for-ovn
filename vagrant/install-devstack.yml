@@ -42,50 +42,33 @@
         dest: /home/vagrant/evpn-for-ovn
         version: rework_the_project
 
-- name: DevStack setup as 'stack' user
-  hosts: all
-  become: yes
-  become_user: stack
-  environment:
-    GIT_TRACE_PACKET: 1
-    GIT_TRACE: 1
-    GIT_CURL_VERBOSE: 1
-  gather_facts: no
-  tasks:
-    - name: Clone devstack
-      git:
-        repo: https://github.com/openstack/devstack.git
-        dest: /opt/stack/devstack
-#        version: stable/yoga
-
-    - name: Copy file with configuration
-      shell: "cp /home/vagrant/evpn-for-ovn/vagrant/devstack/local.conf /opt/stack/devstack/local.conf"
-
-#    - name: Set devstack configuration
-#      shell:
-#        chdir: /opt/stack/devstack
-#        cmd: "cp ../neutron/devstack/ovn-local.conf.sample local.conf"
-#      register: devstack_output
-#
-#    - name: Fix cinder repo path
-#      shell: "sed -i 's/opendev.org/github.com/g' /opt/stack/devstack/stackrc"
-
-    - name: Install devstack
-      shell:
-        chdir: /opt/stack/devstack
-        cmd: ./stack.sh
-      register: devstack_output
-
-    - debug: var=devstack_output.stdout_lines
-
-
-- name: OpenVSwitch setup
+- name: microstack install
   hosts: all
   become: yes
   become_user: root
   gather_facts: no
   tasks:
-    - shell: ovs-vsctl set-manager ptcp:6640
+    - name: microstack install
+      shell: snap install microstack --beta --devmode
+    - name: Create openstack cluster
+      shell: microstack init --auto --control
+    - name: Create alias for microstack.ovs-vsctl
+      shell: snap alias microstack.ovs-vsctl ovs-vsctl
+    - name: Create alias for microstack.ovn-nbctl
+      shell: snap alias microstack.ovn-nbctl ovn-nbctl
+    - name: Create alias for microstack.rabbitmqctl
+      shell: snap alias microstack.rabbitmqctl rabbitmqctl
+
+- name: OpenVSwitch & OVN setup
+  hosts: all
+  become: yes
+  become_user: root
+  gather_facts: no
+  tasks:
+    - name: OVS setup
+      shell: ovs-vsctl set-manager ptcp:6640
+    - name: OVN setup
+      shell: ovn-nbctl set-connection ptcp:6641:192.168.10.20
 
 - name: Set RabbitMQ up
   hosts: all
@@ -104,27 +87,27 @@
         daemon_reload: yes
         name: rabbitmq-server
 
-#- name: microk8s install & kubernetes cluster deployment
-#  hosts: all
-#  become: yes
-#  become_user: root
-#  gather_facts: no
-#  tasks:
-#    - name: microk8s install
-#      snap:
-#        name: microk8s
-#        classic: yes
-#        channel: 1.21/stable
-#    - name: Wait for microk8s to be ready
-#      shell: microk8s status --wait-ready
-#      changed_when: False
-#    - name: microk8s - enable dns, ingress
-#      shell: microk8s enable dns ingress helm3
-#      register: stdout
-#      failed_when: "stdout.rc not in [ 0, 1 ]"
-#    - name: Create alias for microk8s.kubectl
-#      shell: snap alias microk8s.kubectl kubectl
-#    - name: Create alias for microk8s.helm3
-#      shell: snap alias microk8s.helm3 helm3
-#    - name: kubernetes cluster deployment
-#      shell: helm3 install evpnOVN /home/vagrant/evpn-for-ovn/vagrant/helm_chart/evpnOVN
+- name: microk8s install & kubernetes cluster deployment
+  hosts: all
+  become: yes
+  become_user: root
+  gather_facts: no
+  tasks:
+    - name: microk8s install
+      snap:
+        name: microk8s
+        classic: yes
+        channel: 1.21/stable
+    - name: Wait for microk8s to be ready
+      shell: microk8s status --wait-ready
+      changed_when: False
+    - name: microk8s - enable dns, ingress
+      shell: microk8s enable dns ingress helm3
+      register: stdout
+      failed_when: "stdout.rc not in [ 0, 1 ]"
+    - name: Create alias for microk8s.kubectl
+      shell: snap alias microk8s.kubectl kubectl
+    - name: Create alias for microk8s.helm3
+      shell: snap alias microk8s.helm3 helm3
+    - name: kubernetes cluster deployment
+      shell: helm3 install evpn-ovn /home/vagrant/evpn-for-ovn/vagrant/helm_chart/evpnOVN

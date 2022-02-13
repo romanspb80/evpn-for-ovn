@@ -20,12 +20,6 @@ spec:
         volumeMounts:
         - name: {{ .Values.common.configMap }}
           mountPath: /config
-        ports:
-        - name: bgp
-          hostPort: 179
-          containerPort: 179
-        - name: ssh
-          containerPort: 22
       volumes:
       - name: {{ .Values.common.configMap }}
         configMap:
