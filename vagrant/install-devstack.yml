@@ -50,12 +50,8 @@
       shell: rabbitmqctl set_permissions stackrabbit ".*" ".*" ".*"
     - name: Set RabbitMQ tag for user
       shell: rabbitmqctl set_user_tags stackrabbit administrator
-
     - name: Restart RabbitMQ
-      systemd:
-        state: restarted
-        daemon_reload: yes
-        name: rabbitmq-server
+      shell: snap restart microstack.rabbitmq-server
 
 - name: microk8s install & kubernetes cluster deployment
   hosts: all
