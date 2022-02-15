@@ -73,6 +73,11 @@
 #      failed_when: "stdout.rc not in [ 0, 1 ]"
     - debug:
         var: stdout.stdout_lines
+    - name: microk8s - enable helm3
+        shell: microk8s enable helm3
+      register: stdout
+    - debug:
+        var: stdout.stdout_lines
     - name: Create alias for microk8s.kubectl
       shell: snap alias microk8s.kubectl kubectl
     - name: Create alias for microk8s.helm3
