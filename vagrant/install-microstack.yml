@@ -68,9 +68,11 @@
       shell: microk8s status --wait-ready
       changed_when: False
     - name: microk8s - enable dns, ingress, helm3
-      shell: microk8s enable dns ingress helm3 || /bin/true
-#      register: stdout
+      shell: microk8s enable dns ingress helm3
+      register: stdout
 #      failed_when: "stdout.rc not in [ 0, 1 ]"
+    - debug:
+        var: stdout.stdout_lines
     - name: Create alias for microk8s.kubectl
       shell: snap alias microk8s.kubectl kubectl
     - name: Create alias for microk8s.helm3
