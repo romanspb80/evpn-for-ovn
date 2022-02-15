@@ -68,7 +68,9 @@
       shell: microk8s status --wait-ready
       changed_when: False
     - name: microk8s - enable dns, ingress, helm3
-      shell: microk8s enable dns ingress helm3
+      shell: |
+        export LC_ALL=C.UTF-8microk8s
+        enable dns ingress helm3
       register: stdout
 #      failed_when: "stdout.rc not in [ 0, 1 ]"
     - debug:
