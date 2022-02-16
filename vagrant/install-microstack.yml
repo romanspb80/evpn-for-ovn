@@ -10,48 +10,48 @@
         dest: /home/vagrant/evpn-for-ovn
         version: rework_the_project
 
-#- name: microstack install
-#  hosts: all
-#  become: yes
-#  become_user: root
-#  gather_facts: no
-#  tasks:
-#    - name: microstack install
-#      shell: snap install microstack --beta --devmode
-#    - name: Create openstack cluster
-#      shell: microstack init --auto --control
-#    - name: Create alias for microstack.ovs-vsctl
-#      shell: snap alias microstack.ovs-vsctl ovs-vsctl
-#    - name: Create alias for microstack.ovn-nbctl
-#      shell: snap alias microstack.ovn-nbctl ovn-nbctl
-#    - name: Create alias for microstack.rabbitmqctl
-#      shell: snap alias microstack.rabbitmqctl rabbitmqctl
-#
-#- name: OpenVSwitch & OVN setup
-#  hosts: all
-#  become: yes
-#  become_user: root
-#  gather_facts: no
-#  tasks:
-#    - name: OVS setup
-#      shell: ovs-vsctl set-manager ptcp:6640
-#    - name: OVN setup
-#      shell: ovn-nbctl set-connection ptcp:6641:192.168.10.20
-#
-#- name: Set RabbitMQ up
-#  hosts: all
-#  become: yes
-#  become_user: root
-#  gather_facts: no
-#  tasks:
-#    - name: Add RabbitMQ user
-#      shell: rabbitmqctl add_user stackrabbit secret
-#    - name: Set RabbitMQ permissions for user
-#      shell: rabbitmqctl set_permissions stackrabbit ".*" ".*" ".*"
-#    - name: Set RabbitMQ tag for user
-#      shell: rabbitmqctl set_user_tags stackrabbit administrator
-#    - name: Restart RabbitMQ
-#      shell: snap restart microstack.rabbitmq-server
+- name: microstack install
+  hosts: all
+  become: yes
+  become_user: root
+  gather_facts: no
+  tasks:
+    - name: microstack install
+      shell: snap install microstack --beta --devmode
+    - name: Create openstack cluster
+      shell: microstack init --auto --control
+    - name: Create alias for microstack.ovs-vsctl
+      shell: snap alias microstack.ovs-vsctl ovs-vsctl
+    - name: Create alias for microstack.ovn-nbctl
+      shell: snap alias microstack.ovn-nbctl ovn-nbctl
+    - name: Create alias for microstack.rabbitmqctl
+      shell: snap alias microstack.rabbitmqctl rabbitmqctl
+
+- name: OpenVSwitch & OVN setup
+  hosts: all
+  become: yes
+  become_user: root
+  gather_facts: no
+  tasks:
+    - name: OVS setup
+      shell: ovs-vsctl set-manager ptcp:6640
+    - name: OVN setup
+      shell: ovn-nbctl set-connection ptcp:6641:192.168.10.20
+
+- name: Set RabbitMQ up
+  hosts: all
+  become: yes
+  become_user: root
+  gather_facts: no
+  tasks:
+    - name: Add RabbitMQ user
+      shell: rabbitmqctl add_user stackrabbit secret
+    - name: Set RabbitMQ permissions for user
+      shell: rabbitmqctl set_permissions stackrabbit ".*" ".*" ".*"
+    - name: Set RabbitMQ tag for user
+      shell: rabbitmqctl set_user_tags stackrabbit administrator
+    - name: Restart RabbitMQ
+      shell: snap restart microstack.rabbitmq-server
 
 - name: microk8s install & kubernetes cluster deployment
   hosts: all
@@ -69,15 +69,8 @@
       changed_when: False
     - name: microk8s - enable dns, ingress
       shell: microk8s enable dns ingress
-      register: stdout
-#      failed_when: "stdout.rc not in [ 0, 1 ]"
-    - debug:
-        var: stdout.stdout_lines
     - name: microk8s - enable helm3
       shell: microk8s enable helm3
-      register: stdout
-    - debug:
-        var: stdout.stdout_lines
     - name: Create alias for microk8s.kubectl
       shell: snap alias microk8s.kubectl kubectl
     - name: Create alias for microk8s.helm3
