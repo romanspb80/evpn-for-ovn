@@ -67,18 +67,16 @@
     - name: Wait for microk8s to be ready
       shell: microk8s status --wait-ready
       changed_when: False
-    - name: set microk8s up
-      command: /home/vagrant/evpn-for-ovn/vagrant/synced_folders_k8s/setup_microk8s.sh
-      register: stdout
-    - debug:
-        var: stdout.stdout_lines
-#    - name: microk8s - enable ingress
-#      shell: microk8s enable ingress
-#    - name: microk8s - enable helm3
-#      shell: microk8s enable helm3
-#    - name: Create alias for microk8s.kubectl
-#      shell: snap alias microk8s.kubectl kubectl
-#    - name: Create alias for microk8s.helm3
-#      shell: snap alias microk8s.helm3 helm3
+#    - name: set microk8s up
+#      command: /home/vagrant/evpn-for-ovn/vagrant/synced_folders_k8s/setup_microk8s.sh
+#      register: stdout
+#    - debug:
+#        var: stdout.stdout_lines
+    - name: microk8s - enable dns ingress helm3
+      raw: microk8s enable dns ingress helm3
+    - name: Create alias for microk8s.kubectl
+      shell: snap alias microk8s.kubectl kubectl
+    - name: Create alias for microk8s.helm3
+      shell: snap alias microk8s.helm3 helm3
     - name: kubernetes cluster deployment
       shell: helm3 install evpn-ovn /home/vagrant/evpn-for-ovn/vagrant/helm_chart/evpnOVN
