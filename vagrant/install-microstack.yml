@@ -68,7 +68,10 @@
       shell: microk8s status --wait-ready
       changed_when: False
     - name: set microk8s up
-      shell: '/home/vagrant/evpn-for-ovn/vagrant/synced_folders_k8s/setup_microk8s.sh'
+      command: /home/vagrant/evpn-for-ovn/vagrant/synced_folders_k8s/setup_microk8s.sh
+      register: stdout
+    - debug:
+        var: stdout.stdout_lines
 #    - name: microk8s - enable ingress
 #      shell: microk8s enable ingress
 #    - name: microk8s - enable helm3
