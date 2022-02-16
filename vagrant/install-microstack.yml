@@ -67,8 +67,10 @@
     - name: Wait for microk8s to be ready
       shell: microk8s status --wait-ready
       changed_when: False
-    - name: microk8s - enable dns, ingress
-      shell: microk8s enable dns ingress
+    - name: microk8s - enable dns
+      shell: microk8s enable dns
+    - name: microk8s - enable ingress
+      shell: microk8s enable ingress
     - name: microk8s - enable helm3
       shell: microk8s enable helm3
     - name: Create alias for microk8s.kubectl
