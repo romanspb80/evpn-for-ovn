@@ -27,7 +27,7 @@
     - name: Create alias for microstack.rabbitmqctl
       shell: snap alias microstack.rabbitmqctl rabbitmqctl
     - name: Create alias for microstack.openstack
-      shell: snap alias mmicrostack.openstack openstack
+      shell: snap alias microstack.openstack openstack
 
 - name: OpenVSwitch & OVN setup
   hosts: all

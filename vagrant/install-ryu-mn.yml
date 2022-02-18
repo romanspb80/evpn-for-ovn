@@ -13,7 +13,7 @@
           - python-dev
           - python-setuptools
           - python3-pip
-          - iptables
+#          - iptables
     - name: install ryu
       pip:
         name: ryu
