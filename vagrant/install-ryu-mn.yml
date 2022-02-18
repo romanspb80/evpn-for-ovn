@@ -17,7 +17,8 @@
     - name: install ryu
       pip:
         name: ryu
-      executable: pip3
+        extra_args: --upgrade
+        executable: pip3
     - name: install paramiko
       become: True
       pip:
