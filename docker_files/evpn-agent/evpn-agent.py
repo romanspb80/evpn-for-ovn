@@ -14,7 +14,7 @@ from ovsdbapp.schema.ovn_northbound import impl_idl as schema_ovnnb
 
 import sys
 sys.path.append('/config')
-from app_settings import OVS_NAME, OVSDB_OVS_CONN, OVSDB_OVNNB_CONN, RABBITMQ_SERVER, RABBIT_USER, RABBIT_PASSWORD
+from app_settings import OVS_NAME, OVSDB_OVS_CONN, OVSDB_OVNNB_CONN, RABBITMQ_SERVER, RABBIT_USER, RABBIT_PASSWORD, VXLAN_PORT
 
 from oslo_config import cfg
 import oslo_messaging as om
@@ -231,7 +231,9 @@ class RestVtep(app_manager.RyuApp):
         if not res:
             return None
 
-        args = ['Interface', vxlan_port_name, ('type', 'vxlan'), ('options', {"key": str(key), "remote_ip": remote_ip})]
+        args = ['Interface', vxlan_port_name, ('type', 'vxlan'),
+                ('options', {'key': str(key), 'remote_ip': remote_ip, 'dst_port': VXLAN_PORT}),
+                ('external-ids', {'iface-id': vxlan_port_name})]
         res = self._ovsdb_exec(OVSDB_OVS_CONN, OVS_DB, 'db_set', *args)
         if not res:
             return None

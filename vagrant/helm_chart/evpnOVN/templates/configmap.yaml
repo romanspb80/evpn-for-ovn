@@ -20,6 +20,9 @@ data:
 
     # OVS Bridge for client connections
     OVS_NAME = 'br-int'
+    
+    VXLAN_PORT = '4788'
+
 kind: ConfigMap
 metadata:
   name: {{ .Values.common.configMap }}
