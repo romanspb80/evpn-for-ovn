@@ -13,7 +13,6 @@
 - name: microstack install
   hosts: all
   become: yes
-  become_user: root
   gather_facts: no
   tasks:
     - name: microstack install
@@ -32,7 +31,6 @@
 - name: OpenVSwitch & OVN setup
   hosts: all
   become: yes
-  become_user: root
   gather_facts: no
   tasks:
     - name: OVS setup
@@ -43,7 +41,6 @@
 - name: Set RabbitMQ up
   hosts: all
   become: yes
-  become_user: root
   gather_facts: no
   tasks:
     - name: Add RabbitMQ user
@@ -58,7 +55,6 @@
 - name: microk8s install & kubernetes cluster deployment
   hosts: all
   become: yes
-  become_user: root
   gather_facts: no
   tasks:
     - name: microk8s install

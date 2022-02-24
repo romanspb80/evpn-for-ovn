@@ -231,12 +231,13 @@ class RestVtep(app_manager.RyuApp):
         if not res:
             return None
 
-        args = ['Interface', vxlan_port_name, ('type', 'vxlan'),
-                ('options', {'key': str(key), 'remote_ip': remote_ip, 'dst_port': VXLAN_PORT}),
-                ('external-ids', {'iface-id': vxlan_port_name})]
-        res = self._ovsdb_exec(OVSDB_OVS_CONN, OVS_DB, 'db_set', *args)
-        if not res:
-            return None
+        # waiting for vxlan port creation
+        time.sleep(2)
+
+        args = ['Interface', 'vxlan_192.168.10.10_10', ('type', 'vxlan'),
+                ('options', {'key': str(10), 'remote_ip': '192.168.10.10', 'dst_port': '4788'}),
+                ('external_ids', {'iface-id': 'vxlan_192.168.10.10_10'})]
+        _ = self._ovsdb_exec(OVSDB_OVS_CONN, OVS_DB, 'db_set', *args)
 
         # Create logical port named 'vxlan_<remote_ip>_<key>' as physical port
         args = [self.networks[key].logical_switch, vxlan_port_name]
