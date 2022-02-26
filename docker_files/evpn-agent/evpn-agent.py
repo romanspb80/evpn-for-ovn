@@ -1,9 +1,4 @@
-import json
-
-from ryu.app.wsgi import Response
 from ryu.base import app_manager
-from ryu.exception import RyuException
-from ryu.lib.ovs import bridge as ovs_bridge
 from ryu.lib.packet.bgp import _RouteDistinguisher
 from ryu.lib.packet.bgp import EvpnNLRI
 from ryu.lib.stringify import StringifyMixin
@@ -13,12 +8,13 @@ from ryu.services.protocols.bgp.bgpspeaker import EVPN_MAC_IP_ADV_ROUTE
 from ryu.services.protocols.bgp.bgpspeaker import EVPN_MULTICAST_ETAG_ROUTE
 from ryu.services.protocols.bgp.info_base.evpn import EvpnPath
 
-import paramiko
-import socket
+from ovsdbapp.backend.ovs_idl import connection
+from ovsdbapp.schema.open_vswitch import impl_idl as schema_ovs
+from ovsdbapp.schema.ovn_northbound import impl_idl as schema_ovnnb
 
 import sys
 sys.path.append('/config')
-from app_settings import USER, PASSWORD, PORT_SSH, DATAPATH_ADDR,OVNCENTR_ADDR, RABBITMQ_SERVER, RABBIT_USER, RABBIT_PASSWORD
+from app_settings import OVS_NAME, OVSDB_OVS_CONN, OVSDB_OVNNB_CONN, RABBITMQ_SERVER, RABBIT_USER, RABBIT_PASSWORD, VXLAN_PORT
 
 from oslo_config import cfg
 import oslo_messaging as om
@@ -26,69 +22,30 @@ import time
 import eventlet
 eventlet.monkey_patch()
 
-OVSDB_PORT = 6640  # The IANA registered port for OVSDB [RFC7047]
-
+OVS_DB, OVNNB_DB = 'Open_vSwitch', 'OVN_Northbound'
+OVSDB_SCHEMA = {OVS_DB: {'Idl': schema_ovs.OvsdbIdl, 'conn': None},
+                OVNNB_DB: {'Idl': schema_ovnnb.OvnNbApiIdlImpl, 'conn': None}}
 
 # Invoke "get_transport". This call will set default Configurations required to Create Messaging Transport
 transport = om.get_transport(cfg.CONF)
 
-# Set/Override Configurations required to Create Messaging Transport
 cfg.CONF.set_override(
     'transport_url', 'rabbit://{}:{}@{}:5672//'.format(RABBIT_USER, RABBIT_PASSWORD, RABBITMQ_SERVER))
 
 # Create Messaging Transport
 transport = om.get_transport(cfg.CONF)
 
+# Request context dict
+ctxt = {}
+
+
 # Create Target (Exchange, Topic and Server to listen on)
 target = om.Target(topic='ovn_bus', server=RABBITMQ_SERVER)
 
-# Utility functions
-
-def ssh_command(hostname, username, password, port, cmd):
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    out, err = (None, None)
-    try:
-        client.connect(hostname=hostname, username=username, password=password, port=port)
-        stdin, stdout, stderr = client.exec_command(cmd)
-        out = stdout.read().decode('ascii').strip('"\n')
-        err = stderr.read().decode('ascii').strip('"\n')
-    except (paramiko.BadHostKeyException, paramiko.AuthenticationException, paramiko.SSHException, socket.error) as e:
-        err = e
-    client.close()
-    return {'out': out, 'err': err}
-
-def ssh_command_json(hostname, username, password, port, cmd):
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    out, err = (None, None)
-    try:
-        client.connect(hostname=hostname, username=username, password=password, port=port)
-        stdin, stdout, stderr = client.exec_command(cmd)
-        out = json.loads(stdout.read())
-        err = stderr.read().decode('ascii').strip('"\n')
-    except (paramiko.BadHostKeyException, paramiko.AuthenticationException, paramiko.SSHException, socket.error) as e:
-        err = e
-    client.close()
-    return {'out': out, 'err': err}
 
 def to_int(i, base):
     return int(str(i), base)
 
-# Exception classes related to OpenFlow and OVSDB
-
-class RestApiException(RyuException):
-
-    def to_response(self, status):
-        body = {
-            "error": str(self),
-            "status": status,
-        }
-        return Response(content_type='application/json',
-                        body=json.dumps(body), status=status)
-
-
-# Utility classes related to EVPN
 
 class EvpnSpeaker(BGPSpeaker, StringifyMixin):
     _TYPE = {
@@ -97,7 +54,7 @@ class EvpnSpeaker(BGPSpeaker, StringifyMixin):
         ],
     }
 
-    def __init__(self, dpid, as_number, router_id,
+    def __init__(self, as_number, router_id,
                  best_path_change_handler,
                  peer_down_handler, peer_up_handler,
                  neighbors=None):
@@ -109,7 +66,6 @@ class EvpnSpeaker(BGPSpeaker, StringifyMixin):
             peer_up_handler=peer_up_handler,
             ssh_console=True)
 
-        self.dpid = dpid
         self.as_number = as_number
         self.router_id = router_id
         self.neighbors = neighbors or {}
@@ -175,18 +131,9 @@ class EvpnClient(StringifyMixin):
         self.next_hop = next_hop
 
 
-#class RestVtep(object):
 class RestVtep(app_manager.RyuApp):
-#     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
-#     _CONTEXTS = {'wsgi': WSGIApplication}
-
-    # def __init__(self):
     def __init__(self, *args, **kwargs):
         super(RestVtep, self).__init__(*args, **kwargs)
-        #wsgi = kwargs['wsgi']
-        #wsgi.register(RestVtepController, {RestVtep.__name__: self})
-
-        # EvpnSpeaker instance instantiated later
         self.speaker = None
 
         # OVSBridge instance instantiated later
@@ -198,201 +145,148 @@ class RestVtep(app_manager.RyuApp):
         #     ...
         # }
         self.networks = {}
-        self.cmd_dpid = 'ovs-vsctl get Bridge br-int datapath_id'
-        self.cmd_lsp_add = 'ovn-nbctl lsp-add {} {}'
-        self.cmd_lsp_del = 'ovn-nbctl lsp-del {} {}'
-        self.cmd_lsp_get = 'ovn-nbctl -f json get Logical_Switch_Port {} addresses'
-        self.cmd_lsp_set_addr = 'ovn-nbctl lsp-set-addresses {}'
-        self.cmd_lsp_set_sec = 'ovn-nbctl lsp-set-port-security {}'
-        self.cmd_set_manager_ovsdb = 'ovs-vsctl set-manager ptcp:{}'
 
-    def _get_datapath(self):
-        return ssh_command(
-            hostname=DATAPATH_ADDR,
-            username=USER,
-            password=PASSWORD,
-            port=PORT_SSH,
-            cmd=self.cmd_dpid)
+    def _ovsdb_conn(self, conn, schema):
+        if schema in OVSDB_SCHEMA:
+            if OVSDB_SCHEMA[schema]['conn']:
+                return OVSDB_SCHEMA[schema]['conn']
+            # The python-ovs Idl class (Open vSwitch Database Interface Definition Language).
+            # Take it from server's database
+            try:
+                # The ovsdbapp Connection object
+                i = connection.OvsdbIdl.from_server(conn, schema)
+            except Exception as e:
+                self.logger.exception('Could not retrieve schema {} from {}'.format(schema, conn))
+                return None
 
-    # Utility methods related to OVSDB
+            try:
+                # The ovsdbapp Connection object
+                conn = connection.Connection(idl=i, timeout=3)
+            except Exception as e:
+                self.logger.exception('Cannot initiate OVSDB connection: {}', format(e))
+                return None
 
-    # Set manager-ovsdb
-    def _set_manager_ovsdb(self):
-        return ssh_command(
-            hostname=DATAPATH_ADDR,
-            username=USER,
-            password=PASSWORD,
-            port=PORT_SSH,
-            cmd=self.cmd_set_manager_ovsdb.format(OVSDB_PORT))
-
-    def _get_ovs_bridge(self):
-        datapath = self._get_datapath()
-        if datapath['err']:
-            self.logger.debug(datapath['err'])
-            return None
-        dpid = to_int(datapath['out'], 16)
-
-        ovsdb_addr = 'tcp:%s:%d' % (DATAPATH_ADDR, OVSDB_PORT)
-        if (self.ovs is not None
-                and self.ovs.datapath_id == dpid
-                and self.ovs.vsctl.remote == ovsdb_addr):
-            return self.ovs
-
-        try:
-            self.ovs = ovs_bridge.OVSBridge(
-                CONF=self.CONF,
-                datapath_id=dpid,
-                ovsdb_addr=ovsdb_addr)
-            self.ovs.init()
-        except Exception as e:
-            self.logger.exception('Cannot initiate OVSDB connection: %s', e)
+            # The OVN_Northbound API implementation object
+            api = OVSDB_SCHEMA[schema]['Idl'](conn)
+            OVSDB_SCHEMA[schema]['conn'] = api
+            return api
+        else:
+            self.logger.exception('Incorrect OVSDB schema: {}', format(schema))
             return None
 
-        return self.ovs
+    def _ovsdb_exec(self, conn, schema, cmd, *args):
+        api = self._ovsdb_conn(conn, schema)
+        if api:
+            try:
+                res = getattr(api, cmd)(*args).execute()
+            except Exception as e:
+                self.logger.exception('Cannot execute OVSDB command: %s', e)
+                return None
+            if res == None:
+                res = True
+            return res
+        return None
+
+    def _update_lsp_addr(self, port, address, action):
+        # Get current addresses of lsp
+        args = ['Logical_Switch_Port', port, 'addresses']
+        addresses = self._ovsdb_exec(OVSDB_OVNNB_CONN, OVNNB_DB, 'db_get', *args)
+        if addresses == None:
+            return None
+
+        # Update addresses
+        if type(addresses) != list:
+            addresses = [addresses]
+        addresses = set(list(addresses))
+        getattr(addresses, action)(address)
+        args = ['Logical_Switch_Port', port, ('addresses', list(addresses))]
+        res = self._ovsdb_exec(OVSDB_OVNNB_CONN, OVNNB_DB, 'db_set', *args)
+        if not res:
+            return None
+
+        return True
 
     def _get_vxlan_port(self, remote_ip, key):
-        # Searches VXLAN port named 'vxlan_<remote_ip>_<key>'
-        ovs = self._get_ovs_bridge()
-        if ovs is None:
+        # Search VXLAN port named 'vxlan_<remote_ip>_<key>'
+        args = [OVS_NAME]
+        ports_ovs = self._ovsdb_exec(OVSDB_OVS_CONN, OVS_DB, 'list_ports', *args)
+        if not ports_ovs:
             return None
-        ports_ovs = ovs.get_port_name_list()
-        port_vxlan_name = 'vxlan_%s_%s' % (remote_ip, key)
-        if port_vxlan_name in ports_ovs:
-            return port_vxlan_name
-        else:
-            return None
-
-    def _add_vxlan_port(self, remote_ip, key):
-        # If VXLAN port already exists, returns OFPort number
-        vxlan_port = self._get_vxlan_port(remote_ip, key)
-        if vxlan_port is not None:
-            return vxlan_port
-
-        ovs = self._get_ovs_bridge()
-        if ovs is None:
-            return None
-
-        # Adds VXLAN port named 'vxlan_<remote_ip>_<key>'
-        vxlan_port_name = 'vxlan_%s_%s' % (remote_ip, key)
-        ovs.add_vxlan_port(
-            name=vxlan_port_name,
-            remote_ip=remote_ip,
-            key=key)
-
-        # Create logical port named 'vxlan_<remote_ip>_<key>' as physical port
-        cmd = self.cmd_lsp_add.format(
-            self.networks[key].logical_switch, vxlan_port_name
-        )
-        # TODO check operation
-        ssh_command(
-            hostname=OVNCENTR_ADDR,
-            username=USER,
-            password=PASSWORD,
-            port=PORT_SSH,
-            cmd=cmd)
-
-        # Mapping OVS physical and logical VXLAN port
-        # TODO check operation
-        ovs.set_db_attribute("Interface", vxlan_port_name, "external_ids", "iface-id", key=vxlan_port_name)
-
-        # Return VXLAN port name
-        vxlan_port = self._get_vxlan_port(remote_ip, key)
-        if vxlan_port:
+        vxlan_port_name = 'vxlan_{}_{}'.format(remote_ip, key)
+        if vxlan_port_name in ports_ovs:
             return vxlan_port_name
         else:
             return None
 
-    def _del_vxlan_port(self, remote_ip, key):
-        ovs = self._get_ovs_bridge()
-        if ovs is None:
-            return None
+    def _add_vxlan_port(self, remote_ip, key):
+        vxlan_port_name = 'vxlan_{}_{}'.format(remote_ip, key)
 
-        # If VXLAN port does not exist, returns None
         vxlan_port = self._get_vxlan_port(remote_ip, key)
-        if vxlan_port is None:
+        if vxlan_port is not None:
+            return vxlan_port
+
+        # Add VXLAN port named 'vxlan_<remote_ip>_<key>' to OVS bridge
+        args = [OVS_NAME, vxlan_port_name]
+        res = self._ovsdb_exec(OVSDB_OVS_CONN, OVS_DB, 'add_port', *args)
+        if not res:
             return None
 
-        # Delete physical and logical VXLAN port named 'vxlan_<remote_ip>_<key>'
-        vxlan_port_name = 'vxlan_%s_%s' % (remote_ip, key)
-        cmd = self.cmd_lsp_del.format(
-            self.networks[key].logical_switch, vxlan_port_name
-        )
-        # TODO check operation
-        ssh_command(
-            hostname=OVNCENTR_ADDR,
-            username=USER,
-            password=PASSWORD,
-            port=PORT_SSH,
-            cmd=cmd)
+        # waiting for vxlan port creation
+        time.sleep(2)
 
-        # TODO check operation
-        ovs.remove_db_attribute("Interface", vxlan_port_name, "external_ids", "iface-id", key=vxlan_port_name)
-        ovs.del_port(vxlan_port_name)
+        args = ['Interface', vxlan_port_name, ('type', 'vxlan'),
+                ('options', {'key': str(key), 'remote_ip': remote_ip, 'dst_port': VXLAN_PORT}),
+                ('external_ids', {'iface-id': vxlan_port_name})]
+        _ = self._ovsdb_exec(OVSDB_OVS_CONN, OVS_DB, 'db_set', *args)
 
-        # Returns deleted VXLAN port number
-        return vxlan_port
+        # Create logical port named 'vxlan_<remote_ip>_<key>' as physical port
+        args = [self.networks[key].logical_switch, vxlan_port_name]
+        res = self._ovsdb_exec(OVSDB_OVNNB_CONN, OVNNB_DB, 'lsp_add', *args)
+        if not res:
+            return None
+
+        return vxlan_port_name
+
+    def _del_vxlan_port(self, remote_ip, key):
+        vxlan_port_name = 'vxlan_{}_{}'.format(remote_ip, key)
+        args = [vxlan_port_name]
+
+        #Delete vxlan port from OVSDB OVS
+        res = self._ovsdb_exec(OVSDB_OVS_CONN, OVS_DB, 'del_port', *args)
+        if not res:
+            return None
+
+        # Delete vxlan port from OVSDB OVNNB
+        res = self._ovsdb_exec(OVSDB_OVNNB_CONN, OVNNB_DB, 'lsp_del', *args)
+        if not res:
+            return None
+
+        return vxlan_port_name
 
     # Event handlers for BGP
 
     def _evpn_mac_ip_adv_route_handler(self, ev):
         network = self.networks.get(ev.path.nlri.vni, None)
         if network is None:
-            self.logger.debug('No such VNI registered: %s', ev.path.nlri)
-            return
-
-        datapath = self._get_datapath()
-        if datapath['err']:
-            self.logger.debug(datapath['err'])
+            self.logger.debug('No such VNI registered: {}'.format(ev.path.nlri))
             return
 
         vxlan_port = self._add_vxlan_port(
             remote_ip=ev.nexthop,
             key=ev.path.nlri.vni)
         if vxlan_port is None:
-            self.logger.debug('Cannot create a new VXLAN port: %s',
-                              'vxlan_%s_%s' % (ev.nexthop, ev.path.nlri.vni))
+            self.logger.debug('Cannot create a new VXLAN port: {}'.format(
+                'vxlan_{}_{}'.format(ev.nexthop, ev.path.nlri.vni)))
             return
 
-        # TODO update Logical VXLAN port
-        # Get addresses from Logical VXLAN port
-        cmd = self.cmd_lsp_get.format(vxlan_port)
-        # TODO check operation
-        res = ssh_command_json(
-            hostname=OVNCENTR_ADDR,
-            username=USER,
-            password=PASSWORD,
-            port=PORT_SSH,
-            cmd=cmd)
-
-        if res['err']:
-            return
-        addresses = res['out']
         address = ' '.join([ev.path.nlri.mac_addr, ev.path.nlri.ip_addr])
-        if address in addresses:
-            return
-        addresses.append(address)
+        self._update_lsp_addr(vxlan_port, address, 'add')
 
-        # Set addresses on Logical VXLAN port
-        cmd = self.cmd_lsp_set_addr.format(vxlan_port)
-        for address in addresses:
-            cmd += ' "' + address + '"'
-        # TODO check operation
-        res = ssh_command(
-            hostname=OVNCENTR_ADDR,
-            username=USER,
-            password=PASSWORD,
-            port=PORT_SSH,
-            cmd=cmd)
-
-        # Set security on Logical VXLAN port
-        cmd = self.cmd_lsp_set_sec.format(vxlan_port, *addresses)
-        # TODO check operation
-        ssh_command(
-            hostname=OVNCENTR_ADDR,
-            username=USER,
-            password=PASSWORD,
-            port=PORT_SSH,
-            cmd=cmd)
+        network.clients[ev.path.nlri.mac_addr] = EvpnClient(
+            port=vxlan_port,
+            mac=ev.path.nlri.mac_addr,
+            ip=ev.path.nlri.ip_addr,
+            next_hop=ev.nexthop)
 
     def _evpn_incl_mcast_etag_route_handler(self, ev):
         # Note: For the VLAN Based service, we use RT(=RD) assigned
@@ -402,11 +296,6 @@ class RestVtep(app_manager.RyuApp):
         network = self.networks.get(vni, None)
         if network is None:
             self.logger.debug('No such VNI registered: %s', vni)
-            return
-
-        datapath = self._get_datapath()
-        if datapath['err']:
-            self.logger.debug(datapath['err'])
             return
 
         vxlan_port = self._add_vxlan_port(
@@ -429,11 +318,6 @@ class RestVtep(app_manager.RyuApp):
             self.logger.debug('No such VNI registered: %s', ev.path.nlri)
             return
 
-        datapath = self._get_datapath()
-        if datapath['err']:
-            self.logger.debug(datapath['err'])
-            return
-
         vxlan_port = self._add_vxlan_port(
             remote_ip=ev.nexthop,
             key=ev.path.nlri.vni)
@@ -442,47 +326,12 @@ class RestVtep(app_manager.RyuApp):
                               'vxlan_%s_%s' % (ev.nexthop, ev.path.nlri.vni))
             return
 
-        # TODO update Logical VXLAN port
-        # Get addresses from Logical VXLAN port
-        cmd = self.cmd_lsp_get.format(vxlan_port)
-        # TODO check operation
-        res = ssh_command(
-            hostname=OVNCENTR_ADDR,
-            username=USER,
-            password=PASSWORD,
-            port=PORT_SSH,
-            cmd=cmd)
-        if res['err']:
-            return
-        addresses = json.loads(res['out'])
         address = ' '.join([ev.path.nlri.mac_addr, ev.path.nlri.ip_addr])
-        if address not in addresses:
-            return
-        addresses.remove(address)
-
-        # Set addresses on Logical VXLAN port
-        cmd = self.cmd_lsp_set_addr.format(vxlan_port, *addresses)
-        # TODO check operation
-        ssh_command(
-            hostname=OVNCENTR_ADDR,
-            username=USER,
-            password=PASSWORD,
-            port=PORT_SSH,
-            cmd=cmd)
-
-        # Set security on Logical VXLAN port
-        cmd = self.cmd_lsp_set_sec.format(vxlan_port, *addresses)
-        # TODO check operation
-        ssh_command(
-            hostname=OVNCENTR_ADDR,
-            username=USER,
-            password=PASSWORD,
-            port=PORT_SSH,
-            cmd=cmd)
+        self._update_lsp_addr(vxlan_port, address, 'discard')
 
         client = network.clients.get(ev.path.nlri.mac_addr, None)
         if client is None:
-            self.logger.debug('No such client: %s', ev.path.nlri.mac_addr)
+            self.logger.debug('No such client: {}'.format(ev.path.nlri.mac_addr))
             return
 
         network.clients.pop(ev.path.nlri.mac_addr)
@@ -495,30 +344,21 @@ class RestVtep(app_manager.RyuApp):
 
         network = self.networks.get(vni, None)
         if network is None:
-            self.logger.debug('No such VNI registered: %s', vni)
+            self.logger.debug('No such VNI registered: {}'.format(vni))
             return
-
-        datapath = self._get_datapath()
-        # Check the datapath 'br-int'
-        if datapath['err']:
-            self.logger.debug(datapath['err'])
-            if datapath['out'] is None:
-                return {'DatapathNotFound': dict(datapath='br-int')}
 
         vxlan_port = self._get_vxlan_port(
             remote_ip=ev.nexthop,
             key=vni)
         if vxlan_port is None:
-            self.logger.debug('No such VXLAN port: %s',
-                              'vxlan_%s_%s' % (ev.nexthop, vni))
+            self.logger.debug('No such VXLAN port: {}'.format('vxlan_{}_{}'.format(ev.nexthop, vni)))
             return
 
         vxlan_port = self._del_vxlan_port(
             remote_ip=ev.nexthop,
             key=vni)
         if vxlan_port is None:
-            self.logger.debug('Cannot delete VXLAN port: %s',
-                              'vxlan_%s_%s' % (ev.nexthop, vni))
+            self.logger.debug('Cannot delete VXLAN port: {}'.format('vxlan_{}_{}'.format(ev.nexthop, vni)))
             return
 
     def _evpn_withdraw_route_handler(self, ev):
@@ -558,24 +398,11 @@ class RestVtep(app_manager.RyuApp):
         neighbor.state = 'up'
 
     # API methods for REST controller
-
     def add_speaker(self, ctx, arg):
         as_number = arg['as_number']
         router_id = arg['router_id']
-        datapath = self._get_datapath()
-        # Check the datapath 'br-int'
-        if datapath['err']:
-            self.logger.debug(datapath['err'])
-            # TODO return exception
-        if datapath['out'] is 'null':
-            return {'DatapathNotFound': dict(datapath='br-int')}
-        dpid = to_int(datapath['out'], 16)
-
-        # TODO check exception
-        self._set_manager_ovsdb()
 
         self.speaker = EvpnSpeaker(
-            dpid=dpid,
             as_number=as_number,
             router_id=str(router_id),
             best_path_change_handler=self._best_path_change_handler,
@@ -584,13 +411,13 @@ class RestVtep(app_manager.RyuApp):
 
         return {self.speaker.router_id: self.speaker.to_jsondict()}
 
-    def get_speaker(self):
+    def get_speaker(self, ctx, arg):
         if self.speaker is None:
             return {'BGPSpeakerNotFound': dict(address='')}
 
         return {self.speaker.router_id: self.speaker.to_jsondict()}
 
-    def del_speaker(self):
+    def del_speaker(self, ctx, arg):
         if self.speaker is None:
             return {'BGPSpeakerNotFound': dict(address='')}
 
@@ -674,7 +501,7 @@ class RestVtep(app_manager.RyuApp):
             return {'BGPSpeakerNotFound': dict(address='')}
 
         # Constructs type 0 RD with as_number and vni
-        route_dist = "%s:%d" % (self.speaker.as_number, vni)
+        route_dist = "{}:{}".format(self.speaker.as_number, vni)
 
         self.speaker.vrf_add(
             route_dist=route_dist,
@@ -702,11 +529,12 @@ class RestVtep(app_manager.RyuApp):
         return {vni: network.to_jsondict()}
 
     def get_networks(self, ctx, arg):
-        vni = arg.get['vni']
+        vni = arg.get('vni')
         if self.speaker is None:
             return {'BGPSpeakerNotFound': dict(address='')}
 
         if vni is not None:
+            vni = to_int(vni, 10)
             network = self.networks.get(vni, None)
             if network is None:
                 return {'VniNotFound': dict(vni=vni)}
@@ -719,16 +547,9 @@ class RestVtep(app_manager.RyuApp):
         return networks
 
     def del_network(self, ctx, arg):
-        vni = arg.get['vni']
+        vni = to_int(arg.get('vni'), 10)
         if self.speaker is None:
             return {'BGPSpeakerNotFound': dict(address='')}
-
-        datapath = self._get_datapath()
-        # Check the datapath 'br-int'
-        if datapath['err']:
-            self.logger.debug(datapath['err'])
-            if datapath['out'] is None:
-                return {'DatapathNotFound': dict(datapath='br-int')}
 
         network = self.networks.get(vni, None)
         if network is None:
@@ -759,18 +580,12 @@ class RestVtep(app_manager.RyuApp):
 
     def add_client(self, ctx, arg):
         vni = arg.get('vni')
+        vni = to_int(vni, 10)
         port = str(arg.get('port'))
         mac = str(arg.get('mac'))
         ip = str(arg.get('ip'))
         if self.speaker is None:
             return {'BGPSpeakerNotFound': dict(address='')}
-
-        datapath = self._get_datapath()
-        # Check the datapath 'br-int'
-        if datapath['err']:
-            self.logger.debug(datapath['err'])
-            if datapath['out'] is None:
-                return {'DatapathNotFound': dict(datapath='br-int')}
 
         network = self.networks.get(vni, None)
         if network is None:
@@ -802,17 +617,11 @@ class RestVtep(app_manager.RyuApp):
         return {vni: client.to_jsondict()}
 
     def del_client(self, ctx, arg):
-        vni = arg.get['vni']
-        mac = arg.get['mac']
+        vni = arg.get('vni')
+        vni = to_int(vni, 10)
+        mac = arg.get('mac')
         if self.speaker is None:
             return {'BGPSpeakerNotFound': dict(address='')}
-
-        datapath = self._get_datapath()
-        # Check the datapath 'br-int'
-        if datapath['err']:
-            self.logger.debug(datapath['err'])
-            if datapath['out'] is None:
-                return {'DatapathNotFound': dict(datapath='br-int')}
 
         network = self.networks.get(vni, None)
         if network is None:

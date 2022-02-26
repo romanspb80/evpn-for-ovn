@@ -1,777 +1,196 @@
-import json
-
-from ryu.app.wsgi import ControllerBase
-from ryu.app.wsgi import Response
-from ryu.app.wsgi import route
-from ryu.app.wsgi import WSGIApplication
-from ryu.base import app_manager
 from ryu.exception import RyuException
-
-import sys
-sys.path.append('/config')
-from app_settings import RABBIT_USER, RABBIT_PASSWORD
 from oslo_config import cfg
 import oslo_messaging as om
+from flask import Flask, request, jsonify
+from flask_expects_json import expects_json
+import copy
+import sys
+sys.path.append('/config')
+from app_settings import RABBIT_USER, RABBIT_PASSWORD, RABBITMQ_SERVER
 
 
-API_NAME = 'restvtep'
-RABBITMQ_SERVER = 'rabbitmq-svc'
+app = Flask(__name__)
+
+# Invoke "get_transport". This call will set default Configurations required to Create Messaging Transport
+transport = om.get_transport(cfg.CONF)
+
+cfg.CONF.set_override(
+    'transport_url', 'rabbit://{}:{}@{}:5672//'.format(RABBIT_USER, RABBIT_PASSWORD, RABBITMQ_SERVER))
+
+# Create Messaging Transport
+transport = om.get_transport(cfg.CONF)
+
+# Create Target
+target = om.Target(topic='ovn_bus')
+
+# Create RPC Client
+client = om.RPCClient(transport, target)
+
+# Request context dict
+ctxt = {}
 
 
-# Utility functions
-
-def to_int(i):
-    return int(str(i), 0)
+class DatapathNotFound(RyuException):
+    message = 'No such datapath: {}'
 
 
-def to_str_list(l):
-    str_list = []
-    for s in l:
-        str_list.append(str(s))
-    return str_list
+class BGPSpeakerNotFound(RyuException):
+    message = 'No such BGPSpeaker: {}'
 
 
-# Exception classes related to OpenFlow and OVSDB
-
-class RestApiException(RyuException):
-
-    def to_response(self, status):
-        body = {
-            "error": str(self),
-            "status": status,
-        }
-        return Response(content_type='application/json',
-                        body=json.dumps(body), status=status)
+class NeighborNotFound(RyuException):
+    message = 'No such neighbor: {}'
 
 
-class DatapathNotFound(RestApiException):
-    message = 'No such datapath: %(datapath)s'
+class VniNotFound(RyuException):
+    message = 'No such VNI: {}'
 
 
-class OFPortNotFound(RestApiException):
-    message = 'No such OFPort: %(port_name)s'
+class ClientNotFound(RyuException):
+    message = 'No such client: {}'
 
 
-# Exception classes related to BGP
-
-class BGPSpeakerNotFound(RestApiException):
-    message = 'BGPSpeaker could not be found %(address)s'
-
-
-class NeighborNotFound(RestApiException):
-    message = 'No such neighbor: %(address)s'
-
-
-class VniNotFound(RestApiException):
-    message = 'No such VNI: %(vni)s'
-
-
-class ClientNotFound(RestApiException):
-    message = 'No such client: %(mac)s'
-
-
-class ClientNotLocal(RestApiException):
-    message = 'Specified client is not local: %(mac)s'
+class ClientNotLocal(RyuException):
+    message = 'Specified client is not local: {}'
 
 
 EXCEPTIONS = (DatapathNotFound, BGPSpeakerNotFound, NeighborNotFound, VniNotFound, ClientNotFound, ClientNotLocal)
 
-class RestVtep(app_manager.RyuApp):
-    #OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
-    _CONTEXTS = {'wsgi': WSGIApplication}
 
-    def __init__(self, *args, **kwargs):
-        super(RestVtep, self).__init__(*args, **kwargs)
-        wsgi = kwargs['wsgi']
-        wsgi.register(RestVtepController, {RestVtep.__name__: self})
-
-        # EvpnSpeaker instance instantiated later
-        self.speaker = None
-
-        # OVSBridge instance instantiated later
-        self.ovs = None
-
-        # Dictionary for retrieving the EvpnNetwork instance by VNI
-        # self.networks = {
-        #     <vni>: <instance 'EvpnNetwork'>,
-        #     ...
-        # }
-        self.networks = {}
+schema = {
+    "type": "object",
+    "properties": {
+        "as_number": {"type": "number"},
+        "router_id": {"type": "string"},
+        "address": {"type": "string"},
+        "remote_as": {"type": "number"},
+        "vni": {"type": "number"},
+        "network_id": {"type": "string"},
+        "mac": {"type": "string"},
+        "ip": {"type": "string"}
+    }
+}
 
 
-def post_method(keywords):
-    def _wrapper(method):
-        def __wrapper(self, req, **kwargs):
-            try:
-                try:
-                    body = req.json if req.body else {}
-                except ValueError:
-                    raise ValueError('Invalid syntax %s', req.body)
-                kwargs.update(body)
-                for key, converter in keywords.items():
-                    value = kwargs.get(key, None)
-                    if value is None:
-                        raise ValueError('%s not specified' % key)
-                    kwargs[key] = converter(value)
-            except ValueError as e:
-                return Response(content_type='application/json',
-                                body={"error": str(e)}, status=400)
-            try:
-                return method(self, **kwargs)
-            except Exception as e:
-                status = 500
-                body = {
-                    "error": str(e),
-                    "status": status,
-                }
-                return Response(content_type='application/json',
-                                body=json.dumps(body), status=status)
-        __wrapper.__doc__ = method.__doc__
-        return __wrapper
-    return _wrapper
+def required(required):
+    _schema = copy.deepcopy(schema)
+    _schema["required"] = required
+    return _schema
 
 
-def get_method(keywords=None):
-    keywords = keywords or {}
+def handler(action, arg):
+    body = client.call(ctxt, action, arg=arg)
+    for e in EXCEPTIONS:
+        exception = body.get(e.__name__)
+        if exception:
+            return jsonify({"error": e.message.format(**exception)}), 404
 
-    def _wrapper(method):
-        def __wrapper(self, _, **kwargs):
-            try:
-                for key, converter in keywords.items():
-                    value = kwargs.get(key, None)
-                    if value is None:
-                        continue
-                    kwargs[key] = converter(value)
-            except ValueError as e:
-                return Response(content_type='application/json',
-                                body={"error": str(e)}, status=400)
-            try:
-                return method(self, **kwargs)
-            except Exception as e:
-                status = 500
-                body = {
-                    "error": str(e),
-                    "status": status,
-                }
-                return Response(content_type='application/json',
-                                body=json.dumps(body), status=status)
-        __wrapper.__doc__ = method.__doc__
-        return __wrapper
-    return _wrapper
+    return jsonify(body), 200
 
 
-delete_method = get_method
+@app.route('/vtep/speakers', methods=['POST'])
+@expects_json(schema=required(
+    required=["as_number",
+              "router_id"]))
+def add_speaker():
+    content = request.get_json()
+    return handler(action='add_speaker', arg=content)
 
 
-class RestVtepController(ControllerBase):
+@app.route('/vtep/speakers', methods=['GET'])
+def get_speakers():
+    return handler(action='get_speaker', arg={})
 
-    def __init__(self, req, link, data, **config):
-        super(RestVtepController, self).__init__(req, link, data, **config)
-        self.vtep_app = data[RestVtep.__name__]
-        self.logger = self.vtep_app.logger
 
-        #Invoke "get_transport". This call will set default Configurations required to Create Messaging Transport
-        self.transport = om.get_transport(cfg.CONF)
+@app.route('/vtep/speakers', methods=['DELETE'])
+def del_speaker():
+    return handler(action='del_speaker', arg={})
 
-        cfg.CONF.set_override(
-            'transport_url', 'rabbit://{}:{}@{}:5672//'.format(RABBIT_USER, RABBIT_PASSWORD, RABBITMQ_SERVER))
 
-        #Create Messaging Transport
-        self.transport = om.get_transport(cfg.CONF)
+@app.route('/vtep/neighbors', methods=['POST'])
+@expects_json(schema=required(
+    required=["address",
+              "remote_as"]))
+def add_neighbor():
+    content = request.get_json()
+    return handler(action='add_neighbor', arg=content)
 
-        #Create Target
-        self.target = om.Target(topic='ovn_bus')
 
-        #Create RPC Client
-        self.client = om.RPCClient(self.transport, self.target)
+def _get_neighbors(content):
+    return handler(action='_get_neighbors', arg=content)
 
-        #Request context dict
-        self.ctxt = {}
 
-    @route(API_NAME, '/vtep/speakers', methods=['POST'])
-    @post_method(
-        keywords={
-            "as_number": to_int,
-            "router_id": str,
-        })
-    def add_speaker(self, **kwargs):
-        """
-        Creates a new BGPSpeaker instance.
-        Usage:
-            ======= ================
-            Method  URI
-            ======= ================
-            POST    /vtep/speakers
-            ======= ================
-        Request parameters:
-            ========== ============================================
-            Attribute  Description
-            ========== ============================================
-            as_number  AS number. (e.g. 65000)
-            router_id  Router ID. (e.g. "172.17.0.1")
-            ========== ============================================
-        Example::
-            $ curl -X POST -d '{
-             "as_number": 65000,
-             "router_id": "172.17.0.1"
-             }' http://localhost:8080/vtep/speakers | python -m json.tool
-        ::
-            {
-                "172.17.0.1": {
-                    "EvpnSpeaker": {
-                        "as_number": 65000,
-                        "neighbors": {},
-                        "router_id": "172.17.0.1"
-                    }
-                }
-            }
-        """
-        body = self.client.call(self.ctxt, 'add_speaker', arg=kwargs)
-        for e in EXCEPTIONS:
-            exception = body.get(e.__name__)
-            if exception:
-                return e(**exception).to_response(status=404)
+@app.route('/vtep/neighbors', methods=['GET'])
+def get_neighbors():
+    content = {}
+    return _get_neighbors(content)
 
-        return Response(content_type='application/json',
-                        body=json.dumps(body))
 
-    @route(API_NAME, '/vtep/speakers', methods=['GET'])
-    @get_method()
-    def get_speakers(self, **kwargs):
-        """
-        Gets the info of BGPSpeaker instance.
-        Usage:
-            ======= ================
-            Method  URI
-            ======= ================
-            GET     /vtep/speakers
-            ======= ================
-        Example::
-            $ curl -X GET http://localhost:8080/vtep/speakers |
-             python -m json.tool
-        ::
-            {
-                "172.17.0.1": {
-                    "EvpnSpeaker": {
-                        "as_number": 65000,
-                        "neighbors": {
-                            "172.17.0.2": {
-                                "EvpnNeighbor": {
-                                    "address": "172.17.0.2",
-                                    "remote_as": 65000,
-                                    "state": "up"
-                                }
-                            }
-                        },
-                        "router_id": "172.17.0.1"
-                    }
-                }
-            }
-        """
-        body = self.client.call(self.ctxt, 'get_speaker', arg=kwargs)
-        for e in EXCEPTIONS:
-            exception = body.get(e.__name__)
-            if exception:
-                return e(**exception).to_response(status=404)
+@app.route('/vtep/neighbors/<address>', methods=['GET'])
+def get_neighbor(address):
+    content = {"address": address}
+    return _get_neighbors(content)
 
-        return Response(content_type='application/json',
-                        body=json.dumps(body))
 
-    @route(API_NAME, '/vtep/speakers', methods=['DELETE'])
-    @delete_method()
-    def del_speaker(self, **kwargs):
-        """
-        Shutdowns BGPSpeaker instance.
-        Usage:
-            ======= ================
-            Method  URI
-            ======= ================
-            DELETE  /vtep/speakers
-            ======= ================
-        Example::
-            $ curl -X DELETE http://localhost:8080/vtep/speakers |
-             python -m json.tool
-        ::
-            {
-                "172.17.0.1": {
-                    "EvpnSpeaker": {
-                        "as_number": 65000,
-                        "neighbors": {},
-                        "router_id": "172.17.0.1"
-                    }
-                }
-            }
-        """
-        body = self.client.call(self.ctxt, 'del_speaker', arg=kwargs)
-        for e in EXCEPTIONS:
-            exception = body.get(e.__name__)
-            if exception:
-                return e(**exception).to_response(status=404)
+@app.route('/vtep/neighbors/<address>', methods=['DELETE'])
+def del_neighbor(address):
+    content = {"address": address}
+    return handler(action='del_neighbor', arg=content)
 
-        return Response(content_type='application/json',
-                        body=json.dumps(body))
 
-    @route(API_NAME, '/vtep/neighbors', methods=['POST'])
-    @post_method(
-        keywords={
-            "address": str,
-            "remote_as": to_int,
-        })
-    def add_neighbor(self, **kwargs):
-        """
-        Registers a new neighbor to the speaker.
-        Usage:
-            ======= ========================
-            Method  URI
-            ======= ========================
-            POST    /vtep/neighbors
-            ======= ========================
-        Request parameters:
-            ========== ================================================
-            Attribute  Description
-            ========== ================================================
-            address    IP address of neighbor. (e.g. "172.17.0.2")
-            remote_as  AS number of neighbor. (e.g. 65000)
-            ========== ================================================
-        Example::
-            $ curl -X POST -d '{
-             "address": "172.17.0.2",
-             "remote_as": 65000
-             }' http://localhost:8080/vtep/neighbors |
-             python -m json.tool
-        ::
-            {
-                "172.17.0.2": {
-                    "EvpnNeighbor": {
-                        "address": "172.17.0.2",
-                        "remote_as": 65000,
-                        "state": "down"
-                    }
-                }
-            }
-        """
-        body = self.client.call(self.ctxt, 'add_neighbor', arg=kwargs)
-        for e in EXCEPTIONS:
-            exception = body.get(e.__name__)
-            if exception:
-                return e(**exception).to_response(status=404)
+@app.route('/vtep/networks', methods=['POST'])
+@expects_json(schema=required(
+    required=["vni"]))
+def add_network():
+    content = request.get_json()
+    return handler(action='add_network', arg=content)
 
-        return Response(content_type='application/json',
-                        body=json.dumps(body))
 
-    def _get_neighbors(self, **kwargs):
-        body = self.client.call(self.ctxt, 'get_neighbors', arg=kwargs)
-        for e in EXCEPTIONS:
-            exception = body.get(e.__name__)
-            if exception:
-                return e(**exception).to_response(status=404)
+def _get_networks(content):
+    return handler(action='get_networks', arg=content)
 
-        return Response(content_type='application/json',
-                        body=json.dumps(body))
 
-    @route(API_NAME, '/vtep/neighbors', methods=['GET'])
-    @get_method()
-    def get_neighbors(self, **kwargs):
-        """
-        Gets a list of all neighbors.
-        Usage:
-            ======= ========================
-            Method  URI
-            ======= ========================
-            GET     /vtep/neighbors
-            ======= ========================
-        Example::
-            $ curl -X GET http://localhost:8080/vtep/neighbors |
-             python -m json.tool
-        ::
-            {
-                "172.17.0.2": {
-                    "EvpnNeighbor": {
-                        "address": "172.17.0.2",
-                        "remote_as": 65000,
-                        "state": "up"
-                    }
-                }
-            }
-        """
-        return self._get_neighbors(**kwargs)
+@app.route('/vtep/networks', methods=['GET'])
+def get_networks():
+    content = {}
+    return _get_networks(content)
 
-    @route(API_NAME, '/vtep/neighbors/{address}', methods=['GET'])
-    @get_method(
-        keywords={
-            "address": str,
-        })
-    def get_neighbor(self, **kwargs):
-        """
-        Gets the neighbor for the specified address.
-        Usage:
-            ======= ==================================
-            Method  URI
-            ======= ==================================
-            GET     /vtep/neighbors/{address}
-            ======= ==================================
-        Request parameters:
-            ========== ================================================
-            Attribute  Description
-            ========== ================================================
-            address    IP address of neighbor. (e.g. "172.17.0.2")
-            ========== ================================================
-        Example::
-            $ curl -X GET http://localhost:8080/vtep/neighbors/172.17.0.2 |
-             python -m json.tool
-        ::
-            {
-                "172.17.0.2": {
-                    "EvpnNeighbor": {
-                        "address": "172.17.0.2",
-                        "remote_as": 65000,
-                        "state": "up"
-                    }
-                }
-            }
-        """
-        return self._get_neighbors(**kwargs)
 
-    @route(API_NAME, '/vtep/neighbors/{address}', methods=['DELETE'])
-    @delete_method(
-        keywords={
-            "address": str,
-        })
-    def del_neighbor(self, **kwargs):
-        """
-        Unregister the specified neighbor from the speaker.
-        Usage:
-            ======= ==================================
-            Method  URI
-            ======= ==================================
-            DELETE  /vtep/speaker/neighbors/{address}
-            ======= ==================================
-        Request parameters:
-            ========== ================================================
-            Attribute  Description
-            ========== ================================================
-            address    IP address of neighbor. (e.g. "172.17.0.2")
-            ========== ================================================
-        Example::
-            $ curl -X DELETE http://localhost:8080/vtep/speaker/neighbors/172.17.0.2 |
-             python -m json.tool
-        ::
-            {
-                "172.17.0.2": {
-                    "EvpnNeighbor": {
-                        "address": "172.17.0.2",
-                        "remote_as": 65000,
-                        "state": "up"
-                    }
-                }
-            }
-        """
-        body = self.client.call(self.ctxt, 'del_neighbor', arg=kwargs)
-        for e in EXCEPTIONS:
-            exception = body.get(e.__name__)
-            if exception:
-                return e(**exception).to_response(status=404)
+@app.route('/vtep/networks/<vni>', methods=['GET'])
+def get_network(vni):
+    content = {"vni": vni}
+    return _get_networks(content)
 
-        return Response(content_type='application/json',
-                        body=json.dumps(body))
 
-    @route(API_NAME, '/vtep/networks', methods=['POST'])
-    @post_method(
-        keywords={
-            "vni": to_int,
-            "network_id": str,
-        })
-    def add_network(self, **kwargs):
-        """
-        Defines a new network.
-        Usage:
-            ======= ===============
-            Method  URI
-            ======= ===============
-            POST    /vtep/networks
-            ======= ===============
-        Request parameters:
-            ================ ========================================
-            Attribute        Description
-            ================ ========================================
-            vni              Virtual Network Identifier. (e.g. 10)
-            network_id       Neutron Network Identifier.
-                             (e.g. 95c5a37c-4597-45cb-ba67-10a9c5aca3ba)
-                             It is associated with Logical Switch in OVN
-                             Commands (requests) for list getting:
-                             openstack network list
-                             ovn-nbctl ls-list
-            ================ ========================================
-        Example::
-            $ curl -X POST -d '{
-             "vni": 10,
-             "network_id": 95c5a37c-4597-45cb-ba67-10a9c5aca3ba,
-             }' http://localhost:8080/vtep/networks | python -m json.tool
-        ::
-            {
-                "10": {
-                    "EvpnNetwork": {
-                        "clients": {},
-                        "ethernet_tag_id": 0,
-                        "route_dist": "65000:10",
-                        "vni": 10,
-                        "network_id": 95c5a37c-4597-45cb-ba67-10a9c5aca3ba
-                    }
-                }
-            }
-        """
-        body = self.client.call(self.ctxt, 'add_network', arg=kwargs)
-        for e in EXCEPTIONS:
-            exception = body.get(e.__name__)
-            if exception:
-                return e(**exception).to_response(status=404)
+@app.route('/vtep/networks/<vni>', methods=['DELETE'])
+def del_network(vni):
+    content = {"vni": vni}
+    return handler(action='del_network', arg=content)
 
-        return Response(content_type='application/json',
-                        body=json.dumps(body))
 
-    def _get_networks(self, **kwargs):
-        body = self.client.call(self.ctxt, 'get_networks', arg=kwargs)
-        for e in EXCEPTIONS:
-            exception = body.get(e.__name__)
-            if exception:
-                return e(**exception).to_response(status=404)
+@app.route('/vtep/networks/<vni>/clients', methods=['POST'])
+@expects_json(schema=required(
+    required=["port",
+              "mac",
+              "ip"]))
+def add_client(vni):
+    content = request.get_json()
+    content.update({"vni": vni})
+    return handler(action='add_client', arg=content)
 
-        return Response(content_type='application/json',
-                        body=json.dumps(body))
 
-    @route(API_NAME, '/vtep/networks', methods=['GET'])
-    @get_method()
-    def get_networks(self, **kwargs):
-        """
-        Gets a list of all networks.
-        Usage:
-            ======= ===============
-            Method  URI
-            ======= ===============
-            GET     /vtep/networks
-            ======= ===============
-        Example::
-            $ curl -X GET http://localhost:8080/vtep/networks |
-             python -m json.tool
-        ::
-            {
-                "10": {
-                    "EvpnNetwork": {
-                        "clients": {
-                            "aa:bb:cc:dd:ee:ff": {
-                                "EvpnClient": {
-                                    "ip": "10.0.0.1",
-                                    "mac": "aa:bb:cc:dd:ee:ff",
-                                    "next_hop": "172.17.0.1",
-                                    "port": "f9ba032a-0446-4e7c-b30b-454318e195b4"
-                                }
-                            }
-                        },
-                        "ethernet_tag_id": 0,
-                        "route_dist": "65000:10",
-                        "vni": 10
-                    }
-                }
-            }
-        """
-        return self._get_networks(**kwargs)
+@app.route('/vtep/networks/<vni>/clients/<mac>', methods=['DELETE'])
+def del_client(vni, mac):
+    content = {
+        "vni": vni,
+        "mac": mac
+    }
+    return handler(action='del_client', arg=content)
 
-    @route(API_NAME, '/vtep/networks/{vni}', methods=['GET'])
-    @get_method(
-        keywords={
-            "vni": to_int,
-        })
-    def get_network(self, **kwargs):
-        """
-        Gets the network for the specified VNI.
-        Usage:
-            ======= =====================
-            Method  URI
-            ======= =====================
-            GET     /vtep/networks/{vni}
-            ======= =====================
-        Request parameters:
-            ================ ========================================
-            Attribute        Description
-            ================ ========================================
-            vni              Virtual Network Identifier. (e.g. 10)
-            ================ ========================================
-        Example::
-            $ curl -X GET http://localhost:8080/vtep/networks/10 |
-             python -m json.tool
-        ::
-            {
-                "10": {
-                    "EvpnNetwork": {
-                        "clients": {
-                            "aa:bb:cc:dd:ee:ff": {
-                                "EvpnClient": {
-                                    "ip": "10.0.0.1",
-                                    "mac": "aa:bb:cc:dd:ee:ff",
-                                    "next_hop": "172.17.0.1",
-                                    "port": "f9ba032a-0446-4e7c-b30b-454318e195b4"
-                                }
-                            }
-                        },
-                        "ethernet_tag_id": 0,
-                        "route_dist": "65000:10",
-                        "vni": 10
-                    }
-                }
-            }
-        """
-        return self._get_networks(**kwargs)
+@app.route("/test")
+def hello_world():
+    return "<p>Hello, World!</p>"
 
-    @route(API_NAME, '/vtep/networks/{vni}', methods=['DELETE'])
-    @delete_method(
-        keywords={
-            "vni": to_int,
-        })
-    def del_network(self, **kwargs):
-        """
-        Deletes the network for the specified VNI.
-        Usage:
-            ======= =====================
-            Method  URI
-            ======= =====================
-            DELETE  /vtep/networks/{vni}
-            ======= =====================
-        Request parameters:
-            ================ ========================================
-            Attribute        Description
-            ================ ========================================
-            vni              Virtual Network Identifier. (e.g. 10)
-            ================ ========================================
-        Example::
-            $ curl -X DELETE http://localhost:8080/vtep/networks/10 |
-             python -m json.tool
-        ::
-            {
-                "10": {
-                    "EvpnNetwork": {
-                        "ethernet_tag_id": 10,
-                        "clients": [
-                            {
-                                "EvpnClient": {
-                                    "ip": "10.0.0.11",
-                                    "mac": "e2:b1:0c:ba:42:ed",
-                                    "port": "f9ba032a-0446-4e7c-b30b-454318e195b4"
-                                }
-                            }
-                        ],
-                        "route_dist": "65000:100",
-                        "vni": 10
-                    }
-                }
-            }
-        """
-        body = self.client.call(self.ctxt, 'del_network', arg=kwargs)
-        for e in EXCEPTIONS:
-            exception = body.get(e.__name__)
-            if exception:
-                return e(**exception).to_response(status=404)
 
-        return Response(content_type='application/json',
-                        body=json.dumps(body))
-
-    @route(API_NAME, '/vtep/networks/{vni}/clients', methods=['POST'])
-    @post_method(
-        keywords={
-            "vni": to_int,
-            "port": str,
-            "mac": str,
-            "ip": str,
-        })
-    def add_client(self, **kwargs):
-        """
-        Registers a new client to the specified network.
-        Usage:
-            ======= =============================
-            Method  URI
-            ======= =============================
-            POST    /vtep/networks/{vni}/clients
-            ======= =============================
-        Request parameters:
-            =========== ===========================================================
-            Attribute   Description
-            =========== ===========================================================
-            vni         Virtual Network Identifier. (e.g. 10)
-            port        Logical Port name OVN. It corresponds with Port ID Neutron.
-                        (e.g. "f9ba032a-0446-4e7c-b30b-454318e195b4")
-            mac         Client MAC address to register.
-                        (e.g. "aa:bb:cc:dd:ee:ff")
-            ip          Client IP address. (e.g. "10.0.0.1")
-            =========== ===========================================================
-        Example::
-            $ curl -X POST -d '{
-             "port": "f9ba032a-0446-4e7c-b30b-454318e195b4",
-             "mac": "aa:bb:cc:dd:ee:ff",
-             "ip": "10.0.0.1"
-             }' http://localhost:8080/vtep/networks/10/clients |
-             python -m json.tool
-        ::
-            {
-                "10": {
-                    "EvpnClient": {
-                        "ip": "10.0.0.1",
-                        "mac": "aa:bb:cc:dd:ee:ff",
-                        "next_hop": "172.17.0.1",
-                        "port": "f9ba032a-0446-4e7c-b30b-454318e195b4"
-                    }
-                }
-            }
-        """
-        body = self.client.call(self.ctxt, 'add_client', arg=kwargs)
-        for e in EXCEPTIONS:
-            exception = body.get(e.__name__)
-            if exception:
-                return e(**exception).to_response(status=404)
-
-        return Response(content_type='application/json',
-                        body=json.dumps(body))
-
-    @route(API_NAME, '/vtep/networks/{vni}/clients/{mac}', methods=['DELETE'])
-    @delete_method(
-        keywords={
-            "vni": to_int,
-            "mac": str,
-        })
-    def del_client(self, **kwargs):
-        """
-        Delete the client (with specified mac-address) from the specified network.
-        Usage:
-            ======= ===================================
-            Method  URI
-            ======= ===================================
-            DELETE  /vtep/networks/{vni}/clients/{mac}
-            ======= ===================================
-        Request parameters:
-            =========== ===============================================
-            Attribute   Description
-            =========== ===============================================
-            vni         Virtual Network Identifier. (e.g. 10)
-            mac         Client MAC address to register.
-            =========== ===============================================
-        Example::
-            $ curl -X DELETE http://localhost:8080/vtep/networks/10/clients/aa:bb:cc:dd:ee:ff |
-             python -m json.tool
-        ::
-            {
-                "10": {
-                    "EvpnClient": {
-                        "ip": "10.0.0.1",
-                        "mac": "aa:bb:cc:dd:ee:ff",
-                        "next_hop": "172.17.0.1",
-                        "port": "f9ba032a-0446-4e7c-b30b-454318e195b4"
-                    }
-                }
-            }
-        """
-        body = self.client.call(self.ctxt, 'del_client', arg=kwargs)
-        for e in EXCEPTIONS:
-            exception = body.get(e.__name__)
-            if exception:
-                return e(**exception).to_response(status=404)
-
-        return Response(content_type='application/json',
-                        body=json.dumps(body))
+if __name__ == '__main__':
+    app.run(debug=True, host='0.0.0.0')

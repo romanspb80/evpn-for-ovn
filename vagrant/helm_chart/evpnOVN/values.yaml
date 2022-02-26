@@ -1,0 +1,36 @@
+common:
+  configMap: app-settings
+
+api:
+  name: evpn-api
+  ReplicaSet:
+    containers:
+      image: 28041980/evpn-api
+  Ingress:
+    host: evpn-api.domain-x.com
+    port: 5000
+
+agent:
+  name: evpn-agent
+  DaemonSet:
+    containers:
+      image: 28041980/evpn-agent
+
+externalServuces:
+  rabbitmq:
+    name: rabbitmq
+    Endpoints:
+      ip: 192.168.10.20
+  bgp:
+    name: bgp
+    Endpoints:
+      ip: 192.168.10.10
+  ovsdb:
+    name: ovsdb
+    Endpoints:
+      ip: 192.168.10.20
+      ports:
+      - name: ovnnb
+        port: 6641
+      - name: ovs
+        port: 6640

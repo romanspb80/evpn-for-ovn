@@ -6,5 +6,5 @@ subsets:
   - addresses:
     - ip: 192.168.10.10
     ports:
-    - name: "bgp"
+    - name: "bgp-remote"
       port: 179

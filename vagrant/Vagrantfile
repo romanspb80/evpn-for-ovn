@@ -2,48 +2,41 @@
 # vi: set ft=ruby :
 
 Vagrant.configure("2") do |config|
-  config.ssh.insert_key = false
 
   config.vm.define "ryu" do |ryu|
-    ryu.vm.box = "peru/ubuntu-16.04-server-amd64"
-    ryu.vm.network "private_network", ip: "192.168.10.10"
+    ryu.vm.box = "ubuntu/focal64"
+    ryu.vm.network "private_network", ip: "192.168.10.10", nic_type: "virtio"
     ryu.vm.hostname = "ryu"
-    ryu.vm.provider "libvirt" do |libvirt|
-      libvirt.memory = "2048"
-      libvirt.cpus = 1
-      libvirt.nested = false
-      libvirt.volume_cache = 'none'
+    ssh_pub_key = File.readlines("#{Dir.home}/.ssh/id_rsa.pub").first.strip
+    ryu.vm.provision 'shell', inline: 'mkdir -p /root/.ssh'
+    ryu.vm.provision 'shell', inline: "echo #{ssh_pub_key} >> /root/.ssh/authorized_keys"
+    ryu.vm.provision 'shell', inline: "echo #{ssh_pub_key} >> /home/vagrant/.ssh/authorized_keys", privileged: false
+    ryu.vm.provider "virtualbox" do |virtualbox|
+      virtualbox.memory = 2048
+      virtualbox.cpus = 1
+      virtualbox.customize ["modifyvm", :id, "--nicpromisc2", "allow-all"]
+    end
+    ryu.vm.provision "ansible" do |ansible|
+      ansible.playbook = "install-ryu-mn.yml"
     end
   end
-
-  config.vm.define "k8s" do |k8s|
-    k8s.vm.box = "peru/ubuntu-16.04-server-amd64"
-    k8s.vm.synced_folder "synced_folders_k8s/", "/home/vagrant"
-    k8s.vm.network "private_network", ip: "192.168.10.20"
-    k8s.vm.hostname = "k8s"
-    k8s.vm.provider "libvirt" do |libvirt|
-      libvirt.memory = "4096"
-      libvirt.cpus = 1
-      libvirt.nested = false
-      libvirt.volume_cache = 'none'
+  
+  config.vm.define "microstack" do |microstack|
+    microstack.vm.box = "ubuntu/focal64"
+    microstack.vm.network "private_network", ip: "192.168.10.20", nic_type: "virtio"
+    microstack.vm.hostname = "microstack"
+    ssh_pub_key = File.readlines("#{Dir.home}/.ssh/id_rsa.pub").first.strip
+    microstack.vm.provision 'shell', inline: 'mkdir -p /root/.ssh'
+    microstack.vm.provision 'shell', inline: "echo #{ssh_pub_key} >> /root/.ssh/authorized_keys"
+    microstack.vm.provision 'shell', inline: "echo #{ssh_pub_key} >> /home/vagrant/.ssh/authorized_keys", privileged: false
+    microstack.vm.provider "virtualbox" do |virtualbox|
+      virtualbox.memory = 8192
+      virtualbox.cpus = 2
+      virtualbox.customize ["modifyvm", :id, "--nested-hw-virt", "on"]
+      virtualbox.customize ["modifyvm", :id, "--nicpromisc2", "allow-all"]
+    end
+    microstack.vm.provision "ansible" do |ansible|
+      ansible.playbook = "install-microstack.yml"
     end
   end
-
-  config.vm.define "devstack" do |devstack|
-    devstack.vm.box = "peru/ubuntu-16.04-server-amd64"
-    devstack.vm.synced_folder "synced_folders_devstack/", "/home/vagrant"
-    devstack.vm.network "private_network", ip: "192.168.10.200"
-    devstack.vm.hostname = "devstack-ovn"
-    devstack.vm.provider "libvirt" do |libvirt|
-      libvirt.memory = "8192"
-      libvirt.cpus = 2
-      libvirt.nested = true
-      libvirt.volume_cache = 'none'
-    end
-    devstack.vm.provision "ansible" do |ansible|
-      ansible.limit = 'all'
-      ansible.playbook = "playbook.yml"
-    end
-  end
-
 end
