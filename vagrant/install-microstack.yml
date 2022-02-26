@@ -78,3 +78,15 @@
       shell: snap alias microk8s.helm3 helm3
     - name: kubernetes cluster deployment
       shell: helm3 install evpn-ovn /home/vagrant/evpn-for-ovn/vagrant/helm_chart/evpnOVN
+
+- name: install apt packages
+  hosts: all
+  gather_facts: no
+  become: True
+  tasks:
+    - name: install sshpass
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+        pkg:
+          - sshpass
