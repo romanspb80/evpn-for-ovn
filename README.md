@@ -1,31 +1,35 @@
 # evpn-for-ovn
 A prototype of EVPN-VXLAN implementation for network cloud solution based on OVN.
 # Introduction
-OVN is described in the document http://www.openvswitch.org/support/dist-docs/ovn-architecture.7.txt:
+OVN is described in the document https://www.ovn.org/support/dist-docs/ovn-architecture.7.txt:
 
 "OVN, the Open Virtual Network, is a system to support virtual network abstraction. OVN complements the existing capabilities of OVS to add native support for virtual network abstractions, such as virtual L2 and L3 overlays and security groups. Services such as DHCP are also  desirable  features. Just like OVS, OVN’s design goal is to have a production-quality implementation that can operate at significant scale."
 
-And the main purpose of OVN is a Control Plane constructing for Neutron OpenStack. OVN is built on the same architectural principles as VMware's commercial NSX and offers the same core network virtualization capability — providing a free alternative that has been adopted in open source orchestration systems. But OVN can not implement EVPN Multi-Site architecture for DCI (Data Center Interconnect) concept.
+And the main purpose of OVN is a Control Plane constructing for Neutron OpenStack. Also there some solutions for Kubernetes networking model implementation: Kube-OVN, OVN4NFV-K8s-Plugin and OVN-Kubernetes.
+OVN is built on the same architectural principles as VMware's commercial NSX and offers the same core network virtualization capability — providing a free alternative that has been adopted in open source orchestration systems. But OVN can not implement EVPN Multi-Site architecture for DCI (Data Center Interconnect) concept.
 
-This project demonstrates how it can be decided with adding new applications of RYU. RYU is a SDN framework with the libraries of different network protocols and written in Python: https://ryu.readthedocs.io/en/latest/getting_started.html#what-s-ryu
+This project demonstrates how it can be solved with adding new applications of RYU. RYU is a SDN framework with the libraries of different network protocols and written in Python: https://ryu.readthedocs.io/en/latest/getting_started.html#what-s-ryu
 
 # How it works
-Assume that there are two DC - DataCenter X and DataCenter Y and you want to organize a EVPN connection between them. DataCenter X is an External System with EVPN-VXLAN support. In the project the standard built-in RYU-application **rest_vtep.py** is used as an External System. DataCenter Y is your Cloud System based on OpenStack with OVN.
+Assume that there are two DC - DataCenter X and DataCenter Y and needs to organize a EVPN connection between them. DataCenter X is an External System with EVPN-VXLAN support. In the project the standard built-in RYU-application **rest_vtep.py** is used as an External System. DataCenter Y is our Cloud Platform based on OpenStack with OVN.
 The diagram shows the following elements.
 1. DataCenter X (an External System) with the standard RYU-application rest_vtep.py
 2. DataCenter Y with:
-- DevStack with OVN.
+- Microstack with OVN.
 - The K8S Cluster with new RYU-applications for OVN EVPN-VXLAN implementation.
 - Some kind of a Cloud Manager Appliction (Orchestrator).
 ![Scheme5](https://user-images.githubusercontent.com/30826451/155902234-5915f82f-7100-4453-b7ae-c0739c36f383.jpg)
 ## Idea description
-There is the task to organize a L2VPN (distributed L2 network) between sites (Data Centers) using EVPN-VXLAN . One of them is our Openstack Platform (DevStack with OVN) - DataCenter Y. The other is external system (with EVPN-VXLAN support) - DataCenter X. The key step is the implementation of EVPN-VXLAN on Neutron side. To do this, it is necessary to extend our Cloud Platform with the functionality of building vxlan tunnels and the implementation of the MP-BGP Protocol.
+Needs to organize a L2VPN (distributed L2 network) between sites (Data Centers) using EVPN-VXLAN . One of them is our Openstack Platform (Microstack with OVN) - DataCenter Y. The other is external system with EVPN-VXLAN support - DataCenter X. The key step is the implementation of EVPN-VXLAN on Neutron side. To do this, it is necessary to implement the building vxlan tunnels as a Data plane and the MP-BGP Protocol as a Control plane.
 
-The applications **evpn-api.py** and **evpn-agent.py** are located in evpn-for-ovn/docker_files/ and written from Built-in Ryu application rest_vtep.py:
-
+The applications **evpn-api.py** and **evpn-agent.py** are located in evpn-for-ovn/docker_files. 
+**evpn-api.py** - is a Flask API-server.
+**evpn-agent.py** is a RYU-application whose concept is borrowed from the built-in application **rest_vtep.py**.
 https://ryu.readthedocs.io/en/latest/app/rest_vtep.html
 
-This built-in Ryu application implement VTEP (VXLAN Tunnel Endpoint) for EVPN VXLAN in accordance with RFC7432. Also it sets OpenFlow rules in the OVS bridge for provisioning the connectivity of clients.
+The [**rest_vtep.py**](https://ryu.readthedocs.io/en/latest/app/rest_vtep.html) implements VTEP (VXLAN Tunnel Endpoint) for EVPN VXLAN in accordance with RFC7432. Also it sets OpenFlow rules in the OVS bridge for provisioning the connectivity of clients.
+
+The **evpn-agent.py** 
 
 The main idea of using two applications instead of one is to divide functions REST-API and handling. Also **evpn-agent.py** sets OVN-controller instead of using OpenFlow directly.
 
