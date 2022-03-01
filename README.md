@@ -1,7 +1,7 @@
 # evpn-for-ovn
 A prototype of EVPN-VXLAN implementation for network cloud solution based on OVN.
 # Introduction
-OVN is described in the document https://www.ovn.org/support/dist-docs/ovn-architecture.7.txt:
+OVN is described in the [document](https://www.ovn.org/support/dist-docs/ovn-architecture.7.txt):
 
 "OVN, the Open Virtual Network, is a system to support virtual network abstraction. OVN complements the existing capabilities of OVS to add native support for virtual network abstractions, such as virtual L2 and L3 overlays and security groups. Services such as DHCP are also  desirable  features. Just like OVS, OVN’s design goal is to have a production-quality implementation that can operate at significant scale."
 
@@ -11,37 +11,32 @@ OVN is built on the same architectural principles as VMware's commercial NSX and
 This project demonstrates how it can be solved with adding new applications of RYU. RYU is a SDN framework with the libraries of different network protocols and written in Python: https://ryu.readthedocs.io/en/latest/getting_started.html#what-s-ryu
 
 # How it works
-Assume that there are two DC - DataCenter X and DataCenter Y and needs to organize a EVPN connection between them. DataCenter X is an External System with EVPN-VXLAN support. In the project the standard built-in RYU-application **rest_vtep.py** is used as an External System. DataCenter Y is our Cloud Platform based on OpenStack with OVN.
+Assume that there are two data centers - DataCenter X and DataCenter Y. And needs to organize a EVPN connection between them. DataCenter X is an External System with EVPN-VXLAN support. In the project the built-in RYU-application **rest_vtep.py** is used as an External System. DataCenter Y is our Cloud Platform based on OpenStack with OVN.
 The diagram shows the following elements.
-1. DataCenter X (an External System) with the standard RYU-application rest_vtep.py
-2. DataCenter Y with:
+1. DataCenter X (an External System) with the RYU-application rest_vtep.py
+2. DataCenter Y includes:
 - Microstack with OVN.
-- The K8S Cluster with new RYU-applications for OVN EVPN-VXLAN implementation.
-- Some kind of a Cloud Manager Appliction (Orchestrator).
+- K8S Cluster with our application for OVN EVPN-VXLAN implementation.
+- Some kind of a Orchestrator or [Cloud Management System](https://en.wikipedia.org/wiki/Cloud_management) (CMS).
 ![Scheme5](https://user-images.githubusercontent.com/30826451/155902234-5915f82f-7100-4453-b7ae-c0739c36f383.jpg)
 ## Idea description
 Needs to organize a L2VPN (distributed L2 network) between sites (Data Centers) using EVPN-VXLAN . One of them is our Openstack Platform (Microstack with OVN) - DataCenter Y. The other is external system with EVPN-VXLAN support - DataCenter X. The key step is the implementation of EVPN-VXLAN on Neutron side. To do this, it is necessary to implement the building vxlan tunnels as a Data plane and the MP-BGP Protocol as a Control plane.
 
 The applications **evpn-api.py** and **evpn-agent.py** are located in evpn-for-ovn/docker_files. 
 **evpn-api.py** - is a Flask API-server.
-**evpn-agent.py** is a RYU-application whose concept is borrowed from the built-in application **rest_vtep.py**.
-https://ryu.readthedocs.io/en/latest/app/rest_vtep.html
+**evpn-agent.py** is a RYU-application whose concept is borrowed from the built-in application [**rest_vtep.py**](https://ryu.readthedocs.io/en/latest/app/rest_vtep.html)
 
-The [**rest_vtep.py**](https://ryu.readthedocs.io/en/latest/app/rest_vtep.html) implements VTEP (VXLAN Tunnel Endpoint) for EVPN VXLAN in accordance with RFC7432. Also it sets OpenFlow rules in the OVS bridge for provisioning the connectivity of clients.
+The **rest_vtep.py** implements VTEP (VXLAN Tunnel Endpoint) for EVPN VXLAN in accordance with RFC7432. Also it sets OpenFlow rules in the OVS bridge for provisioning the connectivity of clients.
 
-The **evpn-agent.py** 
+**evpn-api.py** implements REST-API. It receives http-requests from CMS and then makes RPC-calls to **evpn-agent.py** via RabbitMQ-server using OSLO messaging. RabbitMQ-server (AMQP broker) is a part of Openstack infrastructure. Then **evpn-agent.py** receives RPC-calls and performs tasks. The concept of AMQP and OSLO messaging is described in the OpenStack documentation:
 
-The main idea of using two applications instead of one is to divide functions REST-API and handling. Also **evpn-agent.py** sets OVN-controller instead of using OpenFlow directly.
+- https://docs.openstack.org/nova/latest/reference/rpc.html
 
-**evpn-api.py** implements REST-API. It gets http requests from a Cloud Manager Appliction and then makes RPC-calls to **evpn-agent.py** via RabbitMQ-server using OSLO messaging (deployed by Devtack). Then **evpn-agent.py** gets RPC-calls and performs tasks. It imlement concept of RPC in the OpenStack:
-
-https://docs.openstack.org/nova/latest/reference/rpc.html
-
-https://docs.openstack.org/oslo.messaging/latest/index.html
+- https://docs.openstack.org/oslo.messaging/latest/index.html
 
 There are two main functions of **evpn-agent.py**:
-1. VXLAN-Port configuration for OVS and OVN. 
-2. BGP Speaker (MP-BGP signaling).
+1. BGP Speaker for MP-BGP signaling (Control Plane).
+2. VXLAN-Port creating (Data Plane). 
 
 In case of getting requests from **evpn-api.py** the **evpn-agent.py** sent appropriate requests to an External System by MP-BGP. The requests can be such as "Connect to Neighbor", "Create new network", "Sent new client mac:ip.addr", etc. In case of **evpn-agent.py** get requests by MP-BGP from Neighbor (External System) it makes appropriate activities on OVN and OVS sides: VXLAN-Port creating on "br-int" OVS bridge and mapping it to OVN Logical Port, mac:ip.addr creating or deleting in OVN Logical Switch, sending mac:ip.addr updates of clients to the Neighbor (Ext. System) by MP-BGP.
 
