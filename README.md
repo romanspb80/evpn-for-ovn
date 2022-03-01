@@ -22,7 +22,7 @@ The diagram shows the following elements.
 ## Idea description
 Needs to organize a L2VPN (distributed L2 network) between sites (Data Centers) using EVPN-VXLAN . One of them is our Openstack Platform (Microstack with OVN) - DataCenter Y. The other is external system with EVPN-VXLAN support - DataCenter X. The key step is the implementation of EVPN-VXLAN on Neutron side. To do this, it is necessary to implement the building vxlan tunnels as a Data plane and the MP-BGP Protocol as a Control plane.
 
-The applications **evpn-api.py** and **evpn-agent.py** are located in [evpn-for-ovn/docker_files](evpn-for-ovn/docker_files/). 
+The applications **evpn-api.py** and **evpn-agent.py** are located in [evpn-for-ovn/docker_files](https://github.com/romanspb80/evpn-for-ovn/tree/master/docker_files). 
 **evpn-api.py** - is a Flask API-server.
 **evpn-agent.py** is a RYU-application whose concept is borrowed from the built-in application [**rest_vtep.py**](https://ryu.readthedocs.io/en/latest/app/rest_vtep.html)
 
