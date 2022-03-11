@@ -18,7 +18,7 @@ The diagram shows the following elements.
 - Microstack with OVN.
 - K8S Cluster with our application for OVN EVPN-VXLAN implementation.
 - Some kind of a Orchestrator or [Cloud Management System](https://en.wikipedia.org/wiki/Cloud_management) (CMS).
-![Scheme5](https://user-images.githubusercontent.com/30826451/157748998-1ad15b75-d82b-4c7f-8c8a-b89d067c1241.jpg)
+![Scheme5](https://user-images.githubusercontent.com/30826451/157813554-fa0464ea-9189-43ed-93be-9656f06c1e1d.jpg)
 ## Idea description
 Needs to organize a L2VPN (distributed L2 network) between sites (Data Centers) using EVPN-VXLAN . One of them is our Openstack Platform (Microstack with OVN) - DataCenter Y. The other is external system with EVPN-VXLAN support - DataCenter X. The key step is the implementation of EVPN-VXLAN on Neutron side. To do this, it is necessary to implement the building vxlan tunnels as a Data plane and the MP-BGP Protocol as a Control plane.
 
