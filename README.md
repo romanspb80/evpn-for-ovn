@@ -87,26 +87,30 @@ Host **ryu** (192.168.10.10)             Host **microstack** (192.168.10.20)
 
 
 **Pre-setup**
+
 Needs to create virtual hosts in the DataCenter A and DataCenter B
 Connect to the **ryu** and **microstack**:
+
 *ssh vagrant@192.168.10.10*
 *ssh vagrant@192.168.10.20*
 
 In **ryu** create a virtual host with mininet:
+
 *sudo mn --topo single,1 --mac --switch ovsk --controller remote*
 *mininet> py h1.intf('h1-eth0').setMAC('02:ac:10:ff:00:11')*
 *mininet> py h1.intf('h1-eth0').setIP('192.168.222.11/24')*
 
 In another terminal run the **rest_vtep**:
+
 *cd /usr/local/bin ; sudo ./ryu-manager --verbose --ofp-tcp-listen-port 6653 ../lib/python3.8/dist-packages/ryu/app/rest_vtep.py*
 
 In **microstack** create a virtual machine:
+
 *openstack keypair create --public-key ~/.ssh/id_rsa.pub mykey*
 *openstack flavor create --public m1.extra_tiny --id auto --ram 256 --disk 0 --vcpus 1*
 *openstack port create --network test --mac 02:ac:10:ff:00:22 --fixed-ip subnet=test-subnet,ip-address=192.168.222.22 port-test*
 *openstack floating ip create external --port port-test*
 *openstack server create --flavor m1.extra_tiny --image cirros --port port-test --key-name mykey vm-test*
-
 
 *NETWORK_ID=$(openstack network list --name test -f value -c ID)*
 *PORT_ID=$(openstack port show port-test -f value -c id)*
@@ -169,7 +173,6 @@ For **microstack**:
 END http://192.168.10.10:8080/vtep/networks/10/clients | python3 -m json.tool*
 
 Where param "port" is OVN Logical Port.
-![sequenceDiagram](https://user-images.githubusercontent.com/30826451/158036290-d9078788-7ce5-438f-98be-73b00bae86b7.png)
 
 5. Testing
 In the console with mininet:
@@ -184,7 +187,7 @@ And ping the remote host:
 (vm-test)$ ping "192.168.222.11
 
 # Sequence Diagram
-
+![sequenceDiagram](https://user-images.githubusercontent.com/30826451/158036290-d9078788-7ce5-438f-98be-73b00bae86b7.png)
 
 # Further development
 1. Split the **evpn-agent.py** into two applications: "BGP Speaker" and "OVS/OVN Configurator". These apps will be connected via RabbitMQ. "OVS/OVN Configurator" would be get requests from different sources via Queue.
