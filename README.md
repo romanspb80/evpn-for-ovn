@@ -92,12 +92,15 @@ Needs to create virtual hosts in the DataCenter A and DataCenter B
 Connect to the **ryu** and **microstack**:
 
 *ssh vagrant@192.168.10.10*
+
 *ssh vagrant@192.168.10.20*
 
 In **ryu** create a virtual host with mininet:
 
 *sudo mn --topo single,1 --mac --switch ovsk --controller remote*
+
 *mininet> py h1.intf('h1-eth0').setMAC('02:ac:10:ff:00:11')*
+
 *mininet> py h1.intf('h1-eth0').setIP('192.168.222.11/24')*
 
 In another terminal run the **rest_vtep**:
