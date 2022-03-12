@@ -55,24 +55,22 @@ Perform:
 cd ./evpn-for-ovn/vagrant/
 vagrant up
 
-Three virtual machines will be run: **devstack**, **k8s** ,**ryu**. In accordance with diagram DataCenter X is associated with the **ryu**, DataCenter Y - with **devstack** and **k8s**.
+Three virtual machines will be run: **microstack**, **ryu**. In accordance with diagram DataCenter A is associated with the **microstack**, DataCenter B - with **ryu**.
 The IP addresses of virtual machines are represented in vagrant/Vagrantfile:
 192.168.10.10 **ryu**
 
-192.168.10.20 **k8s**
+192.168.10.20 **microstack**
 
-192.168.10.200 **devstack**
+Also needs to have a public ssh key in the home directory on the your host: [{Dir.home}/.ssh/id_rsa.pub(https://github.com/romanspb80/evpn-for-ovn/blob/master/vagrant/Vagrantfile#L10)
 
-Login/Password: vagrant/vagrant
-
-Also it is necessary to add "192.168.10.20  evpn-api.domain-x.com" to /etc/hosts where from will be done requests. And also  it should be to set CPU mode on **devstack** virtual machine in "host-model" or "host-passthrough".
+Also it is necessary to add "192.168.10.20  evpn-api.domain-x.com" to /etc/hosts where from will be doackne requests. And also  it should be to set CPU mode on **microstack** virtual machine in "host-model" or "host-passthrough".
 
 ##Usage Example
 This example supposes the following environment:
 ```
-Host **ryu** (192.168.10.10)             Host **k8s** (192.168.10.20)
+Host **ryu** (192.168.10.10)             Host **microstack** (192.168.10.20)
 +--------------------+                   +--------------------+
-|  Ryu (rest_vtep)   | --- BGP(EVPN) --- |  Ryu (**evpn-api**)|
+|  rest_vtep (RYU)   | --- BGP(EVPN) --- | **evpn-api** (RYU) |
 +--------------------+                   +--------------------+
         |                                       |
         |                                       |
