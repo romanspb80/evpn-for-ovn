@@ -107,16 +107,25 @@ In another terminal run the **rest_vtep**:
 
 *cd /usr/local/bin ; sudo ./ryu-manager --verbose --ofp-tcp-listen-port 6653 ../lib/python3.8/dist-packages/ryu/app/rest_vtep.py*
 
+
 In **microstack** create a virtual machine:
 
 *openstack keypair create --public-key ~/.ssh/id_rsa.pub mykey*
+
 *openstack flavor create --public m1.extra_tiny --id auto --ram 256 --disk 0 --vcpus 1*
+
 *openstack port create --network test --mac 02:ac:10:ff:00:22 --fixed-ip subnet=test-subnet,ip-address=192.168.222.22 port-test*
+
 *openstack floating ip create external --port port-test*
+
 *openstack server create --flavor m1.extra_tiny --image cirros --port port-test --key-name mykey vm-test*
 
+
 *NETWORK_ID=$(openstack network list --name test -f value -c ID)*
+
 *PORT_ID=$(openstack port show port-test -f value -c id)*
+
+
 
 **Configuration steps**
 
@@ -179,11 +188,14 @@ Where param "port" is OVN Logical Port.
 
 5. Testing
 In the console with mininet:
+
 *ping "192.168.222.22*
+
 
 In the **microstack** connect to the virtual machine:
 
 *ssh-keyscan $SERVER_IP >> ~/.ssh/known_hosts*
+
 *sshpass -p gocubsgo ssh -i ~/.ssh/id_rsa.pub cirros@$SERVER_IP*
 
 And ping the remote host:
