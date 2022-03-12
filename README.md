@@ -11,7 +11,7 @@ OVN is built on the same architectural principles as VMware's commercial NSX and
 This project demonstrates how it can be solved with adding new applications of RYU. RYU is a SDN framework with the libraries of different network protocols and written in Python: https://ryu.readthedocs.io/en/latest/getting_started.html#what-s-ryu
 
 # How it works
-Assume that there are two data centers - DataCenter X and DataCenter Y. And needs to organize a EVPN connection between them. DataCenter X is an External System with EVPN-VXLAN support. In the project the built-in RYU-application **rest_vtep.py** is used as an External System. DataCenter Y is our Cloud Platform based on OpenStack with OVN.
+Assume that there are two data centers - DataCenter A and DataCenter B. And needs to organize a EVPN connection between them. DataCenter A is an External System with EVPN-VXLAN support. In the project the built-in RYU-application **rest_vtep.py** is used as an External System. DataCenter B is our Cloud Platform based on OpenStack with OVN.
 The diagram shows the following elements.
 1. DataCenter X (an External System) with the RYU-application rest_vtep.py
 2. DataCenter Y includes:
@@ -63,14 +63,14 @@ The IP addresses of virtual machines are represented in vagrant/Vagrantfile:
 
 Also needs to have a public ssh key in the home directory on the your host: [{Dir.home}/.ssh/id_rsa.pub(https://github.com/romanspb80/evpn-for-ovn/blob/master/vagrant/Vagrantfile#L10)
 
-Also it is necessary to add "192.168.10.20  evpn-api.domain-x.com" to /etc/hosts where from will be doackne requests. And also  it should be to set CPU mode on **microstack** virtual machine in "host-model" or "host-passthrough".
+Also it is necessary to add "192.168.10.20  evpn-api.domain-x.com" to /etc/hosts where will be done requests.
 
 ##Usage Example
 This example supposes the following environment:
 ```
 Host **ryu** (192.168.10.10)             Host **microstack** (192.168.10.20)
 +--------------------+                   +--------------------+
-|  rest_vtep (RYU)   | --- BGP(EVPN) --- | **evpn-api** (RYU) |
+|  rest_vtep (RYU)   | --- BGP(EVPN) --- |   evpn-agent (RYU) |
 +--------------------+                   +--------------------+
         |                                       |
         |                                       |
@@ -87,69 +87,69 @@ Host **ryu** (192.168.10.10)             Host **microstack** (192.168.10.20)
 ```
 
 
-**Pre configuration**
+**Pre-setup**
+Needs to create virtual hosts in the DataCenter A and DataCenter B
+Connect to the **ryu** (192.168.10.10) and **microstack** (192.168.10.20)
+*ssh vagrant@192.168.10.10*
+*ssh vagrant@192.168.10.20*
 
-On **ryu**:
-
-*$ sudo mn --controller=remote,ip=127.0.0.1 --topo=single,2 --switch=ovsk,protocols=OpenFlow13 --mac*
-
+In **ryu** create a virtual host with mininet:
+*sudo mn --topo single,1 --mac --switch ovsk --controller remote*
 *mininet> py h1.intf('h1-eth0').setMAC('02:ac:10:ff:00:11')*
+*mininet> py h1.intf('h1-eth0').setIP('192.168.222.11/24')*
 
-*mininet> py h1.intf('h1-eth0').setIP('10.0.0.11/24')*
+In the another terminal run the **rest_vtep**:
+*cd /usr/local/bin ; sudo ./ryu-manager --verbose --ofp-tcp-listen-port 6653 ../lib/python3.8/dist-packages/ryu/app/rest_vtep.py*
 
-On **devstack**:
+In **microstack** create a virtual machine:
+*openstack keypair create --public-key ~/.ssh/id_rsa.pub mykey*
+*openstack flavor create --public m1.extra_tiny --id auto --ram 256 --disk 0 --vcpus 1*
+*openstack port create --network test --mac 02:ac:10:ff:00:22 --fixed-ip subnet=test-subnet,ip-address=192.168.222.22 port-test*
+*openstack floating ip create external --port port-test*
+*openstack server create --flavor m1.extra_tiny --image cirros --port port-test --key-name mykey vm-test*
 
-*$ openstack port create --network private --mac 02:ac:10:ff:00:22 --fixed-ip subnet=private-subnet,ip-address=10.0.0.22 port-test*
 
-*IMAGE=$(openstack image list -f value -c Name | grep cirros)*
-
-*openstack server create --flavor cirros256 --image $IMAGE --port port-test vm-test*
-
+*NETWORK_ID=$(openstack network list --name test -f value -c ID)*
 
 **Configuration steps**
 
 
-1. Creates a new BGPSpeaker instance on each host
+1. Create a new BGPSpeaker instance on each host
 
-On **ryu**:
+For **ryu**:
 
-curl -X POST -d '{"dpid": 1, "as_number": 65000, "router_id": "192.168.10.10"}' http://192.168.10.10:8080/vtep/speakers | python -m json.tool
+curl -X POST -d '{"dpid": 1, "as_number": 65000, "router_id": "192.168.10.10"}' http://192.168.10.10:8080/vtep/speakers | python3 -m json.tool
 
-On **k8s**:
+For **microstack**:
 
-curl -X POST -d '{"as_number": 65000, "router_id": "192.168.10.20"}' http://evpn-api.domain-x.com/vtep/speakers | python -m json.tool
+curl -X POST -H "Content-Type: application/json" -d '{"as_number": 65000, "router_id": "192.168.10.20"}' http://evpn-api.domain-x.com/vtep/speakers | python3 -m json.tool
 
+2. Request the neighbors on each hosts
 
+For **ryu**:
 
-2. Registers the neighbor for the speakers on each host
+curl -X POST -d '{"address": "192.168.10.20", "remote_as": 65000}' http://192.168.10.10:8080/vtep/neighbors | python3 -m json.tool
 
-On **ryu**:
+For **microstack**:
 
-curl -X POST -d '{"address": "192.168.10.20", "remote_as": 65000}' http://192.168.10.10:8080/vtep/neighbors | python -m json.tool
-
-On **k8s**:
-
-curl -X POST -d '{"address": "192.168.10.10", "remote_as": 65000}' http://evpn-api.domain-x.com/vtep/neighbors | python -m json.tool
-
-
+curl -X POST -H "Content-Type: application/json" -d '{"address": "192.168.10.10", "remote_as": 65000}' http://evpn-api.domain-x.com/vtep/neighbors | python3 -m json.tool
 
 3. Defines a new VXLAN network(VNI=10)
 
-On **ryu**:
+For **ryu**:
 
-curl -X POST -d '{"vni": 10}' http://192.168.10.10:8080/vtep/networks |python -m json.tool
+curl -X POST -d '{"vni": 10}' http://192.168.10.10:8080/vtep/networks | python3 -m json.tool
 
-On **k8s**:
+For **microstack**:
 
-curl -X POST -d '{"vni": 10, "network_id": "7d29da33-5d12-4c04-95de-1672709ae946"}' http://evpn-api.domain-x.com/vtep/networks |python -m json.tool
+*curl -X POST -H "Content-Type: application/json" -d @- <<END;
+{
+    "vni": 10,
+    "network_id": "$NETWORK_ID"
+}
+END http://evpn-api.domain-x.com/vtep/networks | python3 -m json.tool*
 
 Where param "network_id" is a Neutron Network Identifier. It is associated with Logical Switch in OVN.
-Commands (requests) for list getting:
-
-*$ openstack network list
-
-*$ ovn-nbctl ls-list
-
 
 
 4. Registers the clients to the VXLAN network.
@@ -158,11 +158,11 @@ On **ryu**:
 
 curl -X POST -d '{"port": "s1-eth1", "mac": "02:ac:10:ff:00:11", "ip": "10.0.10.11"} ' http://192.168.10.10:8080/vtep/networks/10/clients | python -m json.tool
 
-On **k8s**:
+On **microstack**:
 
 curl -X POST -d '{"port": "8f93d2ba-527a-44ea-9b4f-3ce2c6067588", "mac": "02:ac:10:ff:00:22", "ip": "10.0.0.22"} ' http://evpn-api.domain-x.com/vtep/networks/10/clients | python -m json.tool
 
-Where param port (for **k8s**) is OVN Logical Port. It corresponds with Port ID Neutron:
+Where param port (for **microstack**) is OVN Logical Port. It corresponds with Port ID Neutron:
 ```
 $ ovn-nbctl show
 
