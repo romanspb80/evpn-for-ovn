@@ -13,14 +13,14 @@ This project demonstrates how it can be solved with adding new applications of R
 # How it works
 Assume that there are two data centers - DataCenter A and DataCenter B. And needs to organize a EVPN connection between them. DataCenter A is an External System with EVPN-VXLAN support. In the project the built-in RYU-application **rest_vtep.py** is used as an External System. DataCenter B is our Cloud Platform based on OpenStack with OVN.
 The diagram shows the following elements.
-1. DataCenter X (an External System) with the RYU-application rest_vtep.py
-2. DataCenter Y includes:
+1. DataCenter A (an External System) with the RYU-application rest_vtep.py
+2. DataCenter B includes:
 - Microstack with OVN.
-- K8S Cluster with our application for OVN EVPN-VXLAN implementation.
-- Some kind of a Orchestrator or [Cloud Management System](https://en.wikipedia.org/wiki/Cloud_management) (CMS).
+- K8S Cluster (Microk8s) with our applications for OVN EVPN-VXLAN implementation.
+- Some kind of an Orchestrator or [Cloud Management System](https://en.wikipedia.org/wiki/Cloud_management) (CMS).
 ![Scheme5](https://user-images.githubusercontent.com/30826451/157813554-fa0464ea-9189-43ed-93be-9656f06c1e1d.jpg)
 ## Idea description
-Needs to organize a L2VPN (distributed L2 network) between sites (Data Centers) using EVPN-VXLAN . One of them is our Openstack Platform (Microstack with OVN) - DataCenter Y. The other is external system with EVPN-VXLAN support - DataCenter X. The key step is the implementation of EVPN-VXLAN on Neutron side. To do this, it is necessary to implement the building vxlan tunnels as a Data plane and the MP-BGP Protocol as a Control plane.
+Needs to organize a L2VPN (distributed L2 network) between sites (Data Centers) using EVPN-VXLAN . One of them is our Openstack Platform (Microstack with OVN) - DataCenter B. Another is external system with EVPN-VXLAN support - DataCenter A. The key step is the implementation of EVPN-VXLAN on Neutron side. To do this, it is necessary to implement the building vxlan tunnels as a Data plane and the MP-BGP Protocol as a Control plane.
 
 The applications **evpn-api.py** and **evpn-agent.py** are located in [evpn-for-ovn/docker_files](https://github.com/romanspb80/evpn-for-ovn/tree/master/docker_files).
 **evpn-api.py** - is a Flask API-server.
@@ -50,8 +50,7 @@ There are some differences in REST API for **evpn-api.py**. The REST API descrip
 
 ## Enviroment installation
 
-Enable the nested virtualization on your host machine. For example it is described here: https://docs.fedoraproject.org/en-US/quick-docs/using-nested-virtualization-in-kvm/
-Perform:
+*git clone https://github.com/romanspb80/evpn-for-ovn.git*
 *cd ./evpn-for-ovn/vagrant*
 *vagrant up*
 
@@ -160,6 +159,7 @@ For **ryu**:
 *curl -X POST -d '{"port": "s1-eth1", "mac": "02:ac:10:ff:00:11", "ip": "192.168.222.11"} ' http://192.168.10.10:8080/vtep/networks/10/clients | python3 -m json.tool*
 
 For **microstack**:
+
 *curl -X POST -H "Content-Type: application/json" --d @- <<END;
 {
     "port": "$PORT_ID",
@@ -176,8 +176,10 @@ In the console with mininet:
 *ping "192.168.222.22*
 
 In the **microstack** connect to the virtual machine:
+
 *ssh-keyscan $SERVER_IP >> ~/.ssh/known_hosts*
 *sshpass -p gocubsgo ssh -i ~/.ssh/id_rsa.pub cirros@$SERVER_IP*
+
 And ping the remote host:
 (vm-test)$ ping "192.168.222.11
 
