@@ -52,10 +52,10 @@ There are some differences in REST API for **evpn-api.py**. The REST API descrip
 
 Enable the nested virtualization on your host machine. For example it is described here: https://docs.fedoraproject.org/en-US/quick-docs/using-nested-virtualization-in-kvm/
 Perform:
-cd ./evpn-for-ovn/vagrant/
-vagrant up
+*cd ./evpn-for-ovn/vagrant*
+*vagrant up*
 
-Three virtual machines will be run: **microstack**, **ryu**. In accordance with diagram DataCenter A is associated with the **microstack**, DataCenter B - with **ryu**.
+Three virtual machines will be run: **microstack**, **ryu**. In accordance with diagram DataCenter A is associated with the **microstack** and DataCenter B with **ryu**.
 The IP addresses of virtual machines are represented in vagrant/Vagrantfile:
 192.168.10.10 **ryu**
 
@@ -89,7 +89,7 @@ Host **ryu** (192.168.10.10)             Host **microstack** (192.168.10.20)
 
 **Pre-setup**
 Needs to create virtual hosts in the DataCenter A and DataCenter B
-Connect to the **ryu** (192.168.10.10) and **microstack** (192.168.10.20)
+Connect to the **ryu** and **microstack**:
 *ssh vagrant@192.168.10.10*
 *ssh vagrant@192.168.10.20*
 
@@ -98,7 +98,7 @@ In **ryu** create a virtual host with mininet:
 *mininet> py h1.intf('h1-eth0').setMAC('02:ac:10:ff:00:11')*
 *mininet> py h1.intf('h1-eth0').setIP('192.168.222.11/24')*
 
-In the another terminal run the **rest_vtep**:
+In another terminal run the **rest_vtep**:
 *cd /usr/local/bin ; sudo ./ryu-manager --verbose --ofp-tcp-listen-port 6653 ../lib/python3.8/dist-packages/ryu/app/rest_vtep.py*
 
 In **microstack** create a virtual machine:
@@ -110,6 +110,7 @@ In **microstack** create a virtual machine:
 
 
 *NETWORK_ID=$(openstack network list --name test -f value -c ID)*
+*PORT_ID=$(openstack port show port-test -f value -c id)*
 
 **Configuration steps**
 
@@ -152,40 +153,35 @@ END http://evpn-api.domain-x.com/vtep/networks | python3 -m json.tool*
 Where param "network_id" is a Neutron Network Identifier. It is associated with Logical Switch in OVN.
 
 
-4. Registers the clients to the VXLAN network.
+4. Transmit the clients for associated VXLAN network
 
-On **ryu**:
+For **ryu**:
 
-curl -X POST -d '{"port": "s1-eth1", "mac": "02:ac:10:ff:00:11", "ip": "10.0.10.11"} ' http://192.168.10.10:8080/vtep/networks/10/clients | python -m json.tool
+*curl -X POST -d '{"port": "s1-eth1", "mac": "02:ac:10:ff:00:11", "ip": "192.168.222.11"} ' http://192.168.10.10:8080/vtep/networks/10/clients | python3 -m json.tool*
 
-On **microstack**:
+For **microstack**:
+*curl -X POST -H "Content-Type: application/json" --d @- <<END;
+{
+    "port": "$PORT_ID",
+    "mac": "02:ac:10:ff:00:22",
+    "ip": "192.168.222.22"
+}
+END http://192.168.10.10:8080/vtep/networks/10/clients | python3 -m json.tool*
 
-curl -X POST -d '{"port": "8f93d2ba-527a-44ea-9b4f-3ce2c6067588", "mac": "02:ac:10:ff:00:22", "ip": "10.0.0.22"} ' http://evpn-api.domain-x.com/vtep/networks/10/clients | python -m json.tool
-
-Where param port (for **microstack**) is OVN Logical Port. It corresponds with Port ID Neutron:
-```
-$ ovn-nbctl show
-
-switch ae3ef4dc-5c15-4964-b282-77d1ec430cd3 (neutron-7d29da33-5d12-4c04-95de-1672709ae946) (aka private)
-
-......................................................................................
-
-    port 8f93d2ba-527a-44ea-9b4f-3ce2c6067588 (aka port-test)
-        addresses: ["02:ac:10:ff:00:22 10.0.0.22 fd97:23a0:78dc:0:ac:10ff:feff:22"]
-......................................................................................
-```
-
-*$ openstack port show port-test -f value -c id*
-
-***8f93d2ba-527a-44ea-9b4f-3ce2c6067588***
-
-
+Where param "port" is OVN Logical Port.
+![sequenceDiagram](https://user-images.githubusercontent.com/30826451/158036290-d9078788-7ce5-438f-98be-73b00bae86b7.png)
 
 5. Testing
+In the console with mininet:
+*ping "192.168.222.22*
 
-(s1h1)mininet> ping 10.0.0.22
+In the **microstack** connect to the virtual machine:
+*ssh-keyscan $SERVER_IP >> ~/.ssh/known_hosts*
+*sshpass -p gocubsgo ssh -i ~/.ssh/id_rsa.pub cirros@$SERVER_IP*
+And ping the remote host:
+(vm-test)$ ping "192.168.222.11
 
-(vm-test)$ ping 10.0.0.11
+# Sequence Diagram
 
 
 # Further development
