@@ -128,6 +128,8 @@ In **microstack** create a virtual machine:
 
 *PORT_ID=$(openstack port show port-test -f value -c id)*
 
+*SERVER_IP=$(openstack floating ip list --port port-test -f value | awk  '{print $2}')*
+
 
 
 **Configuration steps**
@@ -161,12 +163,7 @@ curl -X POST -d '{"vni": 10}' http://192.168.10.10:8080/vtep/networks | python3 
 
 For **microstack**:
 
-*curl -X POST -H "Content-Type: application/json" -d @- <<END;
-{
-    "vni": 10,
-    "network_id": "$NETWORK_ID"
-}
-END http://evpn-api.domain-x.com/vtep/networks | python3 -m json.tool*
+*curl -X POST -H "Content-Type: application/json" -d '{"vni": 10, "network_id": "<the value of $NETWORK_ID>"}' http://evpn-api.domain-x.com/vtep/networks |python3 -m json.tool*
 
 Where param "network_id" is a Neutron Network Identifier. It is associated with Logical Switch in OVN.
 
@@ -179,20 +176,14 @@ For **ryu**:
 
 For **microstack**:
 
-*curl -X POST -H "Content-Type: application/json" --d @- <<END;
-{
-    "port": "$PORT_ID",
-    "mac": "02:ac:10:ff:00:22",
-    "ip": "192.168.222.22"
-}
-END http://192.168.10.10:8080/vtep/networks/10/clients | python3 -m json.tool*
+*curl -X POST -H "Content-Type: application/json" -d '{"port": "<the value of $PORT_ID>", "mac": "02:ac:10:ff:00:22", "ip": "192.168.222.22"} ' http://evpn-api.domain-x.com/vtep/networks/10/clients | python3 -m json.tool*
 
 Where param "port" is OVN Logical Port.
 
 5. Testing
 In the console with mininet:
 
-*ping "192.168.222.22*
+*mininet> h1 ping -c 3 192.168.222.22*
 
 
 In the **microstack** connect to the virtual machine:
