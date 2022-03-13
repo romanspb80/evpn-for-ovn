@@ -145,6 +145,7 @@ For **microstack**:
 
 curl -X POST -H "Content-Type: application/json" -d '{"as_number": 65000, "router_id": "192.168.10.20"}' http://evpn-api.domain-x.com/vtep/speakers | python3 -m json.tool
 
+
 2. Request the neighbors on each hosts
 
 For **ryu**:
@@ -154,6 +155,7 @@ curl -X POST -d '{"address": "192.168.10.20", "remote_as": 65000}' http://192.16
 For **microstack**:
 
 curl -X POST -H "Content-Type: application/json" -d '{"address": "192.168.10.10", "remote_as": 65000}' http://evpn-api.domain-x.com/vtep/neighbors | python3 -m json.tool
+
 
 3. Defines a new VXLAN network(VNI=10)
 
@@ -180,11 +182,13 @@ For **microstack**:
 
 Where param "port" is OVN Logical Port.
 
+
 5. Needs to change vxlan udp-port of vxlan in the **ryu** due to the fact that it is busy by another service on the **microstack** side:
 
 *sudo ovs-vsctl set interface vxlan_192.168.10.20_10 options:dst_port=4788*
 
-5. Testing
+
+6. Testing
 
 In the console with mininet:
 
@@ -202,12 +206,14 @@ And ping the remote host:
 ![ping_toh1](https://user-images.githubusercontent.com/30826451/158070975-87328ae5-ea73-4a68-af97-087dc8dddf85.png)
 
 
+
 # Sequence Diagram
 ![sequenceDiagram](https://user-images.githubusercontent.com/30826451/158036290-d9078788-7ce5-438f-98be-73b00bae86b7.png)
 
+
+
 # Further development
-1. Split the **evpn-agent.py** into two applications: "BGP Speaker" and "OVS/OVN Configurator". These apps will be connected via RabbitMQ. "OVS/OVN Configurator" would be get requests from different sources via Queue.
-2. Orchestrate the app "BGP Speaker" with NodePort-type Service for associate containers with host-interfaces. This would get the opportunity to run several "BGP Speaker" on one host.
-3. Implement monitoring subsystem.
-4. Develop a plugin for OpenStack instead of current solution. It would be better to extend Neutron API and use only one Endpoint.
-5. Develop WiKi.
+1. Implement more other runtime environments with MP-BGP such as JunOS, GoBGP, Quagga, etc...
+2. Implement monitoring subsystem.
+3. Develop a plugin for OpenStack instead of current solution. It would be better to extend Neutron API.
+4. Develop WiKi.
