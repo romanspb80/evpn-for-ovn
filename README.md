@@ -187,16 +187,7 @@ Where param "port" is OVN Logical Port.
 5. Testing
 
 In the console with mininet:
-
-`mininet> h1 ping -c 3 192.168.222.22
-PING 192.168.222.22 (192.168.222.22) 56(84) bytes of data.
-64 bytes from 192.168.222.22: icmp_seq=1 ttl=64 time=10.4 ms
-64 bytes from 192.168.222.22: icmp_seq=2 ttl=64 time=2.25 ms
-64 bytes from 192.168.222.22: icmp_seq=3 ttl=64 time=1.50 ms
-
---- 192.168.222.22 ping statistics ---
-3 packets transmitted, 3 received, 0% packet loss, time 2004ms
-rtt min/avg/max/mdev = 1.503/4.708/10.377/4.019 ms`
+![ping_toVM](https://user-images.githubusercontent.com/30826451/158071017-9c7940d2-0b9b-4793-b291-ed03db099ccd.png)
 
 
 In the **microstack** connect to the virtual machine:
@@ -207,15 +198,8 @@ In the **microstack** connect to the virtual machine:
 
 And ping the remote host:
 
-`$ ping -c 3 192.168.222.11
-PING 192.168.222.11 (192.168.222.11): 56 data bytes
-64 bytes from 192.168.222.11: seq=0 ttl=64 time=4.975 ms
-64 bytes from 192.168.222.11: seq=1 ttl=64 time=2.036 ms
-64 bytes from 192.168.222.11: seq=2 ttl=64 time=1.266 ms
+![ping_toh1](https://user-images.githubusercontent.com/30826451/158070975-87328ae5-ea73-4a68-af97-087dc8dddf85.png)
 
---- 192.168.222.11 ping statistics ---
-3 packets transmitted, 3 packets received, 0% packet loss
-round-trip min/avg/max = 1.266/2.759/4.975 ms`
 
 # Sequence Diagram
 ![sequenceDiagram](https://user-images.githubusercontent.com/30826451/158036290-d9078788-7ce5-438f-98be-73b00bae86b7.png)
