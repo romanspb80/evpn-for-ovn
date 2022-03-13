@@ -56,6 +56,7 @@ There are some differences in REST API for **evpn-api.py**. The REST API descrip
 
 Three virtual machines will be run: **microstack**, **ryu**. In accordance with diagram DataCenter A is associated with the **microstack** and DataCenter B with **ryu**.
 The IP addresses of virtual machines are represented in vagrant/Vagrantfile:
+
 192.168.10.10 **ryu**
 
 192.168.10.20 **microstack**
@@ -109,6 +110,8 @@ In another terminal run the **rest_vtep**:
 
 
 In **microstack** create a virtual machine:
+
+*ssh-keygen -q -N "" -f ~/.ssh/id_rsa*
 
 *openstack keypair create --public-key ~/.ssh/id_rsa.pub mykey*
 
