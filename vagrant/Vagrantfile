@@ -30,8 +30,8 @@ Vagrant.configure("2") do |config|
     microstack.vm.provision 'shell', inline: "echo #{ssh_pub_key} >> /root/.ssh/authorized_keys"
     microstack.vm.provision 'shell', inline: "echo #{ssh_pub_key} >> /home/vagrant/.ssh/authorized_keys", privileged: false
     microstack.vm.provider "virtualbox" do |virtualbox|
-      virtualbox.memory = 6128
-      virtualbox.cpus = 1
+      virtualbox.memory = 8192
+      virtualbox.cpus = 2
       virtualbox.customize ["modifyvm", :id, "--nested-hw-virt", "on"]
       virtualbox.customize ["modifyvm", :id, "--nicpromisc2", "allow-all"]
     end
