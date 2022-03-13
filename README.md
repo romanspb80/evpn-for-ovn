@@ -187,6 +187,7 @@ Where param "port" is OVN Logical Port.
 5. Testing
 
 In the console with mininet:
+
 ![ping_toVM](https://user-images.githubusercontent.com/30826451/158071017-9c7940d2-0b9b-4793-b291-ed03db099ccd.png)
 
 
