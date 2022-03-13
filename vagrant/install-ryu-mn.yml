@@ -28,12 +28,3 @@
         name: eventlet==0.30.2
     - name: OpenVSwitch setup
       shell: "ovs-vsctl set-manager ptcp:6640"
-#    - name: Forward port 179 to 30179
-#      ansible.builtin.iptables:
-#        table: nat
-#        chain: OUTPUT
-#        protocol: tcp
-#        match: tcp
-#        destination_port: 179
-#        jump: REDIRECT
-#        to_ports: 30179

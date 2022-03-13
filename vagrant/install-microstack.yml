@@ -18,7 +18,7 @@
     - name: microstack install
       shell: snap install microstack --beta --devmode
     - name: Create openstack cluster
-      shell: microstack init --auto --control
+      raw: microstack init --auto --control
     - name: Create alias for microstack.ovs-vsctl
       shell: snap alias microstack.ovs-vsctl ovs-vsctl
     - name: Create alias for microstack.ovn-nbctl
