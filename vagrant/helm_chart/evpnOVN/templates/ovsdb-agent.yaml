@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: {{ .Values.ovsdbAgent.name }}-ds
+  labels:
+    app: {{ .Values.ovsdbAgent.name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Values.ovsdbAgent.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.ovsdbAgent.name }}
+    spec:
+      containers:
+      - name: {{ .Values.ovsdbAgent.name }}
+        image: {{ .Values.ovsdbAgent.ReplicaSet.containers.image }}
+        volumeMounts:
+        - name: {{ .Values.common.configMap }}
+          mountPath: /config
+      volumes:
+      - name: {{ .Values.common.configMap }}
+        configMap:
+          name: {{ .Values.common.configMap }}
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.externalServices.rabbitmq.name }}-svc
+spec:
+  ports:
+  - name: {{ .Values.externalServices.rabbitmq.name }}
+    protocol: TCP
+    port: 5672
+    nodePort: 0
+
+---
+
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: {{ .Values.externalServices.rabbitmq.name }}-svc
+subsets:
+  - addresses:
+    - ip: {{ .Values.externalServices.rabbitmq.Endpoints.ip }}
+    ports:
+    - name: {{ .Values.externalServices.rabbitmq.name }}
+      port: 5672
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.externalServices.ovsdb.name }}
+spec:
+  ports:
+  - name: ovnnb
+    protocol: TCP
+    port: 6641
+    targetPort: 6641
+    nodePort: 0
+  - name: ovs
+    protocol: TCP
+    port: 6640
+    targetPort: 6640
+    nodePort: 0
+
+---
+
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: {{ .Values.externalServices.ovsdb.name }}
+subsets:
+  - addresses:
+    - ip: {{ .Values.externalServices.ovsdb.Endpoints.ip }}
+    ports:
+    - name: ovnnb
+      port: 6641
+    - name: ovs
+      port: 6640

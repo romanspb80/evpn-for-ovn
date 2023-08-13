@@ -1,0 +1,115 @@
+- name: install apt packages
+  hosts: all
+  gather_facts: no
+  become: true
+  tasks:
+    - name: install sshpass
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+        pkg:
+          - sshpass
+          - python
+          - python-dev
+
+- name: Clone evpn-for-ovn
+  hosts: all
+  become: true
+  become_user: vagrant
+  gather_facts: no
+  tasks:
+    - name: Clone evpn-for-ovn
+      git:
+        repo: https://github.com/romanspb80/evpn-for-ovn.git
+        dest: /home/vagrant/evpn-for-ovn
+        version: rework_the_project
+
+#- name: microstack install
+#  hosts: all
+#  become: true
+#  tasks:
+#    - snap:
+#        name: microstack
+#        options:
+#          - beta: yes
+#          - devmode: yes
+
+- name: deployment microovn
+  hosts: all
+  become: true
+#  gather_facts: no
+  tasks:
+    - name: microovn install
+      shell: snap install microovn
+    - name: Create microovn cluster
+      shell: microovn cluster bootstrap
+    - name: Create alias for microovn.ovs-vsctl
+      shell: snap alias microovn.ovs-vsctl ovs-vsctl
+    - name: Create alias for microovn.ovn-nbctl
+      shell: snap alias microovn.ovn-nbctl ovn-nbctl
+
+- name: OpenVSwitch & OVN setup
+  hosts: all
+  become: true
+#  become_user: vagrant
+  gather_facts: no
+  tasks:
+#    - name: OVSDB start
+#      shell: snap start microstack.ovsdb-server
+#    - name: OVS start
+#      shell: snap start microstack.ovs-vswitchd
+    - name: OVS setup
+      shell: microovn.ovs-vsctl set-manager ptcp:6640
+#    - name: OVSDB-NB start
+#      shell: snap start microovn.ovn-ovsdb-server-nb
+#    - name: OVSDB-SB start
+#      shell: snap start microovn.ovn-ovsdb-server-sb
+    - name: OVN setup
+      shell: microovn.ovn-nbctl set-connection ptcp:6641:192.168.10.20
+
+#- name: Set RabbitMQ up
+#  hosts: all
+#  become: true
+#  gather_facts: no
+#  tasks:
+#    - name: Start RabbitMQ server
+#      shell: snap start microstack.rabbitmq-server
+#    - name: Stop RabbitMQ app
+#      shell: microstack.rabbitmqctl stop_app
+#    - name: Start RabbitMQ app
+#      shell: microstack.rabbitmqctl start_app
+#    - name: Add RabbitMQ user
+#      shell: microstack.rabbitmqctl add_user stackrabbit secret
+#    - name: Set RabbitMQ permissions for user
+#      shell: microstack.rabbitmqctl set_permissions stackrabbit ".*" ".*" ".*"
+#    - name: Set RabbitMQ tag for user
+#      shell: microstack.rabbitmqctl set_user_tags stackrabbit administrator
+#    - name: Restart RabbitMQ
+#      shell: snap restart microstack.rabbitmq-server
+
+- name: microk8s install & kubernetes cluster deployment
+  hosts: all
+  become: true
+  gather_facts: no
+  tasks:
+    - name: microk8s install
+      snap:
+        name: microk8s
+        classic: yes
+        channel: 1.21/stable
+    - name: Wait for microk8s to be ready
+      shell: microk8s status --wait-ready
+      changed_when: False
+#    - name: set microk8s up
+#      command: /home/vagrant/evpn-for-ovn/vagrant/synced_folders_k8s/setup_microk8s.sh
+#      register: stdout
+#    - debug:
+#        var: stdout.stdout_lines
+    - name: microk8s - enable dns ingress helm3
+      raw: microk8s enable dns ingress helm3
+    - name: Create alias for microk8s.kubectl
+      shell: snap alias microk8s.kubectl kubectl
+    - name: Create alias for microk8s.helm3
+      shell: snap alias microk8s.helm3 helm3
+    - name: kubernetes cluster deployment
+      shell: helm3 install evpn-ovn /home/vagrant/evpn-for-ovn/vagrant/helm_chart/evpnOVN

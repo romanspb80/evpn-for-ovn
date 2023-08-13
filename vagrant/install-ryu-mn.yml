@@ -8,23 +8,7 @@
         update_cache: yes
         cache_valid_time: 3600
         pkg:
-          - git
           - mininet
-          - python-dev
-          - python-setuptools
-          - python3-pip
-#          - iptables
-    - name: install ryu
-      pip:
-        name: ryu
-        extra_args: --upgrade
-        executable: pip3
-    - name: install paramiko
-      become: True
-      pip:
-        name: paramiko
-    - name: install eventlet
-      pip:
-        name: eventlet==0.30.2
+          - python3-ryu
     - name: OpenVSwitch setup
       shell: "ovs-vsctl set-manager ptcp:6640"

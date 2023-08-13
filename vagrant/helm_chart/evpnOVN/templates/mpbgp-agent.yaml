@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ .Values.mpbgpAgent.name }}-ds
+  labels:
+    app: {{ .Values.mpbgpAgent.name }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.mpbgpAgent.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.mpbgpAgent.name }}
+    spec:
+      hostNetwork: true
+      containers:
+      - name: {{ .Values.mpbgpAgent.name }}
+        image: {{ .Values.mpbgpAgent.DaemonSet.containers.image }}
+        volumeMounts:
+        - name: {{ .Values.common.configMap }}
+          mountPath: /config
+      volumes:
+      - name: {{ .Values.common.configMap }}
+        configMap:
+          name: {{ .Values.common.configMap }}
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.externalServices.rabbitmq.name }}-svc
+spec:
+  ports:
+  - name: {{ .Values.externalServices.rabbitmq.name }}
+    protocol: TCP
+    port: 5672
+    nodePort: 0
+
+---
+
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: {{ .Values.externalServices.rabbitmq.name }}-svc
+subsets:
+  - addresses:
+    - ip: {{ .Values.externalServices.rabbitmq.Endpoints.ip }}
+    ports:
+    - name: {{ .Values.externalServices.rabbitmq.name }}
+      port: 5672
+
+---
+
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: {{ .Values.externalServices.bgp.name }}-svc
+subsets:
+  - addresses:
+    - ip: {{ .Values.externalServices.bgp.Endpoints.ip }}
+    ports:
+    - name: {{ .Values.externalServices.bgp.name }}-remote
+      port: 179

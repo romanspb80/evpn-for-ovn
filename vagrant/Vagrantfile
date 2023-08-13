@@ -16,27 +16,27 @@ Vagrant.configure("2") do |config|
       virtualbox.cpus = 1
       virtualbox.customize ["modifyvm", :id, "--nicpromisc2", "allow-all"]
     end
-    ryu.vm.provision "ansible" do |ansible|
-      ansible.playbook = "install-ryu-mn.yml"
-    end
+    #ryu.vm.provision "ansible" do |ansible|
+    #  ansible.playbook = "install-ryu-mn.yml"
+    #end
   end
   
-  config.vm.define "microstack" do |microstack|
-    microstack.vm.box = "ubuntu/focal64"
-    microstack.vm.network "private_network", ip: "192.168.10.20", nic_type: "virtio"
-    microstack.vm.hostname = "microstack"
+  config.vm.define "ovncluster" do |ovncluster|
+    ovncluster.vm.box = "ubuntu/focal64"
+    ovncluster.vm.network "private_network", ip: "192.168.10.20", nic_type: "virtio"
+    ovncluster.vm.hostname = "microovn"
     ssh_pub_key = File.readlines("#{Dir.home}/.ssh/id_rsa.pub").first.strip
-    microstack.vm.provision 'shell', inline: 'mkdir -p /root/.ssh'
-    microstack.vm.provision 'shell', inline: "echo #{ssh_pub_key} >> /root/.ssh/authorized_keys"
-    microstack.vm.provision 'shell', inline: "echo #{ssh_pub_key} >> /home/vagrant/.ssh/authorized_keys", privileged: false
-    microstack.vm.provider "virtualbox" do |virtualbox|
-      virtualbox.memory = 8192
-      virtualbox.cpus = 2
+    ovncluster.vm.provision 'shell', inline: 'mkdir -p /root/.ssh'
+    ovncluster.vm.provision 'shell', inline: "echo #{ssh_pub_key} >> /root/.ssh/authorized_keys"
+    ovncluster.vm.provision 'shell', inline: "echo #{ssh_pub_key} >> /home/vagrant/.ssh/authorized_keys", privileged: false
+    ovncluster.vm.provider "virtualbox" do |virtualbox|
+      virtualbox.memory = 4096
+      virtualbox.cpus = 1
       virtualbox.customize ["modifyvm", :id, "--nested-hw-virt", "on"]
       virtualbox.customize ["modifyvm", :id, "--nicpromisc2", "allow-all"]
     end
-    microstack.vm.provision "ansible" do |ansible|
-      ansible.playbook = "install-microstack.yml"
+    ovncluster.vm.provision "ansible" do |ansible|
+     ansible.playbook = "install-ovncluster.yml"
     end
   end
 end

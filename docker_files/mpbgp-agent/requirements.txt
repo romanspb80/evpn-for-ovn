@@ -1,6 +1,4 @@
 eventlet==0.30.2
 oslo_messaging==12.11.0
 oslo_config==8.7.1
-ovsdbapp==1.15.1
 ryu==4.34
-paramiko==2.9
