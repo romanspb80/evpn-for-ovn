@@ -46,16 +46,3 @@ spec:
             name: {{ .Values.api.name }}-svc
             port:
               number: {{ .Values.api.Ingress.port }}
-
----
-
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ .Values.api.name }}-svc
-spec:
-  ports:
-  - port: {{ .Values.api.Ingress.port }}
-    targetPort: http
-  selector:
-    app: evpn-api

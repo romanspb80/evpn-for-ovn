@@ -111,5 +111,9 @@
       shell: snap alias microk8s.kubectl kubectl
     - name: Create alias for microk8s.helm3
       shell: snap alias microk8s.helm3 helm3
-    - name: kubernetes cluster deployment
+    - name: k8s add repo rabbitmq-operator
+      shell: helm3 repo add bitnami https://charts.bitnami.com/bitnami
+    - name: k8s rabbitmq-operator deployment
+      shell: helm3 install rabbitmq-release bitnami/rabbitmq-cluster-operator
+    - name: k8s evpn cluster deployment
       shell: helm3 install evpn-ovn /home/vagrant/evpn-for-ovn/vagrant/helm_chart/evpnOVN
