@@ -11,6 +11,7 @@
           - sshpass
           - python
           - python-dev
+          - rabbitmq-server
 
 - name: Clone evpn-for-ovn
   hosts: all
@@ -67,23 +68,35 @@
     - name: OVN setup
       shell: microovn.ovn-nbctl set-connection ptcp:6641:192.168.10.20
 
-#- name: Set RabbitMQ up
-#  hosts: all
-#  become: true
-#  gather_facts: no
-#  tasks:
+- name: Setup RabbitMQ
+  hosts: all
+  become: true
+  gather_facts: no
+  tasks:
 #    - name: Start RabbitMQ server
 #      shell: snap start microstack.rabbitmq-server
 #    - name: Stop RabbitMQ app
 #      shell: microstack.rabbitmqctl stop_app
 #    - name: Start RabbitMQ app
 #      shell: microstack.rabbitmqctl start_app
-#    - name: Add RabbitMQ user
-#      shell: microstack.rabbitmqctl add_user stackrabbit secret
+    - name: Add RabbitMQ user
+      community.rabbitmq.rabbitmq_user:
+        user: stackrabbit
+        password: secret
+        permissions:
+          - vhost: /
+            configure_priv: .*
+            read_priv: .*
+            write_priv: .*
+        tags:
+          - stackrabbit
+          - administrator
+        state: present
+#      shell: rabbitmqctl add_user stackrabbit secret
 #    - name: Set RabbitMQ permissions for user
-#      shell: microstack.rabbitmqctl set_permissions stackrabbit ".*" ".*" ".*"
+#      shell: rabbitmqctl set_permissions stackrabbit ".*" ".*" ".*"
 #    - name: Set RabbitMQ tag for user
-#      shell: microstack.rabbitmqctl set_user_tags stackrabbit administrator
+#      shell: rabbitmqctl set_user_tags stackrabbit administrator
 #    - name: Restart RabbitMQ
 #      shell: snap restart microstack.rabbitmq-server
 
