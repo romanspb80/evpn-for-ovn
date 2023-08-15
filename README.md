@@ -106,7 +106,7 @@ In **ryu** create a virtual host with mininet:
 
 In another terminal run the **rest_vtep**:
 
-*cd /usr/local/bin ; sudo ./ryu-manager --verbose --ofp-tcp-listen-port 6653 ../lib/python3.8/dist-packages/ryu/app/rest_vtep.py*
+*sudo ryu-manager --verbose --ofp-tcp-listen-port 6653 /usr/lib/python3/dist-packages/ryu/app/rest_vtep.py*
 
 
 In **microstack** create a virtual machine:

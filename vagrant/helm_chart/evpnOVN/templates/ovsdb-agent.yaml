@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: ReplicaSet
 metadata:
-  name: {{ .Values.ovsdbAgent.name }}-ds
+  name: {{ .Values.ovsdbAgent.name }}-rs
   labels:
     app: {{ .Values.ovsdbAgent.name }}
 spec:

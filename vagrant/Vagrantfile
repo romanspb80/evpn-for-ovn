@@ -16,9 +16,9 @@ Vagrant.configure("2") do |config|
       virtualbox.cpus = 1
       virtualbox.customize ["modifyvm", :id, "--nicpromisc2", "allow-all"]
     end
-    #ryu.vm.provision "ansible" do |ansible|
-    #  ansible.playbook = "install-ryu-mn.yml"
-    #end
+    ryu.vm.provision "ansible" do |ansible|
+     ansible.playbook = "install-ryu-mn.yml"
+    end
   end
   
   config.vm.define "ovncluster" do |ovncluster|
