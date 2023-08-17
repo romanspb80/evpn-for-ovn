@@ -183,12 +183,7 @@ For **microstack**:
 Where param "port" is OVN Logical Port.
 
 
-5. Needs to change vxlan udp-port of vxlan in the **ryu** due to the fact that it is busy by another service on the **microstack** side:
-
-*sudo ovs-vsctl set interface vxlan_192.168.10.20_10 options:dst_port=4788*
-
-
-6. Testing
+5. Testing
 
 In the console with mininet:
 

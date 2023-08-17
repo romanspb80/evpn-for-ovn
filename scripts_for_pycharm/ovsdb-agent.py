@@ -86,7 +86,7 @@ class OVSDB():
             return res
         return None
 
-    def _update_lsp_addr(self, ctx, port, address, action):
+    def update_lsp_addr(self, ctx, port, address, action):
         # Get current addresses of lsp
         args = ['Logical_Switch_Port', port, 'addresses']
         addresses = self._ovsdb_exec(OVSDB_OVNNB_CONN, OVNNB_DB, 'db_get', *args)
