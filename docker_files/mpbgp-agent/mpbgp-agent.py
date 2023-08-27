@@ -174,7 +174,8 @@ class RestVtep(app_manager.RyuApp):
             return
 
         address = ' '.join([ev.path.nlri.mac_addr, ev.path.nlri.ip_addr])
-        self._update_lsp_addr(vxlan_port, address, 'add')
+        content = {"port": vxlan_port, "address": address, "action": "add"}
+        self._handler(action='update_lsp_addr', arg=content)
 
         network.clients[ev.path.nlri.mac_addr] = EvpnClient(
             port=vxlan_port,
@@ -219,7 +220,8 @@ class RestVtep(app_manager.RyuApp):
             return
 
         address = ' '.join([ev.path.nlri.mac_addr, ev.path.nlri.ip_addr])
-        self._update_lsp_addr(vxlan_port, address, 'discard')
+        content = {"port": vxlan_port, "address": address, "action": "add"}
+        self._handler(action='update_lsp_addr', arg=content)
 
         client = network.clients.get(ev.path.nlri.mac_addr, None)
         if client is None:
@@ -542,7 +544,7 @@ class RestVtep(app_manager.RyuApp):
 endpoints = [RestVtep(), ]
 
 ##Create RPC Server
-server = om.get_rpc_server(transport, target_bgpagent, endpoints, executor='eventlet')
+server = om.get_rpc_server(transport, target_bgpagent, endpoints, executor='threading')
 
 ##Start RPC Server
 try:

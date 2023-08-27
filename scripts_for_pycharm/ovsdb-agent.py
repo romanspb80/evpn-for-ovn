@@ -10,8 +10,10 @@ from oslo_config import cfg
 import oslo_messaging as om
 import time
 import logging
-import eventlet
-eventlet.monkey_patch()
+import pydevd_pycharm
+pydevd_pycharm.settrace('192.168.10.1', port=5555, stdoutToServer=True, stderrToServer=True)
+# import eventlet
+# eventlet.monkey_patch()
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +173,7 @@ class OVSDB():
 endpoints = [OVSDB(), ]
 
 ##Create RPC Server
-server = om.get_rpc_server(transport, target_ovn, endpoints, executor='eventlet')
+server = om.get_rpc_server(transport, target_ovn, endpoints, executor='threading')
 
 ##Start RPC Server
 try:

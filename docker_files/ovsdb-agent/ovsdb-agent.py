@@ -86,7 +86,7 @@ class OVSDB():
             return res
         return None
 
-    def _update_lsp_addr(self, ctx, port, address, action):
+    def update_lsp_addr(self, ctx, port, address, action):
         # Get current addresses of lsp
         args = ['Logical_Switch_Port', port, 'addresses']
         addresses = self._ovsdb_exec(OVSDB_OVNNB_CONN, OVNNB_DB, 'db_get', *args)
@@ -171,7 +171,7 @@ class OVSDB():
 endpoints = [OVSDB(), ]
 
 ##Create RPC Server
-server = om.get_rpc_server(transport, target_ovn, endpoints, executor='eventlet')
+server = om.get_rpc_server(transport, target_ovn, endpoints, executor='threading')
 
 ##Start RPC Server
 try:

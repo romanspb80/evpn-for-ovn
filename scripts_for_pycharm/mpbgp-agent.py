@@ -16,8 +16,10 @@ from app_settings import RABBITMQ_SERVER, RABBIT_USER, RABBIT_PASSWORD
 from oslo_config import cfg
 import oslo_messaging as om
 import time
-import eventlet
-eventlet.monkey_patch()
+# import eventlet
+import pydevd_pycharm
+pydevd_pycharm.settrace('192.168.10.1', port=4444, stdoutToServer=True, stderrToServer=True)
+# eventlet.monkey_patch()
 
 logger = logging.getLogger(__name__)
 
@@ -544,7 +546,7 @@ class RestVtep(app_manager.RyuApp):
 endpoints = [RestVtep(), ]
 
 ##Create RPC Server
-server = om.get_rpc_server(transport, target_bgpagent, endpoints, executor='eventlet')
+server = om.get_rpc_server(transport, target_bgpagent, endpoints, executor='threading')
 
 ##Start RPC Server
 try:
