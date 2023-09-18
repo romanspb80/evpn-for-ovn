@@ -18,7 +18,7 @@ The diagram shows the following elements.
 - Cloud Platform based on OVN networking (eg. Openstack with Neutron OVN ML2 plugin)
 - K8S Cluster (Microk8s) with our applications for OVN EVPN-VXLAN implementation.
 - Some kind of an Orchestrator or [Cloud Management System](https://en.wikipedia.org/wiki/Cloud_management) (CMS).
-![Scheme5](https://user-images.githubusercontent.com/30826451/157813554-fa0464ea-9189-43ed-93be-9656f06c1e1d.jpg)
+![evpn_4_ovn](https://github.com/romanspb80/evpn-for-ovn/assets/30826451/10cc960d-7e22-457c-89bd-8d2fe223dfce)
 ## Idea description
 Needs to organize a L2VPN (distributed L2 network) between sites (Data Centers) using EVPN-VXLAN . One of them is our Cloud Platform with OVN - DataCenter B. Another is external system with EVPN-VXLAN support - DataCenter A. The key step is the implementation of EVPN-VXLAN on Neutron side. To do this, it is necessary to implement the building vxlan tunnels as a Data plane and the MP-BGP Protocol as a Control plane.
 
@@ -291,7 +291,7 @@ sudo  ip netns exec vm1 ping 192.168.222.11
 
 
 # Sequence Diagram
-![sequenceDiagram](https://user-images.githubusercontent.com/30826451/158036290-d9078788-7ce5-438f-98be-73b00bae86b7.png)
+![evpn4ovn](https://github.com/romanspb80/evpn-for-ovn/assets/30826451/18f79189-283f-4a71-b7e9-e39680fa561c)
 
 
 
