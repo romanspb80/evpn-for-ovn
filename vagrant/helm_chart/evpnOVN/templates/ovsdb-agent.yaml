@@ -17,6 +17,9 @@ spec:
       containers:
       - name: {{ .Values.ovsdbAgent.name }}
         image: {{ .Values.ovsdbAgent.ReplicaSet.containers.image }}
+        env:
+          - name: OVN_PROVIDER
+            value: {{ .Values.ovsdbAgent.OVNProvider }}
         volumeMounts:
         - name: {{ .Values.common.configMap }}
           mountPath: /config

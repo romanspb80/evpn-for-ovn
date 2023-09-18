@@ -4,7 +4,7 @@ from ovsdbapp.schema.ovn_northbound import impl_idl as schema_ovnnb
 
 import sys
 sys.path.append('/config')
-from app_settings import OVS_NAME, OVSDB_OVS_CONN, OVSDB_OVNNB_CONN, RABBITMQ_SERVER, RABBIT_USER, RABBIT_PASSWORD, VXLAN_PORT
+from app_settings import OVS_NAME, OVSDB_OVS_CONN, OVSDB_OVNNB_CONN, SET_OVSDB_OVNNB, RECONNECT_OVSDB, RABBITMQ_SERVER, RABBIT_USER, RABBIT_PASSWORD, VXLAN_PORT
 
 from oslo_config import cfg
 import oslo_messaging as om
@@ -36,11 +36,7 @@ ctxt = {}
 target_ovn = om.Target(topic='ovn_bus', server=RABBITMQ_SERVER)
 
 
-def to_int(i, base):
-    return int(str(i), base)
-
-
-class OVSDB():
+class OVSDB:
     def __init__(self):
         # ToDo: init for rabbitmq connection
         self.logger = logger

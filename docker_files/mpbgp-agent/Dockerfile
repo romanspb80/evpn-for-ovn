@@ -5,4 +5,5 @@ WORKDIR /app
 COPY . .
 RUN pip3 install -r requirements.txt
 
-CMD ["ryu-manager", "--verbose", "mpbgp-agent.py"]
+ENTRYPOINT ["ryu-manager"]
+CMD ["--verbose", "mpbgp-agent.py"]

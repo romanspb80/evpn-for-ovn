@@ -1,27 +1,27 @@
 apiVersion: v1
 data:
   app_settings.py: |
-    # Devstack address
-    DEVSTACK_ADDRESS = '192.168.10.20'
+    # OVN-Controller address
+    SERVER_ADDRESS = '192.168.10.20'
 
-    # Settings for RabbitMQ Server connection (DEVSTACK)
-    RABBITMQ_SERVER = DEVSTACK_ADDRESS
+    # Settings for RabbitMQ Server connection
+    RABBITMQ_SERVER = SERVER_ADDRESS
     RABBIT_USER = 'stackrabbit'
     RABBIT_PASSWORD = 'secret'
 
-    # Settings for SSH connection to host with Neutron (DEVSTACK)
-    USER = 'vagrant'
-    PASSWORD = 'vagrant'
-    PORT_SSH = 22
-
     # OVSDB connections
-    OVSDB_OVS_CONN = 'tcp:{}:6640'.format(DEVSTACK_ADDRESS)
-    OVSDB_OVNNB_CONN = 'tcp:{}:6641'.format(DEVSTACK_ADDRESS)
+    OVSDB_OVS_CONN = 'tcp:{}:6640'.format(SERVER_ADDRESS)
+    OVSDB_OVNNB_CONN = 'tcp:{}:6641'.format(SERVER_ADDRESS)
+    SET_OVSDB_OVNNB = 'ptcp:6641:{}'.format(SERVER_ADDRESS)
 
     # OVS Bridge for client connections
     OVS_NAME = 'br-int'
-    
-    VXLAN_PORT = '8472'
+
+    VXLAN_PORT = '4789'
+
+    # Reconnect OVN-Controller to OVSDB
+    # ToDo: add other implementations
+    RECONNECT_OVSDB = {"microovn": ['sudo', 'snap', 'restart', 'microovn.daemon']}
 
 kind: ConfigMap
 metadata:

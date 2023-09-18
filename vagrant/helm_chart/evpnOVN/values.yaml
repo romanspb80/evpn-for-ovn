@@ -18,6 +18,7 @@ mpbgpAgent:
 
 ovsdbAgent:
   name: ovsdb-agent
+  OVNProvider: microovn
   ReplicaSet:
     containers:
       image: 28041980/ovsdb-agent

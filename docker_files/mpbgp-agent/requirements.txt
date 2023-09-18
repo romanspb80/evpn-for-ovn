@@ -3,3 +3,4 @@ oslo_messaging==12.11.0
 oslo_config==8.7.1
 ryu==4.34
 paramiko==3.3.1
+gevent==23.9.0
