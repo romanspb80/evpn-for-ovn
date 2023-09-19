@@ -119,7 +119,7 @@ In another terminal run the **rest_vtep**:
 For **ryu**:
 
 $ curl -X POST -d '{"dpid": 1, "as_number": 65000, "router_id": "192.168.10.10"}' http://192.168.10.10:8080/vtep/speakers | python3 -m json.tool
-
+```
 {
     "192.168.10.10": {
         "EvpnSpeaker": {
@@ -130,11 +130,11 @@ $ curl -X POST -d '{"dpid": 1, "as_number": 65000, "router_id": "192.168.10.10"}
         }
     }
 }
-
+```
 For **ovncluster**:
 
 $ curl -X POST -H "Content-Type: application/json" -d '{"as_number": 65000, "router_id": "192.168.10.20"}' http://evpn-api.domain-x.com/vtep/speakers | python3 -m json.tool
-
+```
 {
     "192.168.10.20": {
         "EvpnSpeaker": {
@@ -144,13 +144,13 @@ $ curl -X POST -H "Content-Type: application/json" -d '{"as_number": 65000, "rou
         }
     }
 }
-
+```
 2. Request the neighbors on each hosts
 
 For **ryu**:
 
 $ curl -X POST -d '{"address": "192.168.10.20", "remote_as": 65000}' http://192.168.10.10:8080/vtep/neighbors | python3 -m json.tool
-
+```
 {
     "192.168.10.20": {
         "EvpnNeighbor": {
@@ -160,11 +160,11 @@ $ curl -X POST -d '{"address": "192.168.10.20", "remote_as": 65000}' http://192.
         }
     }
 }
-
+```
 For **ovncluster**:
 
 $ curl -X POST -H "Content-Type: application/json" -d '{"address": "192.168.10.10", "remote_as": 65000}' http://evpn-api.domain-x.com/vtep/neighbors | python3 -m json.tool
-
+```
 {
     "192.168.10.10": {
         "EvpnNeighbor": {
@@ -174,13 +174,13 @@ $ curl -X POST -H "Content-Type: application/json" -d '{"address": "192.168.10.1
         }
     }
 }
-
+```
 3. Defines a new VXLAN network(VNI=10)
 
 For **ryu**:
 
 $ curl -X POST -d '{"vni": 10}' http://192.168.10.10:8080/vtep/networks | python3 -m json.tool
-
+```
 {
     "10": {
         "EvpnNetwork": {
@@ -191,11 +191,11 @@ $ curl -X POST -d '{"vni": 10}' http://192.168.10.10:8080/vtep/networks | python
         }
     }
 }
-
+```
 For **ovncluster**:
 
 $ curl -X POST -H "Content-Type: application/json" -d '{"vni": 10, "logical_switch": "ls1"}' http://evpn-api.domain-x.com/vtep/networks |python3 -m json.tool
-
+```
 {
     "10": {
         "EvpnNetwork": {
@@ -207,13 +207,13 @@ $ curl -X POST -H "Content-Type: application/json" -d '{"vni": 10, "logical_swit
         }
     }
 }
-
+```
 4. Transmit the clients for associated VXLAN network
 
 For **ryu**:
 
 $ curl -X POST -d '{"port": "s1-eth1", "mac": "02:ac:10:ff:00:11", "ip": "192.168.222.11"} ' http://192.168.10.10:8080/vtep/networks/10/clients | python3 -m json.tool
-
+```
 {
     "10": {
         "EvpnClient": {
@@ -224,11 +224,11 @@ $ curl -X POST -d '{"port": "s1-eth1", "mac": "02:ac:10:ff:00:11", "ip": "192.16
         }
     }
 }
-
+```
 For **ovncluster**:
 
 $ curl -X POST -H "Content-Type: application/json" -d '{"port": "vm1", "mac": "02:ac:10:ff:00:12", "ip": "192.168.222.12"} ' http://evpn-api.domain-x.com/vtep/networks/10/clients | python3 -m json.tool
-
+```
 {
     "10": {
         "EvpnClient": {
@@ -239,23 +239,25 @@ $ curl -X POST -H "Content-Type: application/json" -d '{"port": "vm1", "mac": "0
         }
     }
 }
-
+```
 
 5. Testing
 
 In the console with mininet:
 
 mininet> h1 ping 192.168.222.12
+```
 PING 192.168.222.12 (192.168.222.12) 56(84) bytes of data.
 64 bytes from 192.168.222.12: icmp_seq=1 ttl=64 time=3.53 ms
 64 bytes from 192.168.222.12: icmp_seq=2 ttl=64 time=0.856 ms
 64 bytes from 192.168.222.12: icmp_seq=3 ttl=64 time=0.766 ms
 64 bytes from 192.168.222.12: icmp_seq=4 ttl=64 time=1.19 ms
-
+```
 
 And ping from the virtual host on Datacenter B:
+```
 sudo  ip netns exec vm1 ping 192.168.222.11
-
+```
 
 
 # Sequence Diagram
