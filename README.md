@@ -5,13 +5,13 @@ OVN is described in the [document](https://www.ovn.org/support/dist-docs/ovn-arc
 
 "OVN, the Open Virtual Network, is a system to support virtual network abstraction. OVN complements the existing capabilities of OVS to add native support for virtual network abstractions, such as virtual L2 and L3 overlays and security groups. Services such as DHCP are also  desirable  features. Just like OVS, OVN’s design goal is to have a production-quality implementation that can operate at significant scale."
 
-And the main purpose of OVN is a Control Plane constructing for Neutron OpenStack. Also there some solutions for Kubernetes networking model implementation: Kube-OVN, OVN4NFV-K8s-Plugin and OVN-Kubernetes.
+And the main purpose of OVN is a Control Plane constructing for Neutron OpenStack. Also there are some solutions for Kubernetes networking model implementation: Kube-OVN, OVN4NFV-K8s-Plugin and OVN-Kubernetes.
 OVN is built on the same architectural principles as VMware's commercial NSX and offers the same core network virtualization capability — providing a free alternative that has been adopted in open source orchestration systems. But OVN can not implement EVPN Multi-Site architecture for DCI (Data Center Interconnect) concept.
 
 This project demonstrates how it can be solved with adding new applications of RYU. RYU is a SDN framework with the libraries of different network protocols and written in Python: https://ryu.readthedocs.io/en/latest/getting_started.html#what-s-ryu
 
 # How it works
-Assume that there are two data centers - DataCenter A and DataCenter B. And needs to organize a EVPN connection between them. DataCenter A is an External System with EVPN-VXLAN support. In the project the built-in RYU-application **rest_vtep.py** is used as an External System. DataCenter B is our Cloud Platform based on OpenStack with OVN.
+Assume that there are two data centers - DataCenter A and DataCenter B. And needs to organize a EVPN connection between them. DataCenter A is an External System with EVPN-VXLAN support. In the project the built-in RYU-application **rest_vtep.py**  emulates the EVPN solution for External System. DataCenter B is our Cloud Platform based on OpenStack with OVN.
 The diagram shows the following elements.
 1. DataCenter A (an External System) with the RYU-application rest_vtep.py
 2. DataCenter B includes:
@@ -114,60 +114,12 @@ In another terminal run the **rest_vtep**:
 
 **Configuration steps**
 
-
 1. Create a new BGPSpeaker instance on each host
 
 For **ryu**:
 
-curl -X POST -d '{"dpid": 1, "as_number": 65000, "router_id": "192.168.10.10"}' http://192.168.10.10:8080/vtep/speakers | python3 -m json.tool
+$ curl -X POST -d '{"dpid": 1, "as_number": 65000, "router_id": "192.168.10.10"}' http://192.168.10.10:8080/vtep/speakers | python3 -m json.tool
 
-For **ovncluster**:
-
-curl -X POST -H "Content-Type: application/json" -d '{"as_number": 65000, "router_id": "192.168.10.20"}' http://evpn-api.domain-x.com/vtep/speakers | python3 -m json.tool
-
-
-2. Request the neighbors on each hosts
-
-For **ryu**:
-
-curl -X POST -d '{"address": "192.168.10.20", "remote_as": 65000}' http://192.168.10.10:8080/vtep/neighbors | python3 -m json.tool
-
-For **ovncluster**:
-
-curl -X POST -H "Content-Type: application/json" -d '{"address": "192.168.10.10", "remote_as": 65000}' http://evpn-api.domain-x.com/vtep/neighbors | python3 -m json.tool
-
-
-3. Defines a new VXLAN network(VNI=10)
-
-For **ryu**:
-
-curl -X POST -d '{"vni": 10}' http://192.168.10.10:8080/vtep/networks | python3 -m json.tool
-
-For **ovncluster**:
-
-*curl -X POST -H "Content-Type: application/json" -d '{"vni": 10, "network_id": "<the value of $NETWORK_ID>"}' http://evpn-api.domain-x.com/vtep/networks |python3 -m json.tool*
-
-Where param "network_id" is a Neutron Network Identifier. It is associated with Logical Switch in OVN.
-
-
-4. Transmit the clients for associated VXLAN network
-
-For **ryu**:
-
-*curl -X POST -d '{"port": "s1-eth1", "mac": "02:ac:10:ff:00:11", "ip": "192.168.222.11"} ' http://192.168.10.10:8080/vtep/networks/10/clients | python3 -m json.tool*
-
-For **ovncluster**:
-
-*curl -X POST -H "Content-Type: application/json" -d '{"port": "<the value of $PORT_ID>", "mac": "02:ac:10:ff:00:22", "ip": "192.168.222.22"} ' http://evpn-api.domain-x.com/vtep/networks/10/clients | python3 -m json.tool*
-
-Where param "port" is OVN Logical Port.
-
-
-
-1. Create a new BGPSpeaker instance on each host
-
-For **ryu**:
-roman@roman-pc:~$ curl -X POST -d '{"dpid": 1, "as_number": 65000, "router_id": "192.168.10.10"}' http://192.168.10.10:8080/vtep/speakers | python3 -m json.tool
 {
     "192.168.10.10": {
         "EvpnSpeaker": {
@@ -180,7 +132,9 @@ roman@roman-pc:~$ curl -X POST -d '{"dpid": 1, "as_number": 65000, "router_id": 
 }
 
 For **ovncluster**:
-roman@roman-pc:~$ curl -X POST -H "Content-Type: application/json" -d '{"as_number": 65000, "router_id": "192.168.10.20"}' http://evpn-api.domain-x.com/vtep/speakers | python3 -m json.tool
+
+$ curl -X POST -H "Content-Type: application/json" -d '{"as_number": 65000, "router_id": "192.168.10.20"}' http://evpn-api.domain-x.com/vtep/speakers | python3 -m json.tool
+
 {
     "192.168.10.20": {
         "EvpnSpeaker": {
@@ -192,9 +146,11 @@ roman@roman-pc:~$ curl -X POST -H "Content-Type: application/json" -d '{"as_numb
 }
 
 2. Request the neighbors on each hosts
+
 For **ryu**:
-roman@roman-pc:~$ curl -X POST -d '{"address": "192.168.10.20", "remote_as": 65000}' http://192.168.10.10:8080/vtep/neighbors | python3 -m json.tool
-curl -X POST -H "Content-Type: application/json" -d '{"address": "192.168.10.10", "remote_as": 65000}' http://evpn-api.domain-x.com/vtep/neighbors | python3 -m json.tool
+
+$ curl -X POST -d '{"address": "192.168.10.20", "remote_as": 65000}' http://192.168.10.10:8080/vtep/neighbors | python3 -m json.tool
+
 {
     "192.168.10.20": {
         "EvpnNeighbor": {
@@ -206,7 +162,9 @@ curl -X POST -H "Content-Type: application/json" -d '{"address": "192.168.10.10"
 }
 
 For **ovncluster**:
-roman@roman-pc:~$ curl -X POST -H "Content-Type: application/json" -d '{"address": "192.168.10.10", "remote_as": 65000}' http://evpn-api.domain-x.com/vtep/neighbors | python3 -m json.tool
+
+$ curl -X POST -H "Content-Type: application/json" -d '{"address": "192.168.10.10", "remote_as": 65000}' http://evpn-api.domain-x.com/vtep/neighbors | python3 -m json.tool
+
 {
     "192.168.10.10": {
         "EvpnNeighbor": {
@@ -218,8 +176,11 @@ roman@roman-pc:~$ curl -X POST -H "Content-Type: application/json" -d '{"address
 }
 
 3. Defines a new VXLAN network(VNI=10)
+
 For **ryu**:
-roman@roman-pc:~$ curl -X POST -d '{"vni": 10}' http://192.168.10.10:8080/vtep/networks | python3 -m json.tool
+
+$ curl -X POST -d '{"vni": 10}' http://192.168.10.10:8080/vtep/networks | python3 -m json.tool
+
 {
     "10": {
         "EvpnNetwork": {
@@ -232,7 +193,9 @@ roman@roman-pc:~$ curl -X POST -d '{"vni": 10}' http://192.168.10.10:8080/vtep/n
 }
 
 For **ovncluster**:
-roman@roman-pc:~$ curl -X POST -H "Content-Type: application/json" -d '{"vni": 10, "logical_switch": "ls1"}' http://evpn-api.domain-x.com/vtep/networks |python3 -m json.tool
+
+$ curl -X POST -H "Content-Type: application/json" -d '{"vni": 10, "logical_switch": "ls1"}' http://evpn-api.domain-x.com/vtep/networks |python3 -m json.tool
+
 {
     "10": {
         "EvpnNetwork": {
@@ -246,8 +209,11 @@ roman@roman-pc:~$ curl -X POST -H "Content-Type: application/json" -d '{"vni": 1
 }
 
 4. Transmit the clients for associated VXLAN network
+
 For **ryu**:
-roman@roman-pc:~$ curl -X POST -d '{"port": "s1-eth1", "mac": "02:ac:10:ff:00:11", "ip": "192.168.222.11"} ' http://192.168.10.10:8080/vtep/networks/10/clients | python3 -m json.tool
+
+$ curl -X POST -d '{"port": "s1-eth1", "mac": "02:ac:10:ff:00:11", "ip": "192.168.222.11"} ' http://192.168.10.10:8080/vtep/networks/10/clients | python3 -m json.tool
+
 {
     "10": {
         "EvpnClient": {
@@ -260,7 +226,9 @@ roman@roman-pc:~$ curl -X POST -d '{"port": "s1-eth1", "mac": "02:ac:10:ff:00:11
 }
 
 For **ovncluster**:
-roman@roman-pc:~$ curl -X POST -H "Content-Type: application/json" -d '{"port": "vm1", "mac": "02:ac:10:ff:00:12", "ip": "192.168.222.12"} ' http://evpn-api.domain-x.com/vtep/networks/10/clients | python3 -m json.tool
+
+$ curl -X POST -H "Content-Type: application/json" -d '{"port": "vm1", "mac": "02:ac:10:ff:00:12", "ip": "192.168.222.12"} ' http://evpn-api.domain-x.com/vtep/networks/10/clients | python3 -m json.tool
+
 {
     "10": {
         "EvpnClient": {
