@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ .Values.mpbgpAgent.name }}-ds
+  labels:
+    app: {{ .Values.mpbgpAgent.name }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Values.mpbgpAgent.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.mpbgpAgent.name }}
+    spec:
+      hostNetwork: true
+      containers:
+      - name: {{ .Values.mpbgpAgent.name }}
+        image: {{ .Values.mpbgpAgent.DaemonSet.containers.image }}
+        volumeMounts:
+        - name: {{ .Values.common.configMap }}
+          mountPath: /config
+      volumes:
+      - name: {{ .Values.common.configMap }}
+        configMap:
+          name: {{ .Values.common.configMap }}

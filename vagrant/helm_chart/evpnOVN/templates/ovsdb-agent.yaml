@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: {{ .Values.ovsdbAgent.name }}-rs
+  labels:
+    app: {{ .Values.ovsdbAgent.name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Values.ovsdbAgent.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.ovsdbAgent.name }}
+    spec:
+      containers:
+      - name: {{ .Values.ovsdbAgent.name }}
+        image: {{ .Values.ovsdbAgent.ReplicaSet.containers.image }}
+        env:
+          - name: OVN_PROVIDER
+            value: {{ .Values.ovsdbAgent.OVNProvider }}
+        volumeMounts:
+        - name: {{ .Values.common.configMap }}
+          mountPath: /config
+      volumes:
+      - name: {{ .Values.common.configMap }}
+        configMap:
+          name: {{ .Values.common.configMap }}

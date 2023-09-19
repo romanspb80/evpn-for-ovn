@@ -5,4 +5,5 @@ WORKDIR /app
 COPY . .
 RUN pip3 install -r requirements.txt
 
-CMD ["ryu-manager", "--verbose", "evpn-agent.py"]
+ENTRYPOINT ["python3"]
+CMD ["ovsdb-agent.py"]

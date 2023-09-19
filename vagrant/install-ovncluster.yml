@@ -1,0 +1,153 @@
+#ansible-galaxy collection install community.rabbitmq
+#ansible-galaxy collection install openvswitch.openvswitch
+
+- name: install apt packages
+  hosts: all
+  gather_facts: no
+  become: true
+  tasks:
+    - name: install sshpass
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+        pkg:
+          - sshpass
+          - python3
+          - python3-pip
+          - rabbitmq-server
+          - openvswitch-common
+          - openvswitch-switch
+          - ovn-common
+          - ovn-central
+          - ovn-host
+
+- name: Install python packages
+  hosts: all
+  become: true
+  tasks:
+    - name: Install ovsdbapp
+      ansible.builtin.pip:
+        name: ovsdbapp==2.4.0
+
+- name: OpenVSwitch & OVN setup
+  hosts: all
+  become: true
+  gather_facts: no
+  tasks:
+    - name: OVS setup
+      shell: ovs-vsctl set-manager ptcp:6640
+    - name: OVN setup
+      shell: ovn-nbctl set-connection ptcp:6641:192.168.10.20
+
+- name: Setup RabbitMQ
+  hosts: all
+  become: true
+  gather_facts: no
+  tasks:
+    - name: Add RabbitMQ user
+      community.rabbitmq.rabbitmq_user:
+        user: stackrabbit
+        password: secret
+        permissions:
+          - vhost: /
+            configure_priv: .*
+            read_priv: .*
+            write_priv: .*
+        tags:
+          - stackrabbit
+          - administrator
+        state: present
+
+- name: Setup OVN
+  hosts: all
+  become: true
+  gather_facts: no
+  tasks:
+    - name: Setup ovn-central
+      ansible.builtin.blockinfile:
+        path: /etc/default/ovn-central
+        block: |
+          OVN_CTL_OPTS= \
+            --db-nb-addr=192.168.10.20 \
+            --db-sb-addr=192.168.10.20 \
+            --db-nb-cluster-local-addr=192.168.10.20 \
+            --db-sb-cluster-local-addr=192.168.10.20 \
+            --db-nb-create-insecure-remote=yes \
+            --db-sb-create-insecure-remote=yes \
+            --ovn-northd-nb-db=tcp:192.168.10.20:6641 \
+            --ovn-northd-sb-db=tcp:192.168.10.20:6642
+
+    - name: Find all OVN configs
+      find:
+        path: "/var/lib/ovn"
+      register: cleanup
+      ignore_errors: true
+
+    - name: Remove all OVN configs
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      with_items: "{{ cleanup.files }}"
+      ignore_errors: true
+
+    - name: Restart ovn-central
+      ansible.builtin.systemd:
+        state: restarted
+        daemon_reload: true
+        name: ovn-central
+
+    - name: Setup ovn-encap-type
+      openvswitch.openvswitch.openvswitch_db:
+        table: open_vswitch
+        record: .
+        col: external_ids
+        key: ovn-encap-type
+        value: geneve
+
+    - name: Setup ovn-remote
+      openvswitch.openvswitch.openvswitch_db:
+        table: open_vswitch
+        record: .
+        col: external_ids
+        key: ovn-remote
+        value: unix:/var/run/ovn/ovnsb_db.sock
+
+    - name: Setup ovn-encap-ip
+      openvswitch.openvswitch.openvswitch_db:
+        table: open_vswitch
+        record: .
+        col: external_ids
+        key: ovn-encap-ip
+        value: 192.168.10.20
+
+- name: Pre deploy Logical Switch and VM
+  hosts: all
+  become: false
+  gather_facts: no
+  tasks:
+    - name: pre-deploy
+      shell: /home/vagrant/evpn-for-ovn/scripts/pre-deploy.py
+
+- name: microk8s install & kubernetes cluster deployment
+  hosts: all
+  become: true
+  gather_facts: no
+  tasks:
+    - name: microk8s install
+      snap:
+        name: microk8s
+        classic: yes
+        channel: 1.28/stable
+    - name: Wait for microk8s to be ready
+      shell: microk8s status --wait-ready
+      changed_when: False
+    - name: microk8s - disable ha-cluster
+      raw: microk8s disable ha-cluster --force
+    - name: microk8s - enable dns ingress helm3
+      raw: microk8s enable dns ingress helm3
+    - name: Create alias for microk8s.kubectl
+      shell: snap alias microk8s.kubectl kubectl
+    - name: Create alias for microk8s.helm3
+      shell: snap alias microk8s.helm3 helm3
+    - name: k8s evpn cluster deployment
+      shell: helm3 install evpn-ovn /home/vagrant/evpn-for-ovn/vagrant/helm_chart/evpnOVN

@@ -21,7 +21,7 @@ cfg.CONF.set_override(
 transport = om.get_transport(cfg.CONF)
 
 # Create Target
-target = om.Target(topic='ovn_bus')
+target = om.Target(topic='bgpagent_bus')
 
 # Create RPC Client
 client = om.RPCClient(transport, target)
@@ -65,7 +65,7 @@ schema = {
         "address": {"type": "string"},
         "remote_as": {"type": "number"},
         "vni": {"type": "number"},
-        "network_id": {"type": "string"},
+        "logical_switch": {"type": "string"},
         "mac": {"type": "string"},
         "ip": {"type": "string"}
     }
@@ -78,7 +78,7 @@ def required(required):
     return _schema
 
 
-def handler(action, arg):
+def _handler(action, arg):
     body = client.call(ctxt, action, arg=arg)
     for e in EXCEPTIONS:
         exception = body.get(e.__name__)
@@ -94,17 +94,17 @@ def handler(action, arg):
               "router_id"]))
 def add_speaker():
     content = request.get_json()
-    return handler(action='add_speaker', arg=content)
+    return _handler(action='add_speaker', arg=content)
 
 
 @app.route('/vtep/speakers', methods=['GET'])
 def get_speakers():
-    return handler(action='get_speaker', arg={})
+    return _handler(action='get_speaker', arg={})
 
 
 @app.route('/vtep/speakers', methods=['DELETE'])
 def del_speaker():
-    return handler(action='del_speaker', arg={})
+    return _handler(action='del_speaker', arg={})
 
 
 @app.route('/vtep/neighbors', methods=['POST'])
@@ -113,11 +113,11 @@ def del_speaker():
               "remote_as"]))
 def add_neighbor():
     content = request.get_json()
-    return handler(action='add_neighbor', arg=content)
+    return _handler(action='add_neighbor', arg=content)
 
 
 def _get_neighbors(content):
-    return handler(action='_get_neighbors', arg=content)
+    return _handler(action='get_neighbors', arg=content)
 
 
 @app.route('/vtep/neighbors', methods=['GET'])
@@ -135,7 +135,7 @@ def get_neighbor(address):
 @app.route('/vtep/neighbors/<address>', methods=['DELETE'])
 def del_neighbor(address):
     content = {"address": address}
-    return handler(action='del_neighbor', arg=content)
+    return _handler(action='del_neighbor', arg=content)
 
 
 @app.route('/vtep/networks', methods=['POST'])
@@ -143,11 +143,11 @@ def del_neighbor(address):
     required=["vni"]))
 def add_network():
     content = request.get_json()
-    return handler(action='add_network', arg=content)
+    return _handler(action='add_network', arg=content)
 
 
 def _get_networks(content):
-    return handler(action='get_networks', arg=content)
+    return _handler(action='get_networks', arg=content)
 
 
 @app.route('/vtep/networks', methods=['GET'])
@@ -165,7 +165,7 @@ def get_network(vni):
 @app.route('/vtep/networks/<vni>', methods=['DELETE'])
 def del_network(vni):
     content = {"vni": vni}
-    return handler(action='del_network', arg=content)
+    return _handler(action='del_network', arg=content)
 
 
 @app.route('/vtep/networks/<vni>/clients', methods=['POST'])
@@ -176,7 +176,7 @@ def del_network(vni):
 def add_client(vni):
     content = request.get_json()
     content.update({"vni": vni})
-    return handler(action='add_client', arg=content)
+    return _handler(action='add_client', arg=content)
 
 
 @app.route('/vtep/networks/<vni>/clients/<mac>', methods=['DELETE'])
@@ -185,7 +185,7 @@ def del_client(vni, mac):
         "vni": vni,
         "mac": mac
     }
-    return handler(action='del_client', arg=content)
+    return _handler(action='del_client', arg=content)
 
 @app.route("/test")
 def hello_world():

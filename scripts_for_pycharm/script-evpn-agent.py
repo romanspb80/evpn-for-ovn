@@ -7,8 +7,8 @@ from ryu.cmd import manager
 
 
 def main():
-    sys.argv.append('evpn-agent.py')
-    sys.argv.append('--verbose')
+    sys.argv.append('mpbgp-agent.py')
+    # sys.argv.append('--verbose')
     sys.argv.append('--enable-debugger')
     manager.main()
 

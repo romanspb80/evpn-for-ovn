@@ -5,5 +5,5 @@ WORKDIR /app
 COPY . .
 RUN pip3 install -r requirements.txt
 
-ENTRYPOINT ["python3"]
-CMD ["evpnAPI.py"]
+ENTRYPOINT ["ryu-manager"]
+CMD ["--verbose", "mpbgp-agent.py"]

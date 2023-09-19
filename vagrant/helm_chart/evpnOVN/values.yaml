@@ -10,13 +10,20 @@ api:
     host: evpn-api.domain-x.com
     port: 5000
 
-agent:
-  name: evpn-agent
+mpbgpAgent:
+  name: mpbgp-agent
   DaemonSet:
     containers:
-      image: 28041980/evpn-agent
+      image: 28041980/mpbgp-agent
 
-externalServuces:
+ovsdbAgent:
+  name: ovsdb-agent
+  OVNProvider: microovn
+  ReplicaSet:
+    containers:
+      image: 28041980/ovsdb-agent
+
+externalServices:
   rabbitmq:
     name: rabbitmq
     Endpoints:
