@@ -45,11 +45,10 @@ There are two main functions of **mpbgp-agent**:
 In case of receiving requests from **evpn-api.py** the **mpbgp-agent** sent appropriate requests to an External System by MP-BGP. The requests can be such as "Connect to Neighbor", "Create new network", "Sent new client mac:ip.addr", etc. In case of **evpn-agent** receives requests by MP-BGP from Neighbor (External System) it sends appropriate instructions to **ovsdb-agent** to setup OVN and OVS: VXLAN-Port creating on "br-int" OVS bridge and mapping it to OVN Logical Port, mac:ip.addr creating or deleting in OVN Logical Switch, sending mac:ip.addr updates of clients to the Neighbor (Ext. System) by MP-BGP.
 
 
-## Enviroment installation
-
-*git clone https://github.com/romanspb80/evpn-for-ovn.git*
-*cd ./evpn-for-ovn/vagrant*
-*vagrant up*
+## Enviroment installation and deploy the Sandbox
+1. [Install Vagrant](https://developer.hashicorp.com/vagrant/tutorials/getting-started/getting-started-install?product_intent=vagrant) and [Vagrant Libvirt Provider](https://github.com/vagrant-libvirt/vagrant-libvirt)
+2. Clone this repository: *git clone https://github.com/romanspb80/evpn-for-ovn.git*
+3. Create the sandbox with vagrant: *cd ./evpn-for-ovn/vagrant && vagrant up*
 
 Three virtual machines will be run: **ovncluster**, **ryu**. In accordance with diagram DataCenter A is associated with the **ryu** and DataCenter B with **ovncluster**.
 The IP addresses of virtual machines are represented in vagrant/Vagrantfile:

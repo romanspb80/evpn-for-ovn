@@ -6,6 +6,10 @@
   gather_facts: no
   become: true
   tasks:
+    - name: python version
+      debug:
+        var: ansible_python_version
+
     - name: install sshpass
       apt:
         update_cache: yes
@@ -26,7 +30,7 @@
   become: true
   tasks:
     - name: Install ovsdbapp
-      ansible.builtin.pip:
+      pip:
         name: ovsdbapp==2.4.0
 
 - name: OpenVSwitch & OVN setup
@@ -125,6 +129,12 @@
   become: false
   gather_facts: no
   tasks:
+    - name: git checkout
+      git:
+        repo: https://github.com/romanspb80/evpn-for-ovn.git
+        dest: /home/vagrant/evpn-for-ovn
+        version: master
+
     - name: pre-deploy
       shell: /home/vagrant/evpn-for-ovn/scripts/pre-deploy.py
 
