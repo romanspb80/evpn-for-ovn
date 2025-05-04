@@ -1,9 +1,9 @@
 - name: ryu deployment
-  hosts: all
+  hosts: ryu
   gather_facts: no
   become: True
   tasks:
-    - name: install apt packages
+    - name: install python3, mininet
       apt:
         update_cache: yes
         cache_valid_time: 3600

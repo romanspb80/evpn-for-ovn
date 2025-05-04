@@ -48,7 +48,7 @@ In case of receiving requests from **evpn-api.py** the **mpbgp-agent** sent appr
 ## Enviroment installation and deploy the Sandbox
 1. [Install Vagrant](https://developer.hashicorp.com/vagrant/tutorials/getting-started/getting-started-install?product_intent=vagrant) and [Vagrant Libvirt Provider](https://github.com/vagrant-libvirt/vagrant-libvirt)
 2. Clone this repository: *git clone https://github.com/romanspb80/evpn-for-ovn.git*
-3. Create the sandbox with vagrant: *cd ./evpn-for-ovn/vagrant && vagrant up*
+3. Create the sandbox with vagrant: *cd ./evpn-for-ovn/vagrant && vagrant up --provider=libvirt*
 
 Three virtual machines will be run: **ovncluster**, **ryu**. In accordance with diagram DataCenter A is associated with the **ryu** and DataCenter B with **ovncluster**.
 The IP addresses of virtual machines are represented in vagrant/Vagrantfile:
