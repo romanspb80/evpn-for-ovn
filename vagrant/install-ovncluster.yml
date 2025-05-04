@@ -1,8 +1,8 @@
 #ansible-galaxy collection install community.rabbitmq
 #ansible-galaxy collection install openvswitch.openvswitch
 
-- name: install apt packages
-  hosts: all
+- name: ovn cluster deployment
+  hosts: ovncluster
   gather_facts: no
   become: true
   tasks:
@@ -10,11 +10,13 @@
       debug:
         var: ansible_python_version
 
-    - name: install sshpass
+    - name: install snapd, python3, rabbitmq, openvswitch, ovn
       apt:
         update_cache: yes
         cache_valid_time: 3600
+        state: latest
         pkg:
+          - snapd
           - sshpass
           - python3
           - python3-pip
@@ -26,7 +28,7 @@
           - ovn-host
 
 - name: Install python packages
-  hosts: all
+  hosts: ovncluster
   become: true
   tasks:
     - name: Install ovsdbapp
@@ -34,7 +36,7 @@
         name: ovsdbapp==2.4.0
 
 - name: OpenVSwitch & OVN setup
-  hosts: all
+  hosts: ovncluster
   become: true
   gather_facts: no
   tasks:
@@ -44,7 +46,7 @@
       shell: ovn-nbctl set-connection ptcp:6641:192.168.10.20
 
 - name: Setup RabbitMQ
-  hosts: all
+  hosts: ovncluster
   become: true
   gather_facts: no
   tasks:
@@ -63,7 +65,7 @@
         state: present
 
 - name: Setup OVN
-  hosts: all
+  hosts: ovncluster
   become: true
   gather_facts: no
   tasks:
@@ -125,7 +127,7 @@
         value: 192.168.10.20
 
 - name: Pre deploy Logical Switch and VM
-  hosts: all
+  hosts: ovncluster
   become: false
   gather_facts: no
   tasks:
@@ -139,7 +141,7 @@
       shell: /home/vagrant/evpn-for-ovn/scripts/pre-deploy.py
 
 - name: microk8s install & kubernetes cluster deployment
-  hosts: all
+  hosts: ovncluster
   become: true
   gather_facts: no
   tasks:
@@ -147,7 +149,7 @@
       snap:
         name: microk8s
         classic: yes
-        channel: 1.28/stable
+        channel: 1.32
     - name: Wait for microk8s to be ready
       shell: microk8s status --wait-ready
       changed_when: False
