@@ -135,7 +135,7 @@
       git:
         repo: https://github.com/romanspb80/evpn-for-ovn.git
         dest: /home/vagrant/evpn-for-ovn
-        version: master
+        version: develop-operators
 
     - name: pre-deploy
       shell: /home/vagrant/evpn-for-ovn/scripts/pre-deploy.py
@@ -162,4 +162,4 @@
     - name: Create alias for microk8s.helm3
       shell: snap alias microk8s.helm3 helm3
     - name: k8s evpn cluster deployment
-      shell: helm3 install evpn-ovn /home/vagrant/evpn-for-ovn/vagrant/helm_chart/evpnOVN
+      shell: helm3 install evpn-ovn /home/vagrant/evpn-for-ovn/vagrant/helm_chart/evpnOVNv2
