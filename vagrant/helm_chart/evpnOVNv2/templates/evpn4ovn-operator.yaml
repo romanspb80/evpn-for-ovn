@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: {{ .Values.evpn4ovnOperator.name }}
+  namespace: {{ .Values.evpn4ovnOperator.namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Values.evpn4ovnOperator.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.evpn4ovnOperator.name }}
+    spec:
+      containers:
+      - name: {{ .Values.evpn4ovnOperator.name }}
+        image: {{ .Values.evpn4ovnOperator.ReplicaSet.containers.image }}
+        volumeMounts:
+        - name: {{ .Values.common.configMap }}
+          mountPath: /config
+        ports:
+        - containerPort: 22
+          name: ssh
+      volumes:
+      - name: {{ .Values.common.configMap }}
+        configMap:
+          name: {{ .Values.common.configMap }}

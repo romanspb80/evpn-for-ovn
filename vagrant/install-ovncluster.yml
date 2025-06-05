@@ -135,7 +135,7 @@
       git:
         repo: https://github.com/romanspb80/evpn-for-ovn.git
         dest: /home/vagrant/evpn-for-ovn
-        version: master
+        version: develop-operators
 
     - name: pre-deploy
       shell: /home/vagrant/evpn-for-ovn/scripts/pre-deploy.py
@@ -161,5 +161,12 @@
       shell: snap alias microk8s.kubectl kubectl
     - name: Create alias for microk8s.helm3
       shell: snap alias microk8s.helm3 helm3
+    - name: git checkout evpn-for-ovn-operator
+      git:
+        repo: https://github.com/romanspb80/evpn-for-ovn-operator.git
+        dest: /home/vagrant/evpn-for-ovn-operator
+        version: master
+    - name: apply CRD Evpn4Ovn
+      shell: kubectl apply -f /home/vagrant/evpn-for-ovn-operator/config/crd/bases/evpn-api.domain-x.com_evpn4ovns.yaml
     - name: k8s evpn cluster deployment
-      shell: helm3 install evpn-ovn /home/vagrant/evpn-for-ovn/vagrant/helm_chart/evpnOVN
+      shell: helm3 install evpn-ovn /home/vagrant/evpn-for-ovn/vagrant/helm_chart/evpnOVNv2 --namespace evpn4ovn --create-namespace --wait

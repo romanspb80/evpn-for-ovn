@@ -1,0 +1,50 @@
+common:
+  configMap: app-settings
+
+evpn4ovnOperator:
+  name: evpn4ovn-operator
+  namespace: evpn4ovn
+  ReplicaSet:
+    containers:
+      image: 28041980/evpn-for-ovn-operator
+
+api:
+  name: evpn-api
+  ReplicaSet:
+    containers:
+      image: 28041980/evpn-api
+  Ingress:
+    host: evpn-api.domain-x.com
+    port: 5000
+
+mpbgpAgent:
+  name: mpbgp-agent
+  DaemonSet:
+    containers:
+      image: 28041980/mpbgp-agent
+
+ovsdbAgent:
+  name: ovsdb-agent
+  OVNProvider: microovn
+  ReplicaSet:
+    containers:
+      image: 28041980/ovsdb-agent
+
+externalServices:
+  rabbitmq:
+    name: rabbitmq
+    Endpoints:
+      ip: 192.168.10.20
+  bgp:
+    name: bgp
+    Endpoints:
+      ip: 192.168.10.10
+  ovsdb:
+    name: ovsdb
+    Endpoints:
+      ip: 192.168.10.20
+      ports:
+      - name: ovnnb
+        port: 6641
+      - name: ovs
+        port: 6640

@@ -12,8 +12,8 @@ Vagrant.configure("2") do |config|
     ovncluster.vm.provision 'shell', inline: "echo #{ssh_pub_key} >> /home/vagrant/.ssh/authorized_keys", privileged: false
     ovncluster.vm.provider :libvirt do |libvirt|
       libvirt.driver = "qemu"
-      libvirt.memory = 2048
-      libvirt.cpus = 1
+      libvirt.memory = 4096
+      libvirt.cpus = 2
     end
     ovncluster.vm.provision "ansible" do |ansible|
       ansible.playbook = "install-ovncluster.yml"
