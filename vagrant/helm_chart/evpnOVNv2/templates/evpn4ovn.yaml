@@ -1,0 +1,41 @@
+apiVersion: evpn-api.domain-x.com/v1alpha1
+kind: Evpn4Ovn
+metadata:
+  name: evpn4ovn
+spec:
+  configMap: {{ .Values.common.configMap }}
+  replicas: 1
+  api:
+    port: 5000
+  rabbitmqService:
+    name: {{ .Values.externalServices.rabbitmq.name }}-svc
+    endpoints:
+      ip:
+        - {{ .Values.externalServices.rabbitmq.Endpoints.ip }}
+      ports:
+        - name: {{ .Values.externalServices.rabbitmq.name }}
+          port: 5672
+  bgpService:
+    name: {{ .Values.externalServices.bgp.name }}-svc
+    endpoints:
+      ip:
+        - {{ .Values.externalServices.bgp.Endpoints.ip }}
+      ports:
+        - name: {{ .Values.externalServices.bgp.name }}-remote
+          port: 179
+  ovsdbService:
+    name: {{ .Values.externalServices.ovsdb.name }}-svc
+    endpoints:
+      ip:
+        - {{ .Values.externalServices.ovsdb.Endpoints.ip }}
+      ports:
+        - name: ovnnb
+          protocol: TCP
+          port: 6641
+          targetPort: 6641
+          nodePort: 0
+        - name: ovs
+          protocol: TCP
+          port: 6640
+          targetPort: 6640
+          nodePort: 0

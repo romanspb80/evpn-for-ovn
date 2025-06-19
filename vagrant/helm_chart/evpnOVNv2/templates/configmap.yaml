@@ -1,0 +1,31 @@
+apiVersion: v1
+data:
+  app_settings.py: |
+    # OVN-Controller address
+    SERVER_ADDRESS = '192.168.10.20'
+
+    # Settings for RabbitMQ Server connection
+    RABBITMQ_SERVER = SERVER_ADDRESS
+    RABBIT_USER = 'stackrabbit'
+    RABBIT_PASSWORD = 'secret'
+
+    # OVSDB connections
+    OVSDB_OVS_CONN = 'tcp:{}:6640'.format(SERVER_ADDRESS)
+    OVSDB_OVNNB_CONN = 'tcp:{}:6641'.format(SERVER_ADDRESS)
+    SET_OVSDB_OVNNB = 'ptcp:6641:{}'.format(SERVER_ADDRESS)
+
+    # OVS Bridge for client connections
+    OVS_NAME = 'br-int'
+
+    VXLAN_PORT = '4789'
+
+    # Reconnect OVN-Controller to OVSDB
+    # ToDo: add other implementations
+    RECONNECT_OVSDB = {"microovn": ['sudo', 'snap', 'restart', 'microovn.daemon']}
+
+kind: ConfigMap
+metadata:
+  name: {{ .Values.common.configMap }}
+  annotations:
+    reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+    reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "default,evpn4ovn"
