@@ -260,11 +260,11 @@ sudo  ip netns exec vm1 ping 192.168.222.11
 
 
 # Sequence Diagram
-![evpn4ovn](https://github.com/romanspb80/evpn-for-ovn/assets/30826451/18f79189-283f-4a71-b7e9-e39680fa561c)
+<img width="1822" height="1023" alt="evpn4ovn" src="https://github.com/user-attachments/assets/30fc7deb-9281-4d49-a418-d3b9b0995288" />
 
 
 
 # Further development
-1. Implement more other runtime environments with MP-BGP such as JunOS, GoBGP, Quagga, etc...
-2. Implement monitoring subsystem.
-3. Develop evpn4ovn kubernetes operator.
+1. Replace RYU with GoBGP to implement MP-BGP
+2. Replace ovsdbapp with libovsdb to implement ovsdb_agent
+3. Develop a Kubernetes CNI based on this solution
