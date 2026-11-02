@@ -1,0 +1,140 @@
+syntax = "proto3";
+
+package ovsdb_mgmt;
+
+option go_package = "github.com/romanspb80/evpn-for-ovn/gen/ovsdb_mgmt";
+
+service OvsdbService {
+  rpc AddNetwork(AddNetworkRequest) returns (Status);
+  rpc GetNetwork(GetNetworkRequest) returns (GetNetworkResponse);
+  rpc GetNetworks(Empty) returns (GetNetworksResponse);
+  rpc DelNetwork(DelNetworkRequest) returns (Status);
+  rpc AddVtep(AddVtepRequest) returns (Status);
+  rpc DelVtep(DelVtepRequest) returns (Status);
+  rpc AddClient(AddClientRequest) returns (Status);
+  rpc DelClient(DelClientRequest) returns (Status);
+  rpc GetVtep(GetVtepRequest) returns (GetVtepResponse);
+  rpc GetVteps(Empty) returns (GetVtepsResponse);
+  rpc AddLogicalSwitch(LogicalSwitch) returns (Status);
+  rpc GetLogicalSwitch(LogicalSwitchRequest) returns (LogicalSwitchResponse);
+  rpc DelLogicalSwitch(LogicalSwitchRequest) returns (Status);
+  rpc GetLogicalSwitches(Empty) returns (LogicalSwitchesList);
+  rpc AddLogicalSwitchPort(LogicalSwitchPort) returns (Status);
+  rpc GetLogicalSwitchPort(LogicalSwitchPortRequest) returns (LogicalSwitchPortResponse);
+  rpc DelLogicalSwitchPort(LogicalSwitchPortRequest) returns (Status);
+}
+
+message Status {
+  bool success = 1;
+  string message = 2;
+}
+
+message Empty {}
+
+message Network {
+  string name = 1;
+  string uuid = 2;
+}
+
+message AddNetworkRequest {
+  string name = 1;
+}
+
+message GetNetworkRequest {
+  string name = 1;
+}
+
+message GetNetworkResponse {
+  Network network = 1;
+}
+
+message GetNetworksResponse {
+  repeated Network networks = 1;
+}
+
+message DelNetworkRequest {
+  string name = 1;
+}
+
+message LogicalSwitch {
+  string name = 1;
+  string uuid = 2;
+}
+
+message LogicalSwitchRequest {
+  string name = 1;
+}
+
+message LogicalSwitchResponse {
+  LogicalSwitch logical_switch = 1;
+}
+
+message LogicalSwitchesList {
+  repeated LogicalSwitch logical_switches = 1;
+}
+
+message LogicalSwitchPort {
+  string name = 1;
+  string uuid = 2;
+  repeated string addresses = 3;
+  string ls_name = 4;
+}
+
+message LogicalSwitchPortRequest {
+  string name = 1;
+}
+
+message LogicalSwitchPortResponse {
+  LogicalSwitchPort logical_switch_port = 1;
+}
+
+// New VxlanInterface message
+message VxlanInterface {
+  string name = 1;
+  string uuid = 2;
+  string type = 3;
+  string remote_ip = 4;
+  string key = 5;
+  string dst_port = 6;
+}
+
+message AddVtepRequest {
+  string ls_name = 1;
+  string lsp_name = 2;
+  string vxlan_name = 3;
+  string remote_ip = 4;
+  string key = 5;
+  string dst_port = 6;
+}
+
+message DelVtepRequest {
+  string ls_name = 1;
+  string lsp_name = 2;
+  string vxlan_name = 3;
+}
+
+message AddClientRequest {
+  string lsp_name = 1;
+  string mac = 2;
+  string ip = 3;
+}
+
+message DelClientRequest {
+  string lsp_name = 1;
+  string mac = 2;
+  string ip = 3;
+}
+
+message GetVtepRequest {
+  string lsp_name = 1;
+}
+
+// Updated GetVtepResponse with VxlanInterface field
+message GetVtepResponse {
+  LogicalSwitchPort logical_switch_port = 1;
+  VxlanInterface vxlan_interface = 2;
+}
+
+message GetVtepsResponse {
+  repeated LogicalSwitchPort logical_switch_ports = 1;
+}

@@ -1,0 +1,139 @@
+syntax = "proto3";
+
+package evpn;
+option go_package = "github.com/romanspb80/evpn-for-ovn/gen/evpn_mgmt;evpn";
+
+// =====================
+// Message Definitions
+// =====================
+
+message Empty {}
+
+message Status {
+  bool success = 1;
+  string message = 2;
+}
+
+// =====================
+// Speaker
+// =====================
+
+message Speaker {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  int32 asn = 4;
+  string router_id = 5;
+}
+
+message SpeakerRequest {
+  string id = 1;
+}
+
+message SpeakerResponse {
+  Speaker speaker = 1;
+}
+
+message SpeakersList {
+  repeated Speaker speakers = 1;
+}
+
+// =====================
+// Neighbor
+// =====================
+
+message Neighbor {
+//  string id = 1;
+//  string address = 2;
+  string  neighborAddress = 1;
+  int32   peerAsn         = 2;
+}
+
+message NeighborRequest {
+  string id = 1;
+}
+
+message NeighborsList {
+  repeated Neighbor neighbors = 1;
+}
+
+// =====================
+// Network
+// =====================
+
+message Network {
+  int32 vni = 1;
+}
+
+message NetworkRequest {
+  string id = 1;
+}
+
+message NetworksList {
+  repeated Network networks = 1;
+}
+
+message VniConfig {
+  int32 vni = 1;
+  string logical_switch = 2;
+  bool enabled = 3;
+}
+
+message VniRequest {
+  int32 vni = 1;
+}
+
+message VnisList {
+  repeated int32 vni = 1;
+}
+
+// =====================
+// Client
+// =====================
+
+message Client {
+  string  mac = 1;
+  string  ip = 2;
+  int32   label = 3;
+  string  rd = 4;
+}
+
+message ClientRequest {
+  string id = 1;
+}
+
+message ClientsList {
+  repeated Client clients = 1;
+}
+
+// =====================
+// Service Definition
+// =====================
+
+service EvpnService {
+
+  // ---- Speaker ----
+  rpc AddSpeaker (Speaker) returns (Status);
+  rpc GetSpeaker (SpeakerRequest) returns (SpeakerResponse);
+  rpc DelSpeaker (SpeakerRequest) returns (Status);
+
+  // ---- Neighbor ----
+  rpc AddNeighbor (Neighbor) returns (Status);
+  rpc GetNeighbors (Empty) returns (NeighborsList);
+  rpc DelNeighbor (NeighborRequest) returns (Status);
+
+  // ---- Network ----
+  rpc AddNetwork (Network) returns (Status);
+  rpc GetNetworks (Empty) returns (NetworksList);
+  rpc DelNetwork (NetworkRequest) returns (Status);
+
+  // ---- VNI provisioning ----
+  rpc ProvisionVni (VniConfig) returns (Status);
+  rpc DeleteVni (VniRequest) returns (Status);
+  rpc GetVnis (Empty) returns (VnisList);
+
+  // ---- Client ----
+  rpc AddClient (Client) returns (Status);
+  rpc DelClient (ClientRequest) returns (Status);
+  rpc GetClients (Empty) returns (ClientsList);
+}

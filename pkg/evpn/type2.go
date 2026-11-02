@@ -1,0 +1,315 @@
+package evpn
+
+import (
+	"fmt"
+	"net"
+	"net/netip"
+	"sort"
+	"strings"
+	"sync"
+
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
+)
+
+// RouteAction describes the lifecycle transition for a locally-owned EVPN Type-2 route.
+type RouteAction string
+
+const (
+	RouteAdvertise RouteAction = "advertise"
+	RouteWithdraw  RouteAction = "withdraw"
+)
+
+// LocalEndpoint is the provider-neutral representation of a local endpoint that may be
+// advertised as an EVPN Type-2 MAC/IP route.
+type LocalEndpoint struct {
+	NetworkID          string
+	EndpointID         string
+	Incarnation        string
+	MACAddress         string
+	IPAddresses        []string
+	VNI                uint32
+	RouteDistinguisher string
+	RouteTargets       []string
+	LocalVTEP          string
+	NodeName           string
+	Chassis            string
+	Advertise          bool
+	MACOnly            bool
+}
+
+// Type2Route is the route payload that should be sent to the GoBGP gRPC API.
+type Type2Route struct {
+	Endpoint       LocalEndpoint
+	Action         RouteAction
+	NLRI           *bgp.EVPNNLRI
+	PathAttributes []bgp.PathAttributeInterface
+	operation      *routeOperation
+}
+
+// RouteReconciler plans deltas against confirmed applied state. Call Apply to
+// execute and acknowledge each delta; planning alone never changes applied state.
+type RouteReconciler struct {
+	mu           sync.Mutex
+	applied      map[string]OwnedType2Route
+	foreign      map[string]bool
+	pending      map[*routeOperation]bool
+	synchronized bool
+}
+
+func NewRouteReconciler() *RouteReconciler {
+	return &RouteReconciler{applied: make(map[string]OwnedType2Route)}
+}
+
+func (ep LocalEndpoint) OwnershipKey() string {
+	return strings.TrimSpace(ep.EndpointID) + "/" + strings.TrimSpace(ep.Incarnation)
+}
+
+func (ep LocalEndpoint) RouteKey() string {
+	return strings.Join([]string{
+		strings.TrimSpace(ep.NetworkID),
+		strings.TrimSpace(ep.EndpointID),
+		strings.TrimSpace(ep.Incarnation),
+		strings.TrimSpace(ep.RouteDistinguisher),
+		strings.TrimSpace(ep.MACAddress),
+		primaryIP(ep.IPAddresses),
+		fmt.Sprintf("%d", ep.VNI),
+		strings.TrimSpace(ep.LocalVTEP),
+	}, "/")
+}
+
+func (ep LocalEndpoint) Equivalent(other LocalEndpoint) bool {
+	return ep.NetworkID == other.NetworkID &&
+		ep.EndpointID == other.EndpointID &&
+		ep.Incarnation == other.Incarnation &&
+		ep.RouteDistinguisher == other.RouteDistinguisher &&
+		ep.MACAddress == other.MACAddress &&
+		ep.VNI == other.VNI &&
+		ep.MACOnly == other.MACOnly &&
+		primaryIP(ep.IPAddresses) == primaryIP(other.IPAddresses) &&
+		ep.LocalVTEP == other.LocalVTEP &&
+		equalStringSet(ep.RouteTargets, other.RouteTargets)
+}
+
+func (ep LocalEndpoint) Validate() error {
+	if strings.TrimSpace(ep.NetworkID) == "" {
+		return fmt.Errorf("network id is required")
+	}
+	if strings.TrimSpace(ep.EndpointID) == "" {
+		return fmt.Errorf("endpoint id is required")
+	}
+	if strings.TrimSpace(ep.Incarnation) == "" {
+		return fmt.Errorf("incarnation is required")
+	}
+	if strings.TrimSpace(ep.MACAddress) == "" {
+		return fmt.Errorf("mac address is required")
+	}
+	if _, err := netip.ParseAddr(ep.LocalVTEP); err != nil {
+		return fmt.Errorf("invalid local vtep %q: %w", ep.LocalVTEP, err)
+	}
+	if ep.VNI == 0 {
+		return fmt.Errorf("vni must be non-zero")
+	}
+	if strings.TrimSpace(ep.RouteDistinguisher) == "" {
+		return fmt.Errorf("route distinguisher is required")
+	}
+	if _, err := bgp.ParseRouteDistinguisher(ep.RouteDistinguisher); err != nil {
+		return fmt.Errorf("invalid route distinguisher %q: %w", ep.RouteDistinguisher, err)
+	}
+	if len(ep.RouteTargets) == 0 {
+		return fmt.Errorf("at least one route target is required")
+	}
+	for _, rt := range ep.RouteTargets {
+		if _, err := bgp.ParseRouteTarget(rt); err != nil {
+			return fmt.Errorf("invalid route target %q: %w", rt, err)
+		}
+	}
+	if _, err := bgp.ParseRouteTarget(ep.RouteTargets[0]); err != nil {
+		return err
+	}
+	if _, err := net.ParseMAC(ep.MACAddress); err != nil {
+		return fmt.Errorf("invalid mac address %q: %w", ep.MACAddress, err)
+	}
+	if ep.MACOnly {
+		if len(ep.IPAddresses) != 0 {
+			return fmt.Errorf("MAC-only advertisement cannot contain IP addresses")
+		}
+	} else if primaryIP(ep.IPAddresses) == "" {
+		return fmt.Errorf("at least one ip address is required for EVPN Type-2 advertisement")
+	}
+	return nil
+}
+
+func primaryIP(addresses []string) string {
+	for _, addr := range addresses {
+		trimmed := strings.TrimSpace(addr)
+		if trimmed == "" {
+			continue
+		}
+		if strings.Contains(trimmed, "/") {
+			ip, _, err := net.ParseCIDR(trimmed)
+			if err == nil {
+				return ip.String()
+			}
+		}
+		if parsed := net.ParseIP(trimmed); parsed != nil {
+			return parsed.String()
+		}
+	}
+	return ""
+}
+
+func parseSelectedIP(addresses []string) (netip.Addr, error) {
+	ipStr := primaryIP(addresses)
+	if ipStr == "" {
+		return netip.Addr{}, fmt.Errorf("no host ip available")
+	}
+	addr, err := netip.ParseAddr(ipStr)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	return addr, nil
+}
+
+func BuildType2Route(ep LocalEndpoint) (Type2Route, error) {
+	if err := ep.Validate(); err != nil {
+		return Type2Route{}, err
+	}
+
+	var ipAddr netip.Addr
+	if !ep.MACOnly {
+		var err error
+		ipAddr, err = parseSelectedIP(ep.IPAddresses)
+		if err != nil {
+			return Type2Route{}, err
+		}
+	}
+	vtep, err := netip.ParseAddr(ep.LocalVTEP)
+	if err != nil {
+		return Type2Route{}, err
+	}
+	rd, err := bgp.ParseRouteDistinguisher(ep.RouteDistinguisher)
+	if err != nil {
+		return Type2Route{}, err
+	}
+
+	var nlri *bgp.EVPNNLRI
+	if ep.MACOnly {
+		mac, _ := net.ParseMAC(ep.MACAddress)
+		nlri = bgp.NewEVPNNLRI(bgp.EVPN_ROUTE_TYPE_MAC_IP_ADVERTISEMENT, &bgp.EVPNMacIPAdvertisementRoute{
+			RD: rd, MacAddressLength: 48, MacAddress: mac, Labels: []uint32{ep.VNI},
+		})
+	} else {
+		nlri, err = bgp.NewEVPNMacIPAdvertisementRoute(rd, bgp.EthernetSegmentIdentifier{}, 0, ep.MACAddress, ipAddr, []uint32{ep.VNI})
+		if err != nil {
+			return Type2Route{}, err
+		}
+	}
+
+	routeTargets := make([]bgp.ExtendedCommunityInterface, 0, len(ep.RouteTargets)+1)
+	for _, rt := range ep.RouteTargets {
+		parsed, err := bgp.ParseRouteTarget(rt)
+		if err != nil {
+			return Type2Route{}, err
+		}
+		routeTargets = append(routeTargets, parsed)
+	}
+	routeTargets = append(routeTargets, &bgp.EncapExtended{TunnelType: bgp.TUNNEL_TYPE_VXLAN})
+	nextHop, err := bgp.NewPathAttributeNextHop(vtep)
+	if err != nil {
+		return Type2Route{}, err
+	}
+	attrs := []bgp.PathAttributeInterface{
+		bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP),
+		nextHop,
+		bgp.NewPathAttributeExtendedCommunities(routeTargets),
+	}
+
+	return Type2Route{
+		Endpoint:       ep,
+		Action:         RouteAdvertise,
+		NLRI:           nlri,
+		PathAttributes: attrs,
+	}, nil
+}
+
+func (r *RouteReconciler) Reconcile(desired []LocalEndpoint) ([]Type2Route, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pending = make(map[*routeOperation]bool)
+	desiredMap := make(map[string]LocalEndpoint, len(desired))
+	for _, endpoint := range desired {
+		if !endpoint.Advertise {
+			continue
+		}
+		route, err := BuildType2Route(endpoint)
+		if err != nil {
+			return nil, err
+		}
+		key := route.NLRI.String()
+		if other, ok := desiredMap[key]; ok && !other.Equivalent(endpoint) {
+			return nil, fmt.Errorf("%w: conflicting desired owners or attributes for %s", ErrRouteOwnership, key)
+		}
+		if r.foreign[key] {
+			return nil, fmt.Errorf("%w: unclaimed local path for %s", ErrRouteOwnership, key)
+		}
+		desiredMap[key] = cloneLocalEndpoint(endpoint)
+	}
+
+	changes := make([]Type2Route, 0, len(desiredMap)+len(r.applied))
+	plan := func(action RouteAction, ep LocalEndpoint, key, uuid string) error {
+		route, err := BuildType2Route(cloneLocalEndpoint(ep))
+		if err != nil {
+			return err
+		}
+		op := &routeOperation{action: action, endpoint: cloneLocalEndpoint(ep), wireKey: key, pathUUID: uuid}
+		route.Action, route.operation = action, op
+		r.pending[op] = true
+		changes = append(changes, route)
+		return nil
+	}
+	keys := make([]string, 0, len(r.applied))
+	for key := range r.applied {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		existing := r.applied[key]
+		if want, ok := desiredMap[key]; ok && existing.Endpoint.Equivalent(want) {
+			continue
+		}
+		if err := plan(RouteWithdraw, existing.Endpoint, key, existing.PathUUID); err != nil {
+			return nil, err
+		}
+	}
+	keys = keys[:0]
+	for key := range desiredMap {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		endpoint := desiredMap[key]
+		if existing, ok := r.applied[key]; ok && existing.Endpoint.Equivalent(endpoint) {
+			continue
+		}
+		if err := plan(RouteAdvertise, endpoint, key, ""); err != nil {
+			return nil, err
+		}
+	}
+	return changes, nil
+}
+
+func equalStringSet(lhs, rhs []string) bool {
+	if len(lhs) != len(rhs) {
+		return false
+	}
+	left := append([]string(nil), lhs...)
+	right := append([]string(nil), rhs...)
+	sort.Strings(left)
+	sort.Strings(right)
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}

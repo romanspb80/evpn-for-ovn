@@ -1,0 +1,10 @@
+FROM debian:sid-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates iproute2 iputils-ping tcpdump netcat-openbsd \
+    openvswitch-switch ovn-central ovn-host \
+    && rm -rf /var/lib/apt/lists/*
+COPY deploy/kind/start-ovn-ovs.sh /usr/local/bin/start-ovn-ovs.sh
+RUN chmod +x /usr/local/bin/start-ovn-ovs.sh
+# Also copy ovn-nbctl to be accessible from sidecar
+RUN mkdir -p /usr/local/bin && ln -sf /usr/bin/ovn-nbctl /usr/local/bin/ovn-nbctl || true
+CMD ["/usr/local/bin/start-ovn-ovs.sh"]

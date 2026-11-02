@@ -1,0 +1,18 @@
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: evpn-a
+  namespace: cni-test
+spec:
+  config: |-
+    {
+      "cniVersion": "1.0.0",
+      "name": "evpn-a",
+      "type": "evpn-cni",
+      "nodeAgentSocket": "/run/evpn-node-agent/agent.sock",
+      "networkID": "n24",
+      "attachmentID": "s",
+      "logicalSwitch": "ls24b",
+      "ipAddress": "10.244.240.10/24",
+      "macAddress": "0a:58:f0:00:00:0a"
+    }

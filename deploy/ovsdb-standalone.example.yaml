@@ -1,0 +1,25 @@
+# Explicitly invoked, read-only GoBGP Type-2 observer with isolated OVSDB-Programmed writers.
+# Replace endpoints and identities for a disposable OVN/OVS/GoBGP environment only.
+gobgp:
+  endpoint: "127.0.0.1:50051"
+  asn: 64512
+  router_id: "192.0.2.10"
+
+local_vtep: "192.0.2.10"
+ovn_nb_endpoint: "tcp:127.0.0.1:6641"
+ovsdb_endpoint: "tcp:127.0.0.1:6640"
+poll_interval: "2s"
+udp_port: 4789
+exclusive_writer: true
+
+network:
+  id: "m1-lab"
+  logical_switch: "ls-m1-lab"
+  vni: 1000
+  physical_network: "m1-lab"
+  provider_bridge: "br-m1"
+
+import_route_targets:
+  - "64512:1000"
+allowed_remote_vteps:
+  - "192.0.2.20"

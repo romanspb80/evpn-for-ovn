@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: evpn-export-worker
+  namespace: cni-test
+data:
+  export.json: |
+    {
+      "Enabled": false,
+      "DryRun": true,
+      "ProcessContinuity": false,
+      "NodeName": "replace-with-worker-node-name",
+      "LocalChassis": "replace-with-local-ovs-system-id",
+      "GRPCEndpoint": "unix:///var/run/gobgp/gobgp.sock",
+      "ASN": 64512,
+      "RouterID": "192.0.2.32",
+      "Networks": [{
+        "NetworkID": "n24",
+        "LogicalSwitch": "ls24b",
+        "Enabled": true,
+        "ExporterSource": "cni",
+        "VNI": 100,
+        "RouteDistinguisher": "64512:100",
+        "RouteTargets": ["64512:100"],
+        "LocalVTEP": "192.0.2.32"
+      }]
+    }

@@ -1,0 +1,29 @@
+apiVersion: bgp.purelb.io/v1
+kind: BGPConfiguration
+metadata:
+  name: evpn-lab
+  namespace: k8gobgp-system
+spec:
+  # The k8gobgp controller connects to the local gobgpd daemon via the gRPC endpoint.
+  # This lab keeps k8gobgp controller access on node-local loopback TCP and exposes
+  # a cluster Service endpoint through a tcp proxy sidecar:
+  # k8gobgp.k8gobgp-system.svc.cluster.local:50051 -> pod tcp:50054 -> 127.0.0.1:50051.
+  global:
+    asn: 64512
+    routerID: "${NODE_IP}"
+    listenPort: 179
+    families:
+      - "l2vpn-evpn"
+
+  neighbors:
+    - config:
+        neighborAddress: "192.168.50.254"
+        peerAsn: 64512
+        description: "FRR EVPN peer"
+      afiSafis:
+        - family: "l2vpn-evpn"
+          enabled: true
+      timers:
+        config:
+          holdTime: 90
+          keepaliveInterval: 30

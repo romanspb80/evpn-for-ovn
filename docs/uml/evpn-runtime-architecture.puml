@@ -1,0 +1,78 @@
+@startuml
+title Kubernetes lab runtime and separate compatibility-manifest wiring
+top to bottom direction
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+skinparam ArrowColor #2F5D7C
+skinparam note {
+  BackgroundColor #F8FAFC
+  BorderColor #CBD5E1
+}
+skinparam component {
+  BackgroundColor #EAF4FF
+  BorderColor #2F5D7C
+}
+skinparam database {
+  BackgroundColor #FFF7E7
+  BorderColor #D99A22
+}
+
+node "kind cluster (disposable lab; not a production dependency)" {
+  package "k8gobgp-system: upstream installation" {
+    component "BGPConfiguration CRD\nconfigs.bgp.purelb.io" as BGPConfig
+    node "k8gobgp DaemonSet pod\none upstream image" {
+      component "k8gobgp manager" as Manager
+      component "managed gobgpd\nlocal Unix gRPC" as Speaker
+    }
+  }
+  package "Suite-generated Framework / application runtime" {
+    component "evpn-node-agent\nshared endpoint services + optional\nNetlink Type-2 reconcilers" as Agent
+    component "Multus / evpn-cni\nCNI application only" as CNI
+    component "cmd/evpn-ovsdb\nopt-in standalone Type-2 importer" as Importer
+  }
+  component "OVN/OVS runtime\nNBDB / northd / SBDB /\novn-controller / OVSDB" as OVN
+  package "Checked-in compatibility manifest\nnot the accepted suite's speaker connection" as Bundle {
+    component "evpn-mgmt\nDeployment / Service :50052" as EvpnMgmt
+    component "ovsdb-mgmt\nDeployment / Service :50053" as OvsdbMgmt
+    component "bgp_ad_handler\nseparate route-handler Deployment" as Handler
+    component "k8gobgp Service\n:50051 -> target :50054" as BGPService
+  }
+  package "Optional project Operator" {
+    component "EvpnCore CRD" as EvpnCore
+    component "EvpnCore reconciler\napply-only readiness" as Operator
+  }
+}
+component "External FRR peer\n+ remote workload" as FRR
+
+BGPConfig --> Manager : desired configuration
+Manager --> Speaker : reconcile identity / peers / AF / VRFs
+Agent --> Speaker : Unix GoBGP gRPC\nType-2 AddPath / UUID DeletePath / ListPath
+Importer --> Speaker : Unix GoBGP gRPC ListPath
+Speaker <--> FRR : BGP EVPN
+CNI --> Agent : local Unix NodeAgentCNI gRPC
+Agent --> OVN : shared endpoint services;\nowned Netlink integration observed by controller
+Importer --> OVN : direct owned NBDB / OVSDB reconciliation
+OVN <--> FRR : OVN/OVS workload VXLAN
+EvpnMgmt ..> BGPService : configured TCP client
+Handler ..> BGPService : configured TCP route observation
+Handler --> OvsdbMgmt : management RPCs
+OvsdbMgmt --> OVN : NBDB / OVSDB
+EvpnCore --> Operator : reconcile
+Operator ..> Bundle : apply core manifest\nalso OVN Deployment / Services
+
+note bottom of BGPService
+  Service declaration does not install a proxy or listener.
+  No proxy sidecar is assumed in the upstream DaemonSet.
+  Accepted suites use managed Unix gRPC directly.
+end note
+note bottom of Operator
+  Does not own upstream BGPConfiguration, CRDs or DaemonSet.
+  Image fields are inert; Ready means apply succeeded.
+  Future EvpnGateway / EvpnVTEP / EvpnNetwork are not implemented.
+end note
+note bottom of Importer
+  Alternative integration, not the bgp_ad_handler service.
+  One network / one remote VTEP accepted; disabled by default.
+end note
+@enduml

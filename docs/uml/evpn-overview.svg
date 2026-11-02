@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" contentScriptType="application/ecmascript" contentStyleType="text/css" height="1191px" preserveAspectRatio="none" style="width:1260px;height:1191px;" version="1.1" viewBox="0 0 1260 1191" width="1260px" zoomAndPan="magnify"><defs/><g><!--MD5=[fc498ec0b10b206faf20c714c0167be4]
+cluster Kubernetes deployment (optional integration layer)--><rect fill="#FFFFFF" height="263.5" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="454" x="22" y="24.5"/><text fill="#1E293B" font-family="Arial" font-size="17" font-weight="bold" lengthAdjust="spacingAndGlyphs" textLength="438" x="30" y="44.673">Kubernetes deployment (optional integration layer)</text><!--MD5=[3f49f772ede0e264f171ea1c326e7194]
+entity Standalone--><rect fill="#FFFFFF" height="66.3079" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="206" x="776" y="55"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="186" x="786" y="83.173">Standalone Framework</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="81" x="786" y="106.3269">consumer</text><!--MD5=[003bc8d3bcf70ea39831b7d42e34a0c6]
+entity Kubernetes--><rect fill="#FFFFFF" height="66.3079" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="217" x="1027.5" y="55"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="197" x="1037.5" y="83.173">Kubernetes CNI / Multus</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="87" x="1037.5" y="106.3269">application</text><!--MD5=[64c9bff0185b70a6e32d8de39fc086c2]
+entity OpenStack--><rect fill="#FFFFFF" height="66.3079" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="178" x="553" y="55"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="158" x="563" y="83.173">OpenStack Neutron</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="146" x="563" y="106.3269">(future consumer)</text><!--MD5=[747cf657f34e9331716fcffebe2d4de6]
+entity Netlink--><rect fill="#EAF6F0" height="66.3079" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="204" x="528" y="375.5"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="168" x="538" y="403.673">Netlink-Programmed</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="184" x="538" y="426.8269">Framework integration</text><!--MD5=[20c3c7a4c6bdf936258906317fadfd16]
+entity OVSDB--><rect fill="#EAF6F0" height="66.3079" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="204" x="777" y="375.5"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="166" x="787" y="403.673">OVSDB-Programmed</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="184" x="787" y="426.8269">Framework integration</text><!--MD5=[86eec81ce1f364f1b4c217c0accf4d13]
+entity GoBGP--><rect fill="#F3F6FA" height="66.3079" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="171" x="1026.5" y="375.5"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="55" x="1036.5" y="403.673">GoBGP</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="151" x="1036.5" y="426.8269">EVPN control plane</text><!--MD5=[cb798c5dd5bb639090b009f755d03b00]
+entity Kernel--><rect fill="#FFF7E7" height="66.3079" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="153" x="586.5" y="545"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="90" x="596.5" y="573.173">Linux EVPN</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="133" x="596.5" y="596.3269">integration state</text><!--MD5=[e43c327c22e375d4ccea15871d9f3f34]
+entity NBDB--><rect fill="#FFF7E7" height="66.3079" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="176" x="785" y="545"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="156" x="795" y="573.173">OVN NBDB / OVSDB</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="146" x="795" y="596.3269">owned route state</text><!--MD5=[380e51c0119e85c0ba8aadfb8d6e891d]
+entity BGPConfig--><rect fill="#FFFFFF" height="43.1539" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="202" x="169" y="66.5"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="182" x="179" y="94.673">BGPConfiguration CRD</text><!--MD5=[c4cf8543d17fae29f22b65b62c82230e]
+entity BGPManager--><rect fill="#FFFFFF" height="66.3079" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="342" x="99" y="206"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="147" x="109" y="234.173">k8gobgp manager</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="322" x="109" y="257.3269">Kubernetes-native GoBGP management</text><!--MD5=[c4ae5e6a8e5d25f249fb8cf39b4f6989]
+entity Framework--><rect fill="#EAF2FF" height="66.3079" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="215" x="771.5" y="206"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="111" x="781.5" y="234.173">EVPN-for-OVN</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="195" x="781.5" y="257.3269">Reusable Go Framework</text><!--MD5=[f855680bc6c989572ebb25245d27968d]
+entity Controller--><rect fill="#EAF2FF" height="43.1539" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="132" x="798" y="696"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="112" x="808" y="724.173">ovn-controller</text><!--MD5=[c737a1e2b12c28a6a139868b1d120cc5]
+entity Forwarding--><rect fill="#EAF2FF" height="66.3079" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="185" x="771.5" y="820"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="82" x="781.5" y="848.173">OVN / OVS</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="165" x="781.5" y="871.3269">workload forwarding</text><!--MD5=[07c1d96fb5ac9ad0048df168c7096484]
+entity Overlay--><rect fill="#F3F6FA" height="66.3079" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="135" x="796.5" y="967"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="115" x="806.5" y="995.173">EVPN overlay /</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="109" x="806.5" y="1018.3269">remote VTEPs</text><!--MD5=[45cd2f66bdaa3bd72434d6581955b3ee]
+entity FRR--><rect fill="#FFFFFF" height="66.3079" rx="7.5" ry="7.5" style="stroke: #CBD5E1; stroke-width: 1.5;" width="162" x="907" y="1114"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="142" x="917" y="1142.173">External FRR peer</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="88" x="917" y="1165.3269">(validation)</text><path d="M19.5,364.5 L19.5,452.1158 A7.5,7.5 0 0 0 27,459.6158 L475,459.6158 A7.5,7.5 0 0 0 482.5,452.1158 L482.5,367 L472.5,357 L260.75,357 L266.34,272.3 L252.75,357 L27,357 A7.5,7.5 0 0 0 19.5,364.5 " fill="#F8FAFC" style="stroke: #CBD5E1; stroke-width: 1.0;"/><path d="M472.5,357 L472.5,363.25 A3.75,3.75 0 0 0 476.25,367 L482.5,367 L472.5,357 " fill="#F8FAFC" style="stroke: #CBD5E1; stroke-width: 1.0;"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="375" x="25.5" y="380.173">BGP identity / peers / AF / VRFs are CRD-owned.</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="433" x="25.5" y="403.3269">Upstream DaemonSet image runs manager + gobgpd.</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="442" x="25.5" y="426.4808">Framework owns its Type-2 paths and integration state.</text><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="389" x="25.5" y="449.6348">Non-Kubernetes deployments need no k8gobgp.</text><!--MD5=[07f2d9451ec99efc6be4285a18db6318]
+link BGPConfig to BGPManager--><path d="M270,109.72 C270,133.2 270,171.96 270,200.74 " fill="none" id="BGPConfig-&gt;BGPManager" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="270,205.99,274,196.99,270,200.99,266,196.99,270,205.99" style="stroke: #94A3B8; stroke-width: 1.5;"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="107" x="271" y="172.173">reconciliation</text><!--MD5=[9b36a8d438faa9bb2ea90c9e252e688b]
+link Standalone to Framework--><path d="M879,121.33 C879,144.74 879,176.44 879,200.89 " fill="none" id="Standalone-&gt;Framework" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="879,205.99,883,196.99,879,200.99,875,196.99,879,205.99" style="stroke: #94A3B8; stroke-width: 1.5;"/><!--MD5=[f85b57bf08579d0596d93b90872b9460]
+link Kubernetes to Framework--><path d="M1080.55,121.15 C1038.75,145.38 981.51,178.57 938.71,203.38 " fill="none" id="Kubernetes-&gt;Framework" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="934.35,205.91,944.1441,204.8726,938.6797,203.4093,940.143,197.945,934.35,205.91" style="stroke: #94A3B8; stroke-width: 1.5;"/><!--MD5=[b25e46c0aa28ebe154ab6e764b120633]
+link OpenStack to Framework--><path d="M693.13,121.15 C731.6,145.33 784.25,178.43 823.7,203.23 " fill="none" id="OpenStack-&gt;Framework" style="stroke: #94A3B8; stroke-width: 1.5; stroke-dasharray: 7.0,7.0;"/><polygon fill="#94A3B8" points="827.96,205.91,822.4876,197.7214,823.7329,203.2395,818.2148,204.4848,827.96,205.91" style="stroke: #94A3B8; stroke-width: 1.5;"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="51" x="782" y="172.173">future</text><!--MD5=[96aa42956646fb094b21f17dbb1e5382]
+link Framework to Netlink--><path d="M771.39,255.61 C737.36,264.99 701.7,279.99 675,304 C655.77,321.29 644.4,348.28 637.91,370.35 " fill="none" id="Framework-&gt;Netlink" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="636.51,375.27,642.8019,367.6929,637.8666,370.4576,635.102,365.5223,636.51,375.27" style="stroke: #94A3B8; stroke-width: 1.5;"/><!--MD5=[9708bf187a633789a90205fd83bf6660]
+link Framework to OVSDB--><path d="M879,272.3 C879,300.22 879,340.6 879,369.96 " fill="none" id="Framework-&gt;OVSDB" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="879,375.3,883,366.3,879,370.3,875,366.3,879,375.3" style="stroke: #94A3B8; stroke-width: 1.5;"/><!--MD5=[ea3f645424b9f88e761c19307fc4c42d]
+link Framework to GoBGP--><path d="M923.65,272.1 C963.51,300.75 1021.78,342.64 1062.93,372.22 " fill="none" id="Framework-&gt;GoBGP" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="1067.11,375.23,1062.1537,366.7191,1063.0559,372.3036,1057.4714,373.2058,1067.11,375.23" style="stroke: #94A3B8; stroke-width: 1.5;"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="166" x="1003" y="323.173">gRPC Type-2 lifecycle</text><!--MD5=[a868bbb02226d364b31be10955355a6c]
+link BGPManager to GoBGP--><path d="M441.21,266.3 C557.37,284.11 714.42,308.1 853,329 C920.09,339.12 939.45,330.6 1004,351.5 C1020.75,356.92 1038.05,364.76 1053.76,372.85 " fill="none" id="BGPManager-&gt;GoBGP" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="1058.58,375.37,1052.4561,367.6565,1054.1486,373.0542,1048.7509,374.7467,1058.58,375.37" style="stroke: #94A3B8; stroke-width: 1.5;"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="108" x="854" y="323.173">configuration</text><!--MD5=[0752cf9a8eff1ac09700548b395fae9c]
+link Netlink to Kernel--><path d="M636.36,441.8 C641.89,469.83 649.89,510.43 655.68,539.82 " fill="none" id="Netlink-&gt;Kernel" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="656.66,544.8,658.8388,535.1952,655.6904,539.8949,650.9906,536.7465,656.66,544.8" style="stroke: #94A3B8; stroke-width: 1.5;"/><!--MD5=[ebe12514ebc2e04b78955f32c7c318be]
+link Kernel to Controller--><path d="M702.69,611.18 C724.92,628.7 753.44,650.33 780,668 C793.1,676.71 807.83,685.53 821.25,693.21 " fill="none" id="Kernel-&gt;Controller" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="825.75,695.77,819.8951,687.8504,821.4009,693.3031,815.9481,694.8089,825.75,695.77" style="stroke: #94A3B8; stroke-width: 1.5;"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="74" x="781" y="662.173">observed</text><!--MD5=[f1f74aed58d4a55c125e6934767a5aa0]
+link OVSDB to NBDB--><path d="M877.84,441.8 C876.84,469.72 875.4,510.1 874.34,539.46 " fill="none" id="OVSDB-&gt;NBDB" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="874.15,544.8,878.4813,535.9547,874.3356,539.8034,870.4868,535.6577,874.15,544.8" style="stroke: #94A3B8; stroke-width: 1.5;"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="158" x="877" y="507.173">Type-2 route import</text><!--MD5=[03f25a68339e481006f3746ff1c907cd]
+link NBDB to Controller--><path d="M870.89,611.24 C869.3,635.49 867.16,668.28 865.68,690.78 " fill="none" id="NBDB-&gt;Controller" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="865.34,695.98,869.9215,687.2617,865.6679,690.9908,861.9388,686.7371,865.34,695.98" style="stroke: #94A3B8; stroke-width: 1.5;"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="147" x="869" y="662.173">OVN reconciliation</text><!--MD5=[8774d59bb53e3dea1f04df66d3c20759]
+link Controller to Forwarding--><path d="M864,739.07 C864,759.21 864,790.36 864,814.85 " fill="none" id="Controller-&gt;Forwarding" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="864,819.96,868,810.96,864,814.96,860,810.96,864,819.96" style="stroke: #94A3B8; stroke-width: 1.5;"/><!--MD5=[3a92de8ad2c81631f6f4a15b8c53944f]
+link GoBGP to FRR--><path d="M1112,446.91 C1112,480.85 1112,532.28 1112,577 C1112,577 1112,577 1112,1001 C1112,1040.64 1109.37,1054.74 1085,1086 C1077.65,1095.43 1068.37,1103.75 1058.48,1110.95 " fill="none" id="GoBGP-FRR" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="1054.21,1113.98,1063.8689,1112.0551,1058.294,1111.0955,1059.2537,1105.5206,1054.21,1113.98" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="1112,441.61,1108,450.61,1112,446.61,1116,450.61,1112,441.61" style="stroke: #94A3B8; stroke-width: 1.5;"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="135" x="1113" y="786.173">BGP EVPN routes</text><!--MD5=[745f233ce5f9d0a4193365b8e1b63d04]
+link Overlay to FRR--><path d="M851.92,1038.43 C849.1,1054.22 849.12,1072.12 858,1086 C868.41,1102.27 884.47,1114.19 901.8,1122.9 " fill="none" id="Overlay-FRR" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="906.72,1125.27,900.3434,1117.7641,902.2142,1123.1026,896.8756,1124.9734,906.72,1125.27" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="852.97,1033.17,847.2962,1041.2203,851.9977,1038.0745,855.1434,1042.776,852.97,1033.17" style="stroke: #94A3B8; stroke-width: 1.5;"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="218" x="859" y="1080.173">peer-side VXLAN / workload</text><!--MD5=[7dd5cf475bacc72ba083781e9200675b]
+link Forwarding to Overlay--><path d="M864,891.37 C864,913.03 864,940.2 864,961.82 " fill="none" id="Forwarding-Overlay" style="stroke: #94A3B8; stroke-width: 1.5; stroke-dasharray: 7.0,7.0;"/><polygon fill="#94A3B8" points="864,966.91,868,957.91,864,961.91,860,957.91,864,966.91" style="stroke: #94A3B8; stroke-width: 1.5;"/><polygon fill="#94A3B8" points="864,886.18,860,895.18,864,891.18,868,895.18,864,886.18" style="stroke: #94A3B8; stroke-width: 1.5;"/><text fill="#1E293B" font-family="Arial" font-size="17" lengthAdjust="spacingAndGlyphs" textLength="124" x="865" y="933.173">workload traffic</text><!--MD5=[0922c7b002607357bcb0251c5374ecd8]
+@startuml
+top to bottom direction
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam defaultFontSize 17
+skinparam defaultFontColor #1E293B
+skinparam shadowing false
+skinparam roundCorner 15
+skinparam nodesep 45
+skinparam ranksep 55
+skinparam ArrowColor #94A3B8
+skinparam ArrowThickness 1.5
+skinparam note {
+  BackgroundColor #F8FAFC
+  BorderColor #CBD5E1
+}
+skinparam rectangle {
+  BackgroundColor #FFFFFF
+  BorderColor #CBD5E1
+  BorderThickness 1.5
+}
+
+rectangle "EVPN-for-OVN\nReusable Go Framework" as Framework #EAF2FF
+
+together {
+  rectangle "Standalone Framework\nconsumer" as Standalone
+  rectangle "Kubernetes CNI / Multus\napplication" as Kubernetes
+  rectangle "OpenStack Neutron\n(future consumer)" as OpenStack
+}
+
+together {
+  rectangle "Netlink-Programmed\nFramework integration" as Netlink #EAF6F0
+  rectangle "OVSDB-Programmed\nFramework integration" as OVSDB #EAF6F0
+  rectangle "GoBGP\nEVPN control plane" as GoBGP #F3F6FA
+}
+together {
+  rectangle "Linux EVPN\nintegration state" as Kernel #FFF7E7
+  rectangle "OVN NBDB / OVSDB\nowned route state" as NBDB #FFF7E7
+}
+rectangle "ovn-controller" as Controller #EAF2FF
+rectangle "OVN / OVS\nworkload forwarding" as Forwarding #EAF2FF
+rectangle "EVPN overlay /\nremote VTEPs" as Overlay #F3F6FA
+rectangle "External FRR peer\n(validation)" as FRR
+rectangle "Kubernetes deployment (optional integration layer)" {
+  rectangle "BGPConfiguration CRD" as BGPConfig
+  rectangle "k8gobgp manager\nKubernetes-native GoBGP management" as BGPManager
+  BGPConfig - -> BGPManager : reconciliation
+}
+
+Standalone - -> Framework
+Kubernetes - -> Framework
+OpenStack ..> Framework : future
+Framework - -> Netlink
+Framework - -> OVSDB
+Framework - -> GoBGP : gRPC Type-2 lifecycle
+BGPManager - -> GoBGP : configuration
+Netlink - -> Kernel
+Kernel - -> Controller : observed
+OVSDB - -> NBDB : Type-2 route import
+NBDB - -> Controller : OVN reconciliation
+Controller - -> Forwarding
+GoBGP <- -> FRR : BGP EVPN routes
+Overlay <- -> FRR : peer-side VXLAN / workload
+Forwarding <..> Overlay : workload traffic
+note bottom of BGPManager
+  BGP identity / peers / AF / VRFs are CRD-owned.
+  Upstream DaemonSet image runs manager + gobgpd.
+  Framework owns its Type-2 paths and integration state.
+  Non-Kubernetes deployments need no k8gobgp.
+end note
+@enduml
+
+PlantUML version 1.2020.02(Sun Mar 01 10:22:07 WET 2020)
+(GPL source distribution)
+Java Runtime: OpenJDK Runtime Environment
+JVM: OpenJDK 64-Bit Server VM
+Java Version: 21.0.12.1+1-1-24.04.4-Ubuntu
+Operating System: Linux
+Default Encoding: UTF-8
+Language: en
+Country: US
+--></g></svg>

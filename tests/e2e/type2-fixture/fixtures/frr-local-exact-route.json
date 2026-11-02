@@ -1,0 +1,59 @@
+{
+  "rd": "198.19.206.3:1000",
+  "routeType": 2,
+  "ethTag": 0,
+  "macLen": 48,
+  "mac": "4a:11:88:87:cb:6e",
+  "ipLen": 32,
+  "ip": "198.19.206.101",
+  "advertisedTo": {
+    "198.19.206.3": {
+      "hostname": "2d217cd17e0a"
+    }
+  },
+  "[2]:[0]:[48]:[4a:11:88:87:cb:6e]:[32]:[198.19.206.101]": [
+    [
+      {
+        "VNI": "1000",
+        "vni": "1000",
+        "aspath": {
+          "string": "Local",
+          "segments": [],
+          "length": 0
+        },
+        "origin": "IGP",
+        "weight": 32768,
+        "valid": true,
+        "version": 5,
+        "sourced": true,
+        "local": true,
+        "bestpath": {
+          "overall": true,
+          "selectionReason": "First path received"
+        },
+        "extendedCommunity": {
+          "string": "ET:8 RT:64512:1000"
+        },
+        "lastUpdate": {
+          "epoch": 1793489145,
+          "string": "Sat Oct 31 23:25:45 2026\n"
+        },
+        "nexthops": [
+          {
+            "ip": "198.19.206.4",
+            "hostname": "6590e733fad5",
+            "afi": "ipv4",
+            "metric": 0,
+            "accessible": true,
+            "used": true
+          }
+        ],
+        "peer": {
+          "peerId": "0.0.0.0",
+          "routerId": "198.19.206.2"
+        }
+      }
+    ]
+  ],
+  "numPaths": 1
+}

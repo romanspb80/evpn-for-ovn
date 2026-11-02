@@ -1,0 +1,71 @@
+@startuml
+top to bottom direction
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontName Arial
+skinparam defaultFontSize 17
+skinparam defaultFontColor #1E293B
+skinparam shadowing false
+skinparam roundCorner 15
+skinparam nodesep 45
+skinparam ranksep 55
+skinparam ArrowColor #94A3B8
+skinparam ArrowThickness 1.5
+skinparam note {
+  BackgroundColor #F8FAFC
+  BorderColor #CBD5E1
+}
+skinparam rectangle {
+  BackgroundColor #FFFFFF
+  BorderColor #CBD5E1
+  BorderThickness 1.5
+}
+
+rectangle "EVPN-for-OVN\nReusable Go Framework" as Framework #EAF2FF
+
+together {
+  rectangle "Standalone Framework\nconsumer" as Standalone
+  rectangle "Kubernetes CNI / Multus\napplication" as Kubernetes
+  rectangle "OpenStack Neutron\n(future consumer)" as OpenStack
+}
+
+together {
+  rectangle "Netlink-Programmed\nFramework integration" as Netlink #EAF6F0
+  rectangle "OVSDB-Programmed\nFramework integration" as OVSDB #EAF6F0
+  rectangle "GoBGP\nEVPN control plane" as GoBGP #F3F6FA
+}
+together {
+  rectangle "Linux EVPN\nintegration state" as Kernel #FFF7E7
+  rectangle "OVN NBDB / OVSDB\nowned route state" as NBDB #FFF7E7
+}
+rectangle "ovn-controller" as Controller #EAF2FF
+rectangle "OVN / OVS\nworkload forwarding" as Forwarding #EAF2FF
+rectangle "EVPN overlay /\nremote VTEPs" as Overlay #F3F6FA
+rectangle "External FRR peer\n(validation)" as FRR
+rectangle "Kubernetes deployment (optional integration layer)" {
+  rectangle "BGPConfiguration CRD" as BGPConfig
+  rectangle "k8gobgp manager\nKubernetes-native GoBGP management" as BGPManager
+  BGPConfig --> BGPManager : reconciliation
+}
+
+Standalone --> Framework
+Kubernetes --> Framework
+OpenStack ..> Framework : future
+Framework --> Netlink
+Framework --> OVSDB
+Framework --> GoBGP : gRPC Type-2 lifecycle
+BGPManager --> GoBGP : configuration
+Netlink --> Kernel
+Kernel --> Controller : observed
+OVSDB --> NBDB : Type-2 route import
+NBDB --> Controller : OVN reconciliation
+Controller --> Forwarding
+GoBGP <--> FRR : BGP EVPN routes
+Overlay <--> FRR : peer-side VXLAN / workload
+Forwarding <..> Overlay : workload traffic
+note bottom of BGPManager
+  BGP identity / peers / AF / VRFs are CRD-owned.
+  Upstream DaemonSet image runs manager + gobgpd.
+  Framework owns its Type-2 paths and integration state.
+  Non-Kubernetes deployments need no k8gobgp.
+end note
+@enduml

@@ -1,0 +1,106 @@
+@startuml
+title Current Framework integration modes
+top to bottom direction
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam componentStyle rectangle
+skinparam ArrowColor #2F5D7C
+skinparam note {
+  BackgroundColor #F8FAFC
+  BorderColor #CBD5E1
+}
+skinparam component {
+  BackgroundColor #EAF4FF
+  BorderColor #2F5D7C
+  FontColor #1F2A37
+}
+skinparam database {
+  BackgroundColor #FFF7E7
+  BorderColor #D99A22
+  FontColor #1F2A37
+}
+
+package "EVPN Framework" {
+  component "Shared route, network,\nendpoint and ownership services" as Core
+
+  package "Netlink-Programmed integration" {
+    component "Optional node-agent\nType-2 importer / exporter" as NetlinkAdapter
+    component "Linux EVPN integration state\nFDB + neighbors" as Kernel
+    NetlinkAdapter --> Kernel : owned Netlink reconciliation
+  }
+
+  package "OVSDB-Programmed integration\n(opt-in standalone)" {
+    component "Read-only GoBGP RIB\nType-2 importer" as OVSDBImporter
+    component "OVSDB Type-2 handler\nand programmer" as OVSDBAdapter
+    OVSDBImporter --> OVSDBAdapter : validated route snapshots
+  }
+}
+
+package "Applications" {
+  component "Kubernetes CNI / Multus\napplication consumer" as CNI
+  component "Standalone Framework\nconsumer" as Standalone
+  component "OpenStack Neutron\nfuture consumer" as Neutron
+}
+
+package "Netlink integration boundary and forwarding" {
+  database "OVN NBDB\nnetwork / VNI context" as NetlinkNB
+  component "ovn-controller" as NetlinkController
+  component "OVN / OVS\nworkload forwarding" as NetlinkOVS
+}
+
+package "OVSDB integration and forwarding" {
+  database "OVN NBDB + OVSDB\nlocalnet LSP, bridge mapping,\nprovider bridge and VXLAN" as OVSDBState
+  component "ovn-controller" as OVSDBController
+  component "OVN / OVS\nworkload forwarding" as OVSDBOVS
+}
+
+component "GoBGP EVPN speaker" as GoBGP
+package "Optional Kubernetes management\nupstream DaemonSet image contains manager + gobgpd" {
+  component "BGPConfiguration CRD" as BGPConfig
+  component "k8gobgp manager" as BGPManager
+  BGPConfig --> BGPManager : reconciliation
+}
+component "EVPN overlay /\nremote VTEP" as Overlay
+component "External FRR peer\n(lab validation)" as FRR
+
+Core --> NetlinkAdapter
+Core --> OVSDBImporter
+Core --> GoBGP : gRPC Type-2 path lifecycle
+BGPManager --> GoBGP : configures managed gobgpd\nidentity / peers / AF / VRFs
+CNI --> Core
+Standalone --> Core
+Neutron ..> Core : future
+
+NetlinkAdapter --> GoBGP : gRPC ListPath / AddPath /\nUUID DeletePath
+Kernel ..> NetlinkController : observed integration state
+NetlinkNB --> NetlinkController : network / VNI state
+NetlinkController --> NetlinkOVS : controller-owned forwarding
+
+OVSDBImporter --> GoBGP : read-only gRPC ListPath
+OVSDBAdapter --> OVSDBState : owned OVSDB reconciliation
+OVSDBState --> OVSDBController : OVN reconciliation
+OVSDBController --> OVSDBOVS : controller-owned forwarding
+
+GoBGP <--> Overlay : EVPN control plane
+Overlay <--> FRR : external peer
+NetlinkOVS <--> Overlay : workload traffic
+OVSDBOVS <--> Overlay : workload traffic
+
+note bottom of NetlinkAdapter
+  Optional and disabled by default.
+  Linux state is not the workload dataplane.
+end note
+note bottom of OVSDBImporter
+  Independent Framework E2E is limited to
+  one network and one remote VTEP.
+end note
+note bottom of CNI
+  CNI consumes shared Framework services.
+  It does not select the OVSDB importer.
+end note
+note bottom of BGPManager
+  k8gobgp is not required outside Kubernetes.
+  CRD configuration and Framework-owned paths
+  have separate single-writer boundaries.
+end note
+@enduml

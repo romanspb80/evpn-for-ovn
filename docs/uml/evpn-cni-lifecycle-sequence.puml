@@ -1,0 +1,180 @@
+@startuml
+autonumber
+skinparam sequence {
+  ArrowColor #2F5D7C
+  LifeLineBorderColor #2F5D7C
+  LifeLineBackgroundColor #F8FBFF
+  ParticipantBorderColor #2F5D7C
+  ParticipantBackgroundColor #EAF4FF
+}
+
+participant "Kubelet / Multus" as Multus
+participant "evpn-cni" as CNI
+participant "evpn-node-agent\nCNI gRPC server" as Agent
+participant "Network backend\nveth / netns" as Network
+participant "Endpoint manager" as Endpoint
+participant "OVN NBDB" as NBDB
+participant "Attachment manager\nOVS" as Attach
+participant "OVN/OVS forwarding" as Forwarding
+participant "Asynchronous Type-2\nreconcilers (optional)" as Exporter
+participant "managed gobgpd\n(k8gobgp DaemonSet)" as GoBGP
+participant "Remote workload / FRR peer" as Remote
+participant "Workload A" as Workload
+participant "Survivor endpoint B" as Survivor
+participant "E2E test runner" as Test
+participant "Containerlab E2E\nlifecycle (test only)" as Lab
+
+== E2E laboratory (not a runtime dependency) ==
+Test -> Lab : reserve exact topology; deploy native kind + FRR
+Lab -> Lab : verify ownership, readiness and management CA
+Lab --> Test : private kubeconfig and environment receipts
+Test -> Test : deploy OVN/OVS, managed k8gobgp, Multus and node-agent
+note over Test,GoBGP
+  BGPConfiguration CRD -> k8gobgp reconciliation -> managed gobgpd.
+  Manager and daemon share one upstream image.
+  Type-2 reconcilers use local Unix GoBGP gRPC independently of CNI RPCs.
+end note
+
+== ADD ==
+Multus -> CNI : ADD(container, network, attachment, workload UID)
+CNI -> Agent : CNIAddRequest over Unix socket
+Agent -> Agent : validate identity + map endpoint spec
+Agent -> Network : Ensure attachment
+Network --> Agent : host interface / attachment state
+Agent -> Endpoint : EnsureEndpoint
+Endpoint -> NBDB : ensure owned Logical_Switch_Port
+NBDB --> Endpoint : LSP identity / state
+Endpoint -> Attach : ensure identity-aware local attachment
+Attach --> Endpoint : attached interface
+Endpoint --> Agent : endpoint status
+Agent --> CNI : success + endpoint result
+CNI --> Multus : CNI result
+Exporter -> Exporter : asynchronously observe authoritative local evidence
+Exporter -> GoBGP : AddPath local Type-2; retain UUID (when enabled)
+
+group Failure exits instead of the successful ADD above
+alt network attachment setup fails
+  Network --> Agent : error
+  Agent --> CNI : explicit error
+else endpoint provisioning fails
+  Endpoint --> Agent : error
+  Agent -> Network : delete newly created network state
+  Agent -> Agent : remove failed endpoint record
+  Agent --> CNI : explicit error
+end
+end
+
+== CHECK (read-only) ==
+Multus -> CNI : CHECK
+CNI -> Agent : CNICheckRequest
+Agent -> Agent : resolve exact endpoint identity
+Agent -> NBDB : check LSP identity
+NBDB --> Agent : matching owned identity
+Agent -> Network : verify attachment
+Network --> Agent : present
+Agent -> Attach : verify local attachment
+Attach --> Agent : present
+Agent --> CNI : CHECK success / mismatch error
+
+== Initial traffic and packet evidence ==
+Workload -> Forwarding : initial workload packet
+Forwarding -> Remote : OVN/OVS-forwarded VXLAN traffic
+Remote --> Forwarding : reverse workload packet
+Forwarding --> Workload : bidirectional connectivity
+note over Forwarding,Remote
+  Full-lifecycle acceptance correlates five capture points and decoded
+  packets with the initial endpoint identity, VNI, VTEPs and traffic direction.
+end note
+
+== Initial DEL and withdrawal ==
+Multus -> CNI : DEL(exact identity + incarnation)
+CNI -> Agent : CNIDelRequest
+Agent -> Agent : reject stale identity; absent DEL is idempotent
+Agent -> Attach : delete matching owned attachment
+Attach --> Agent : detached
+Agent -> NBDB : delete matching owned LSP
+NBDB --> Agent : delete accepted
+Agent -> Network : delete owned network attachment
+Network --> Agent : removed
+Agent --> CNI : deleted / already absent
+Exporter -> Exporter : asynchronously observe endpoint removal
+Exporter -> GoBGP : DeletePath exact owned UUIDs (when enabled)
+
+Multus -> CNI : repeated DEL (same identity)
+CNI -> Agent : CNIDelRequest
+Agent --> CNI : already absent / idempotent success
+Survivor -> Forwarding : verify survivor after initial DEL
+Forwarding --> Survivor : survivor traffic preserved
+
+== Replacement on the existing network ==
+Multus -> CNI : ADD(new workload UID and attachment identity)
+CNI -> Agent : CNIAddRequest
+Agent -> Network : Ensure replacement netns / veth attachment
+Agent -> Endpoint : EnsureEndpoint(new identity)
+Endpoint -> NBDB : ensure replacement Logical_Switch_Port
+NBDB --> Endpoint : replacement LSP
+Endpoint -> Attach : ensure replacement OVS attachment
+Attach --> Endpoint : attached interface
+Endpoint --> Agent : replacement endpoint status
+Agent --> CNI : replacement result
+CNI --> Multus : replacement CNI result
+Exporter -> GoBGP : asynchronously AddPath replacement Type-2
+
+Multus -> CNI : CHECK(replacement identity)
+CNI -> Agent : CNICheckRequest
+Agent -> NBDB : verify replacement LSP
+Agent -> Attach : verify replacement OVS attachment
+Agent --> CNI : replacement CHECK result
+
+Workload -> Forwarding : replacement workload packet
+Forwarding -> Remote : replacement VXLAN traffic
+Remote --> Forwarding : reverse replacement traffic
+Forwarding --> Workload : bidirectional connectivity
+note over Forwarding,Remote
+  Replacement captures and decoded packets are phase-prefixed and checked
+  against the new endpoint identity; stale initial attribution must not pass.
+end note
+Survivor -> Forwarding : verify survivor after replacement ADD
+Forwarding --> Survivor : survivor traffic preserved
+
+Multus -> CNI : final DEL(replacement identity)
+CNI -> Agent : CNIDelRequest
+Agent -> Attach : remove owned replacement attachment
+Agent -> NBDB : remove owned replacement LSP
+Agent -> Network : delete owned replacement network attachment
+Agent --> CNI : deleted
+CNI --> Multus : DEL success
+Exporter -> GoBGP : asynchronously DeletePath replacement UUIDs
+Survivor -> Forwarding : verify survivor connectivity
+Forwarding --> Survivor : survivor traffic preserved
+Test -> Test : delete survivor through CNI; withdraw remote workload;\nwait for empty owned routes and endpoint state
+Test -> NBDB : guarded ovn-nbctl ls-del of test-owned network
+Test -> Test : verify foreign LSP / integration devices preserved
+Test -> Lab : collect diagnostics; destroy exact owned topology
+Lab --> Test : owned resources absent; unrelated resources preserved
+
+note over NBDB
+  OVN NBDB -> SBDB binding propagation is asynchronous.
+  CHECK verifies endpoint identity; it is not a replacement
+  for dataplane traffic tests.
+end note
+note over Endpoint,Attach
+  Rollback depends on the failure point. If local attachment
+  fails after OVN LSP creation, the current endpoint manager
+  does not compensate that LSP yet. Current full-lifecycle
+  evidence injects a missing network namespace before LSP
+  creation; it does not establish general post-LSP compensation.
+end note
+note over Multus,Attach
+  This sequence covers the optional Kubernetes CNI application lifecycle.
+  The full-lifecycle E2E additionally checks repeated ADD/DEL, negative CHECK,
+  injected pre-LSP ADD rollback, survivor preservation and guarded cleanup. OVN/OVS
+  endpoint attachment is not the standalone OVSDB-Programmed EVPN dataplane.
+end note
+note over Exporter,GoBGP
+  Optional Type-2 export/import is a separate CNI integration.
+  RPC success does not wait for BGP convergence.
+  This application sequence is not independent Framework
+  acceptance for either integration mode.
+end note
+@enduml

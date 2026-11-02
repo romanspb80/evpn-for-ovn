@@ -1,0 +1,281 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: evpn-system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ovn-system
+---
+# k8gobgp is managed as an upstream deployment and BGPConfiguration CR, not as a
+# custom in-repo gobgp Service/StatefulSet. The legacy gobgp service definition has
+# been removed to avoid conflicting with the operator-managed speaker lifecycle.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8gobgp
+  namespace: k8gobgp-system
+spec:
+  selector:
+    app.kubernetes.io/name: k8gobgp
+  ports:
+    - name: gobgp-grpc
+      port: 50051
+      targetPort: 50054
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovn-ovs
+  namespace: ovn-system
+spec:
+  clusterIP: None
+  selector:
+    app: ovn-ovs
+  ports:
+    - name: ovsdb
+      port: 6640
+      targetPort: 6640
+    - name: ovnnb
+      port: 6641
+      targetPort: 6641
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ovn-ovs
+  namespace: ovn-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ovn-ovs
+  template:
+    metadata:
+      labels:
+        app: ovn-ovs
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: ovn-ovs
+          image: evpn4ovn/ovn-ovs:kind
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: OVN_EVPN_VXLAN_PORTS
+              value: "4789"
+            - name: OVN_EVPN_LOCAL_IP
+              value: 172.19.0.2
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["NET_ADMIN"]
+          ports:
+            - containerPort: 6640
+              hostPort: 6640
+              name: ovsdb
+            - containerPort: 6641
+              hostPort: 6641
+              name: ovnnb
+            - containerPort: 4789
+              hostPort: 4789
+              protocol: UDP
+              name: vxlan
+        - name: bgp-ad-handler-agent
+          image: evpn4ovn/app:kind
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -lc
+            - |
+              if [ "${ENABLE_NETLINK_AGENT:-false}" = "true" ]; then
+                exec /usr/local/bin/bgp_ad_handler
+              fi
+              echo "bgp-ad-handler-agent disabled (ENABLE_NETLINK_AGENT=false)"
+              sleep infinity
+          securityContext:
+            privileged: true
+            capabilities:
+              add: ["NET_ADMIN"]
+          env:
+            - name: ENABLE_NETLINK_AGENT
+              value: "false"
+            - name: BGP_AD_HANDLER_MODE
+              value: netlink
+            - name: GOBGP_MODE
+              value: k8gobgp
+            - name: GOBGP_ENDPOINT
+              value: k8gobgp.k8gobgp-system.svc.cluster.local:50051
+            - name: NETWORK_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: NETLINK_BRIDGE_DEV
+              value: br-evpn1000
+            - name: NETLINK_VXLAN_DEV
+              value: vxlan1000
+            - name: NETLINK_ADVERTISE_DEV
+              value: evpnadv1000
+            - name: NETLINK_VXLAN_PORT
+              value: "4789"
+            - name: NETLINK_MANAGE_VXLAN
+              value: "false"
+            - name: NETLINK_LOGICAL_SWITCH_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ovsdb-mgmt
+  namespace: evpn-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ovsdb-mgmt
+  template:
+    metadata:
+      labels:
+        app: ovsdb-mgmt
+    spec:
+      containers:
+        - name: ovsdb-mgmt
+          image: evpn4ovn/app:kind
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/ovsdb_mgmt"]
+          env:
+            - name: OVN_NB_ENDPOINT
+              value: tcp:ovn-ovs.ovn-system.svc.cluster.local:6641
+            - name: OVS_DB_ENDPOINT
+              value: tcp:ovn-ovs.ovn-system.svc.cluster.local:6640
+          ports:
+            - containerPort: 50053
+              name: grpc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ovsdb-mgmt
+  namespace: evpn-system
+spec:
+  type: NodePort
+  selector:
+    app: ovsdb-mgmt
+  ports:
+    - name: grpc
+      port: 50053
+      targetPort: 50053
+      nodePort: 30053
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evpn-mgmt
+  namespace: evpn-system
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: evpn-mgmt
+  template:
+    metadata:
+      labels:
+        app: evpn-mgmt
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: evpn-mgmt
+          image: evpn4ovn/app:kind
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/evpn_mgmt"]
+          env:
+            - name: GOBGP_MODE
+              value: k8gobgp
+            - name: GOBGP_ENDPOINT
+              value: k8gobgp.k8gobgp-system.svc.cluster.local:50051
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          ports:
+            - containerPort: 50052
+              name: grpc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evpn-mgmt
+  namespace: evpn-system
+spec:
+  type: NodePort
+  selector:
+    app: evpn-mgmt
+  ports:
+    - name: grpc
+      port: 50052
+      targetPort: 50052
+      nodePort: 30052
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bgp-ad-handler
+  namespace: evpn-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bgp-ad-handler
+  template:
+    metadata:
+      labels:
+        app: bgp-ad-handler
+    spec:
+      containers:
+        - name: bgp-ad-handler
+          image: evpn4ovn/app:kind
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/bgp_ad_handler"]
+          env:
+            - name: GOBGP_MODE
+              value: k8gobgp
+            - name: GOBGP_ENDPOINT
+              value: k8gobgp.k8gobgp-system.svc.cluster.local:50051
+            - name: OVSDB_ADDR
+              value: ovsdb-mgmt.evpn-system.svc.cluster.local:50053
+            - name: BGP_AD_HANDLER_MODE
+              value: ovsdb
+            - name: NETWORK_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bgp-ad-handler
+  namespace: evpn-system
+spec:
+  selector:
+    app: bgp-ad-handler
+  ports:
+    - name: grpc
+      port: 50053
+      targetPort: 50053

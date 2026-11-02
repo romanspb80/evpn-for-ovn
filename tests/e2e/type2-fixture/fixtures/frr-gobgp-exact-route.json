@@ -1,0 +1,54 @@
+{
+  "rd": "198.18.74.3:1000",
+  "routeType": 2,
+  "ethTag": 0,
+  "macLen": 48,
+  "mac": "02:00:00:7f:21:01",
+  "ipLen": 32,
+  "ip": "198.18.74.151",
+  "[2]:[0]:[48]:[02:00:00:7f:21:01]:[32]:[198.18.74.151]": [
+    [
+      {
+        "VNI": "1000",
+        "vni": "1000",
+        "aspath": {
+          "string": "Local",
+          "segments": [],
+          "length": 0
+        },
+        "origin": "incomplete",
+        "locPrf": 100,
+        "valid": true,
+        "version": 5,
+        "bestpath": {
+          "overall": true,
+          "selectionReason": "First path received"
+        },
+        "extendedCommunity": {
+          "string": "RT:64512:1000 ET:8"
+        },
+        "lastUpdate": {
+          "epoch": 1793489924,
+          "string": "Sat Oct 31 23:38:44 2026\n"
+        },
+        "nexthops": [
+          {
+            "ip": "198.18.74.3",
+            "hostname": "7b228511e9a5",
+            "afi": "ipv4",
+            "metric": 0,
+            "accessible": true,
+            "used": true
+          }
+        ],
+        "peer": {
+          "peerId": "198.18.74.3",
+          "routerId": "198.18.74.3",
+          "hostname": "7b228511e9a5",
+          "type": "internal"
+        }
+      }
+    ]
+  ],
+  "numPaths": 1
+}

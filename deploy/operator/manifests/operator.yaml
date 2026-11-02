@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: evpn-operator-system
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: evpncores.evpn.core.example.com
+spec:
+  group: evpn.core.example.com
+  scope: Namespaced
+  names:
+    kind: EvpnCore
+    plural: evpncores
+    singular: evpncore
+    shortNames: ["ecore"]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                appNamespace:
+                  type: string
+                ovnNamespace:
+                  type: string
+                appImage:
+                  type: string
+                gobgpImage:
+                  type: string
+                ovnImage:
+                  type: string
+              required: [enabled]
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                ready:
+                  type: boolean
+                reason:
+                  type: string
+      subresources:
+        status: {}
+  conversion:
+    strategy: None
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: evpn-core-operator
+  namespace: evpn-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: evpn-core-operator
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "services", "serviceaccounts", "pods", "configmaps", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gatewayclasses", "gateways", "grpcroutes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["evpn.core.example.com"]
+    resources: ["evpncores", "evpncores/status"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: evpn-core-operator
+subjects:
+  - kind: ServiceAccount
+    name: evpn-core-operator
+    namespace: evpn-operator-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: evpn-core-operator
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evpn-core-operator
+  namespace: evpn-operator-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: evpn-core-operator
+  template:
+    metadata:
+      labels:
+        app: evpn-core-operator
+    spec:
+      serviceAccountName: evpn-core-operator
+      containers:
+        - name: operator
+          image: evpn4ovn/operator:kind
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: APP_NAMESPACE
+              value: evpn-system
+            - name: OVN_NAMESPACE
+              value: ovn-system
+            - name: APP_IMAGE
+              value: evpn4ovn/app:kind
+            - name: GOBGP_IMAGE
+              value: ghcr.io/purelb/k8gobgp@sha256:55da7e8c3d09fef10fc819203904acb84e43bce1011dde66031dad501e1185de
+            - name: OVN_IMAGE
+              value: evpn4ovn/ovn-ovs:kind

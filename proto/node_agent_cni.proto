@@ -1,0 +1,162 @@
+syntax = "proto3";
+
+package node_agent_cni;
+
+option go_package = "github.com/romanspb80/evpn-for-ovn/gen/node_agent_cni;node_agent_cni";
+
+// NodeAgentCNI is a local Unix-domain-socket API used by the evpn-cni executable.
+// The plugin stays thin and delegates endpoint/attachment lifecycle to the node-agent.
+service NodeAgentCNI {
+  // ADD may be retried by the CNI runtime. Implementations must be idempotent
+  // by endpoint identity (not by request_id).
+  rpc Add(CNIAddRequest) returns (CNIAddResponse);
+
+  // DEL must be safe and idempotent even if container/netns no longer exists.
+  rpc Del(CNIDelRequest) returns (CNIDelResponse);
+
+  // CHECK is read-only validation and must not mutate endpoint state.
+  rpc Check(CNICheckRequest) returns (CNICheckResponse);
+}
+
+// EndpointIdentity is the stable ownership key used for idempotency and stale checks.
+// request_id is trace-only and must not be used as the lifecycle key.
+message EndpointIdentity {
+  string endpoint_id = 1;
+  string network_id = 2;
+  string attachment_id = 3;
+  string workload_uid = 4;
+  string incarnation = 5;
+}
+
+// K8sIdentity is optional because some CNI invocations may not have full metadata.
+message K8sIdentity {
+  string pod_namespace = 1;
+  string pod_name = 2;
+  // Optional pod UID when available from CNI args/annotations.
+  string pod_uid = 3;
+  string node_name = 4;
+}
+
+// CNIRuntimeContext carries fields from CNI invocation.
+message CNIRuntimeContext {
+  string cni_version = 1;
+  string container_id = 2;
+  // netns_path may become stale before DEL; DEL must stay idempotent.
+  string netns_path = 3;
+  string if_name = 4;
+}
+
+message AttachmentRequest {
+  string logical_switch = 1;
+  string ovs_interface_name = 2;
+  // Optional static assignment from NAD/config.
+  string static_ip_cidr = 3;
+  string static_mac = 4;
+}
+
+message RequestMeta {
+  // Trace-only identifier for logs and cross-component correlation.
+  string request_id = 1;
+  uint32 timeout_seconds = 2;
+}
+
+message CNIAddRequest {
+  CNIRuntimeContext runtime = 1;
+  K8sIdentity k8s = 2;
+  EndpointIdentity identity = 3;
+  AttachmentRequest attachment = 4;
+  RequestMeta meta = 5;
+}
+
+message CNIDelRequest {
+  CNIRuntimeContext runtime = 1;
+  K8sIdentity k8s = 2;
+  EndpointIdentity identity = 3;
+  AttachmentRequest attachment = 4;
+  RequestMeta meta = 5;
+}
+
+message CNICheckRequest {
+  CNIRuntimeContext runtime = 1;
+  K8sIdentity k8s = 2;
+  EndpointIdentity identity = 3;
+  AttachmentRequest attachment = 4;
+  RequestMeta meta = 5;
+}
+
+message CNIInterface {
+  string name = 1;
+  string mac = 2;
+  string sandbox = 3;
+}
+
+message CNIIPConfig {
+  string address = 1;
+  uint32 interface = 2;
+  string gateway = 3;
+}
+
+message CNIRoute {
+  string dst = 1;
+  string gw = 2;
+}
+
+message CNIDNS {
+  repeated string nameservers = 1;
+  repeated string searches = 2;
+  repeated string options = 3;
+  string domain = 4;
+}
+
+message CNIResult {
+  string cni_version = 1;
+  repeated CNIInterface interfaces = 2;
+  repeated CNIIPConfig ips = 3;
+  repeated CNIRoute routes = 4;
+  CNIDNS dns = 5;
+}
+
+message AddOutcome {
+  EndpointIdentity identity = 1;
+  bool idempotent_replay = 2;
+  string message = 3;
+}
+
+message CNIAddResponse {
+  bool success = 1;
+  string message = 2;
+  CNIResult result = 3;
+  AddOutcome outcome = 4;
+  repeated string warnings = 5;
+}
+
+enum DelOutcome {
+  DEL_OUTCOME_UNSPECIFIED = 0;
+  DEL_OUTCOME_DELETED = 1;
+  DEL_OUTCOME_ALREADY_ABSENT = 2;
+  DEL_OUTCOME_STALE_OPERATION = 3;
+}
+
+message CNIDelResponse {
+  bool success = 1;
+  string message = 2;
+  DelOutcome outcome = 3;
+  EndpointIdentity identity = 4;
+  repeated string warnings = 5;
+}
+
+message CheckDetails {
+  bool endpoint_identity_valid = 1;
+  bool ovn_port_present = 2;
+  bool ovs_attachment_present = 3;
+  bool netns_attachment_present = 4;
+  string message = 5;
+}
+
+message CNICheckResponse {
+  bool success = 1;
+  string message = 2;
+  CheckDetails details = 3;
+  EndpointIdentity identity = 4;
+  repeated string warnings = 5;
+}

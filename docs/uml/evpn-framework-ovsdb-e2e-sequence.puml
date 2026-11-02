@@ -1,0 +1,122 @@
+@startuml
+autonumber
+skinparam sequence {
+  ArrowColor #2F5D7C
+  LifeLineBorderColor #2F5D7C
+  LifeLineBackgroundColor #F8FBFF
+  ParticipantBorderColor #2F5D7C
+  ParticipantBackgroundColor #EAF4FF
+}
+
+actor "Framework E2E\nprovisioner" as Test
+participant "Containerlab E2E\nlifecycle" as Lab
+participant "Framework network /\nendpoint managers" as Framework
+participant "OVSDB management API" as Mgmt
+database "OVN NBDB" as NB
+participant "ovn-northd" as Northd
+database "OVN SBDB" as SB
+participant "Framework endpoint\nexporter" as Exporter
+participant "managed gobgpd\n(k8gobgp DaemonSet)" as GoBGP
+participant "External FRR peer\n+ remote workload" as FRR
+participant "OVSDB Type-2\nroute importer" as Importer
+participant "OVN/OVSDB\nprogrammer" as Programmer
+participant "ovn-controller" as Controller
+participant "OVN/OVS dataplane" as OVS
+
+note over Test,Importer
+  Dedicated one-chassis test. No evpn-cni, Multus, NAD,
+  CNI ADD/CHECK/DEL, or Netlink remote writer.
+  The OVSDB importer is explicitly selected for this network.
+end note
+
+== Disposable laboratory ==
+Test -> Lab : reserve exact topology; deploy native kind + FRR
+Lab -> Lab : verify ownership, readiness and management CA
+Lab --> Test : private kubeconfig and environment receipts
+Test -> Test : deploy OVN/OVS and managed k8gobgp
+note over Test,GoBGP
+  BGPConfiguration CRD -> k8gobgp reconciliation -> managed gobgpd.
+  Manager + daemon share one upstream DaemonSet image.
+  Framework clients use local Unix gRPC; no competing upstream Netlink writer.
+end note
+
+== Framework provisioning ==
+Test -> Mgmt : AddNetwork(logical switch)
+Mgmt -> NB : create Framework logical switch
+NB --> Mgmt : network status
+Test -> Framework : Ensure endpoint A/B
+Framework -> NB : create owned endpoint Logical_Switch_Ports
+Framework -> OVS : ensure identity-owned local attachment
+NB -> Northd : logical network / port configuration
+Northd -> SB : logical flows and Port_Binding
+SB --> Controller : local chassis Port_Binding
+Controller -> OVS : claim local binding; program forwarding
+Exporter -> NB : observe Framework-owned endpoint identity
+Exporter -> SB : verify local chassis binding
+Exporter -> GoBGP : AddPath Type-2 MAC and MAC/IP; retain UUID
+GoBGP -> FRR : local endpoint EVPN routes
+
+== Remote route import and OVSDB programming ==
+FRR -> GoBGP : remote Type-2 MAC/IP route
+Importer -> GoBGP : poll complete EVPN RIB snapshot
+GoBGP --> Importer : RD, RT, VNI, MAC/IP, next hop
+Importer -> Importer : validate route and import policy
+Importer -> Programmer : reconcile route-derived tunnel
+Programmer -> OVS : ensure owned provider bridge and bridge mapping
+Programmer -> NB : ensure owned localnet LSP on configured physnet
+Programmer -> OVS : ensure owned VXLAN interface and port
+NB -> Northd : localnet configuration
+Northd -> SB : localnet logical state / binding
+SB --> Controller : reconcile localnet forwarding
+Controller -> OVS : program OVN/OVS forwarding state
+
+== Bidirectional workload traffic ==
+Test -> OVS : ping local endpoint to remote workload
+OVS -> FRR : VXLAN traffic through OVS tunnel
+FRR --> OVS : reverse VXLAN traffic
+OVS --> Test : bidirectional result
+Test -> Test : correlate endpoint, underlay, FRR,\nVXLAN and remote-workload captures
+
+== Local endpoint withdrawal and survivor ==
+Test -> Framework : delete local endpoint A
+Framework -> NB : remove endpoint A LSP
+Exporter -> GoBGP : asynchronously DeletePath exact UUIDs for A
+GoBGP -> FRR : withdraw endpoint A
+Test -> FRR : verify A absent and B remains
+Test -> OVS : verify endpoint B still reaches remote workload
+
+== Remote route withdrawal and owned cleanup ==
+Test -> FRR : remove remote workload bridge attachment
+FRR -> GoBGP : withdraw remote Type-2 route\n(peer remains established)
+Importer -> GoBGP : observe authoritative RIB without remote route
+GoBGP --> Importer : route absent
+Importer -> Programmer : reconcile empty remote snapshot
+Programmer -> OVS : delete owned VXLAN interface / port
+Programmer -> NB : remove owned localnet LSP
+Programmer -> OVS : remove owned bridge mapping
+NB -> Northd : localnet removed
+Northd -> SB : localnet path withdrawn asynchronously
+Controller -> OVS : remove controller-owned localnet patch ports
+Programmer -> OVS : retry owned provider-bridge deletion when safe
+Test -> GoBGP : verify remote Type-2 absent and Type-3 remains
+Test -> FRR : verify remote Type-2 absent; peer remains established
+Test -> OVS : verify pre-existing unowned VXLAN interfaces remain
+Test -> NB : verify endpoint B remains; remote localnet LSP absent
+Test -> Framework : delete endpoint B and DelNetwork
+Framework -> NB : remove endpoint and Framework logical switch
+Test -> Test : verify no stale owned OVN/OVS state and restore inventories
+Test -> Lab : collect diagnostics; destroy exact owned topology
+Lab --> Test : owned resources absent; unrelated resources preserved
+
+note over Importer,Programmer
+  The mapping is route network/VNI/next hop to the owned provider
+  path; MAC and optional IP are validated and retained in route
+  ownership metadata. The current opt-in integration supports one network
+  and one remote VTEP.
+end note
+note over Programmer,OVS
+  Cross-database steps are not atomic. Retry/refuse on partial cleanup;
+  never force-delete controller-owned patches or foreign ports.
+  Partial per-MAC learned-FDB invalidation is not accepted.
+end note
+@enduml

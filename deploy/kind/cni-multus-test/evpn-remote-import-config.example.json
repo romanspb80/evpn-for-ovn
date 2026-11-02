@@ -1,0 +1,31 @@
+{
+  "Enabled": false,
+  "GRPCEndpoint": "unix:///var/run/gobgp/gobgp.sock",
+  "ASN": 64512,
+  "RouterID": "192.0.2.32",
+  "Import": {
+    "LocalVTEP": "192.0.2.32",
+    "Networks": [
+      {
+        "NetworkID": "n24",
+        "VNI": 100,
+        "ImportRouteTargets": ["64512:100"],
+        "AllowedVTEPs": ["198.51.100.32"]
+      }
+    ]
+  },
+  "Netlink": {
+    "Enabled": false,
+    "ExclusiveWriter": false,
+    "StateDirectory": "/var/lib/evpn-node-agent/remote-import",
+    "Networks": [
+      {
+        "NetworkID": "n24",
+        "LogicalSwitch": "ls24b",
+        "VNI": 100,
+        "BridgeDevice": "replace-br",
+        "VXLANDevice": "replace-vx"
+      }
+    ]
+  }
+}

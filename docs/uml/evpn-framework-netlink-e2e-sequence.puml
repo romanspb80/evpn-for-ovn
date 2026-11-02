@@ -1,0 +1,107 @@
+@startuml
+autonumber
+skinparam sequence {
+  ArrowColor #2F5D7C
+  LifeLineBorderColor #2F5D7C
+  LifeLineBackgroundColor #F8FBFF
+  ParticipantBorderColor #2F5D7C
+  ParticipantBackgroundColor #EAF4FF
+}
+
+actor "Framework E2E\nprovisioner" as Test
+participant "Containerlab E2E\nlifecycle" as Lab
+participant "Framework network /\nendpoint managers" as Framework
+participant "OVSDB management API" as Mgmt
+database "OVN NBDB" as NB
+participant "ovn-northd" as Northd
+database "OVN SBDB" as SB
+participant "GoBGP Netlink\nnode-agent" as Agent
+participant "managed gobgpd\n(k8gobgp DaemonSet)" as GoBGP
+participant "External FRR peer\n+ remote workload" as FRR
+participant "Owned Linux\nNetlink state" as Netlink
+participant "ovn-controller" as Controller
+participant "OVN/OVS dataplane" as OVS
+
+note over Test,Agent
+  This is a one-chassis Framework test. It does not invoke
+  evpn-cni, Multus, CNI ADD/CHECK/DEL, or a NAD.
+end note
+
+== Disposable laboratory ==
+Test -> Lab : reserve exact topology; deploy native kind + FRR
+Lab -> Lab : verify ownership, readiness and management CA
+Lab --> Test : private kubeconfig and environment receipts
+Test -> Test : deploy OVN/OVS and managed k8gobgp
+note over Test,GoBGP
+  BGPConfiguration CRD -> k8gobgp reconciliation -> managed gobgpd.
+  Manager + daemon share one upstream DaemonSet image.
+  Framework clients use local Unix gRPC; upstream Netlink writers are disabled.
+end note
+
+== Framework provisioning ==
+Test -> Mgmt : AddNetwork(logical switch)
+Mgmt -> NB : create Framework-owned logical switch
+NB --> Mgmt : network status
+Mgmt --> Test : success
+Test -> Framework : Ensure endpoint A/B
+Framework -> Framework : create identity-owned netns and veth attachments
+Framework -> NB : ensure owned Logical_Switch_Ports
+NB --> Framework : LSP state
+Framework -> OVS : ensure identity-owned local OVS attachment
+Framework --> Test : endpoint identities and interface receipts
+NB -> Northd : logical network / port configuration
+Northd -> SB : asynchronous logical flows and Port_Binding
+SB --> Controller : chassis-bound Port_Binding
+Controller -> OVS : claim local binding; program forwarding
+
+== GoBGP EVPN exchange ==
+Agent -> Netlink : read native local advertisement FDB / neighbors
+Netlink --> Agent : complete dump plus validated OVN endpoint provenance
+Agent -> GoBGP : AddPath local Type-2 MAC and MAC/IP; retain UUID
+GoBGP -> FRR : BGP EVPN Type-2 updates
+FRR -> GoBGP : remote Type-2 route
+Agent -> GoBGP : ListPath complete EVPN RIB
+GoBGP --> Agent : authoritative remote route snapshot
+Agent -> Agent : validate route identity, RT, VNI, and next hop
+Agent -> Netlink : apply receipt-owned FDB/neighbor state
+Netlink --> Agent : ownership receipts
+Controller -> Netlink : observe Linux EVPN integration state
+Controller -> OVS : program OVN tunnel/flow/BUM state
+
+== Workload forwarding and evidence ==
+Test -> OVS : ping from local endpoint to remote workload
+OVS -> FRR : forward through OVN/OVS and EVPN overlay
+FRR --> OVS : return traffic through OVN/OVS
+OVS --> Test : bidirectional traffic result
+Test -> Test : correlate five packet captures and runtime snapshots
+
+== Withdrawal and survivor verification ==
+Test -> Framework : delete local endpoint A
+Framework -> NB : remove endpoint A LSP
+Agent -> Agent : asynchronously observe authoritative local removal
+Agent -> GoBGP : DeletePath exact owned UUIDs for A
+GoBGP -> FRR : withdraw endpoint A
+Test -> FRR : verify A withdrawn and B retained
+Test -> OVS : ping surviving endpoint B and remote workload
+OVS -> FRR : verify survivor forwarding in both directions
+Test -> Framework : delete remaining endpoint B
+Agent -> Agent : observe endpoint B removal and reconcile export
+Agent -> GoBGP : DeletePath exact owned UUIDs for B
+Test -> Test : wait for exporter ownership receipts to empty
+Test -> Mgmt : DelNetwork(logical switch)
+Mgmt -> NB : remove Framework-owned logical switch
+Test -> Netlink : verify owned state removed; preserve foreign state
+Test -> Lab : collect diagnostics; destroy exact owned topology
+Lab --> Test : owned resources absent; unrelated resources preserved
+
+note over SB,OVS
+  NB-to-SB binding and ovn-controller programming are asynchronous.
+  The test checks resulting binding, OVS state, real traffic, and
+  packet captures; an API success alone is not a forwarding PASS.
+end note
+
+note over Agent,Netlink
+  Type-2 import/export is explicitly configured for this test and
+  remains disabled by default in the standard deployment.
+end note
+@enduml
