@@ -6,9 +6,9 @@ metadata:
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: evpncores.evpn.core.example.com
+  name: evpncores.evpn.romanspb80.github.io
 spec:
-  group: evpn.core.example.com
+  group: evpn.romanspb80.github.io
   scope: Namespaced
   names:
     kind: EvpnCore
@@ -38,6 +38,63 @@ spec:
                   type: string
                 ovnImage:
                   type: string
+                dataplaneNode:
+                  type: string
+                  description: Single designated Kubernetes Node for operator-managed OVN/OVS and Node-Agent.
+                bgp:
+                  type: object
+                  default: {}
+                  properties:
+                    provider:
+                      type: string
+                      default: k8gobgp
+                      enum: [k8gobgp]
+                nodeAgent:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                    image:
+                      type: string
+                    nodeSelector:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    tolerations:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          key: {type: string}
+                          operator: {type: string, enum: [Exists, Equal]}
+                          value: {type: string}
+                          effect: {type: string, enum: [NoSchedule, PreferNoSchedule, NoExecute]}
+                          tolerationSeconds: {type: integer, format: int64}
+                    mode:
+                      type: string
+                      enum: [in-memory, real-ovn-ovs]
+                    networkBackend:
+                      type: string
+                      enum: [in-memory, linux-veth]
+                    socket: {type: string}
+                    ovnNBEndpoint: {type: string}
+                    ovsdbEndpoint: {type: string}
+                    ovnSBEndpoint: {type: string}
+                    exportConfigPath: {type: string}
+                    exportStatusPath: {type: string}
+                    exportInterval: {type: string}
+                    exportTimeout: {type: string}
+                    remoteConfigPath: {type: string}
+                    remoteStatusPath: {type: string}
+                    remoteInterval: {type: string}
+                    remoteTimeout: {type: string}
+                    gobgpHostPath: {type: string}
+                    cniContinuityConfigPath: {type: string}
+                    providerAttestation: {type: boolean, default: false}
+                    providerCTRHostPath:
+                      type: string
+                      description: Administrator-pinned static ctr binary on the designated host.
               required: [enabled]
             status:
               type: object
@@ -48,6 +105,36 @@ spec:
                   type: boolean
                 reason:
                   type: string
+                observedGeneration:
+                  type: integer
+                  format: int64
+                conditions:
+                  type: array
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys: [type]
+                  items:
+                    type: object
+                    required: [type, status, reason, message, lastTransitionTime]
+                    properties:
+                      type: {type: string}
+                      status: {type: string, enum: ["True", "False", Unknown]}
+                      observedGeneration: {type: integer, format: int64}
+                      reason: {type: string}
+                      message: {type: string}
+                      lastTransitionTime: {type: string, format: date-time}
+                managedResources:
+                  type: array
+                  items:
+                    type: object
+                    required: [apiVersion, kind, namespace, name]
+                    properties:
+                      apiVersion: {type: string}
+                      kind: {type: string}
+                      namespace: {type: string}
+                      name: {type: string}
+                      uid: {type: string}
+                      state: {type: string, enum: [CreationPending, Observed]}
+                      conflict: {type: string}
       subresources:
         status: {}
   conversion:
@@ -65,16 +152,60 @@ metadata:
   name: evpn-core-operator
 rules:
   - apiGroups: [""]
-    resources: ["namespaces", "services", "serviceaccounts", "pods", "configmaps", "secrets"]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["services", "serviceaccounts", "configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "update", "patch"]
   - apiGroups: ["apps"]
-    resources: ["deployments", "statefulsets", "daemonsets"]
+    resources: ["deployments", "daemonsets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gatewayclasses", "gateways", "grpcroutes"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["evpn.core.example.com"]
-    resources: ["evpncores", "evpncores/status"]
+  - apiGroups: ["evpn.romanspb80.github.io"]
+    resources: ["evpncores"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["evpn.romanspb80.github.io"]
+    resources: ["evpncores/status", "evpncores/finalizers"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: evpn-core-operator-leases
+  namespace: evpn-operator-system
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: evpn-core-operator-leases
+  namespace: evpn-operator-system
+subjects:
+  - kind: ServiceAccount
+    name: evpn-core-operator
+    namespace: evpn-operator-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: evpn-core-operator-leases
+---
+# Deliberately unbound: grant only to explicitly trusted cluster administrators.
+# EvpnCore writes can launch arbitrary root/privileged host workloads.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: evpn-core-administrator
+rules:
+  - apiGroups: ["evpn.romanspb80.github.io"]
+    resources: ["evpncores"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -110,14 +241,3 @@ spec:
         - name: operator
           image: evpn4ovn/operator:kind
           imagePullPolicy: IfNotPresent
-          env:
-            - name: APP_NAMESPACE
-              value: evpn-system
-            - name: OVN_NAMESPACE
-              value: ovn-system
-            - name: APP_IMAGE
-              value: evpn4ovn/app:kind
-            - name: GOBGP_IMAGE
-              value: ghcr.io/purelb/k8gobgp@sha256:55da7e8c3d09fef10fc819203904acb84e43bce1011dde66031dad501e1185de
-            - name: OVN_IMAGE
-              value: evpn4ovn/ovn-ovs:kind

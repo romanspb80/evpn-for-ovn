@@ -1,12 +1,18 @@
-apiVersion: evpn.core.example.com/v1alpha1
+apiVersion: evpn.romanspb80.github.io/v1alpha1
 kind: EvpnCore
 metadata:
   name: evpn-lab
   namespace: evpn-system
 spec:
   enabled: true
+  dataplaneNode: worker-1
   appNamespace: evpn-system
   ovnNamespace: ovn-system
   appImage: evpn4ovn/app:kind
   gobgpImage: ghcr.io/purelb/k8gobgp@sha256:55da7e8c3d09fef10fc819203904acb84e43bce1011dde66031dad501e1185de
   ovnImage: evpn4ovn/ovn-ovs:kind
+  bgp:
+    provider: k8gobgp
+  nodeAgent:
+    enabled: true
+    image: evpn4ovn/node-agent:kind

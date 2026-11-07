@@ -35,7 +35,120 @@ The Go CNI deadline regression checks the gRPC `DeadlineExceeded` status and
 empty stdout, not transport-dependent error-description text. `Canceled`,
 `Unknown` and other statuses do not satisfy that assertion.
 
+## Cross-version durable recovery helpers
+
+`tools/e2e/cross-version-recovery.py` runs explicit writer and reader modes in
+three package-private `_test.go` helpers. Compile `ownership.test`,
+`nodeagent.test` and `evpn.test` independently under each compiler:
+
+```bash
+GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off CGO_ENABLED=1 \
+  GOCACHE=/path/to/isolated-cache /absolute/path/to/go \
+  test -mod=readonly -race -c -o /path/to/binaries/ownership.test ./pkg/ownership
+# Repeat for pkg/nodeagent and pkg/evpn, using separate directories per compiler.
+sudo python3 tools/e2e/cross-version-recovery.py \
+  --old /root-owned/go125-binaries --new /root-owned/go127-binaries \
+  --evidence /path/to/new-evidence-directory
+```
+
+The coordinator currently requires Go 1.25.0 and Go 1.27.3. Build both sets of
+binaries from the pre-migration harness commit (whose module directive is
+Go 1.25.0); Go 1.25.0 cannot build the upgraded module. Install the binaries
+as root-owned, non-writable executables; retain their compiler
+metadata. It records SHA-256 and verifies each process's actual compiler
+version. Its root-private `/tmp` fixtures must reside on an executable
+filesystem (not a `noexec` mount). Both `TMPDIR` and `GOTMPDIR` point to the
+short fixture root; journals and evidence are separate. Fixtures are removed
+in `finally`, including failures; evidence remains.
+When running the full privileged package suites, also set `PATH` explicitly
+after `sudo` to the selected compiler's `bin` directory: CNI interop tests
+invoke a child `go run`, and `sudo`'s default PATH can select another compiler.
+
+Both directions cover real durable journals, checksums, strict decoding,
+pending/ACK receipts, overlapping writer locks and abrupt process exits.
+CNI admission, OVS/workload observations, Netlink state and GoBGP RIB are
+test models. Importer/exporter use production recovery and real journal/wire
+serializers, with a separate external-state model persisted between processes.
+Ambiguous mutation, UUID replacement, ownership/incarnation mismatch and
+quarantine must fail closed without external mutations. These results prove
+cross-compiler durable-state behavior, not live kernel, pidfd authentication,
+provider attestation, MP-BGP continuity or traffic acceptance. Run the existing
+privileged and live suites separately; their skips are not passes.
+
 ## Required Containerlab provisioning
+
+### Core Operator lifecycle
+
+```bash
+go test ./deploy/operator/... ./pkg/nodeagent ./pkg/evpn
+go test -race ./deploy/operator/...
+bash tools/run-operator-e2e.sh
+```
+
+The operator runner uses the shared `cni` Containerlab profile, deploys the
+actual operator with its CRD/RBAC, and configures the existing Node-Agent
+through `EvpnCore`. It checks real API-server defaulting/admission, stable
+resource versions across resync, workload availability, singleton conflicts,
+ordinary namespace-editor denial and explicit administrator authorization,
+exact single-node OVN/agent placement, restart/missing-journal recovery,
+namespace endpoint round trips, agent updates/disable, cross-namespace
+deletion, retained host config and unchanged independent k8gobgp resources.
+Go tests additionally inject journal/create/delete outages, generation and
+deletion changes, UID replacements, concurrent inventory updates, partial
+restores, cleanup conflicts and stale rollout failure conditions.
+It requires the existing verified
+test-base/OVN/app images and upstream provider release inputs. Evidence is
+run-specific under `/tmp/evpn-operator-e2e` by default, with explicit test and
+cleanup exit codes. It does not substitute for the Type-2 traffic suites.
+The runner supplies a test-only TCP-to-Unix byte-stream proxy for the upstream
+Unix-only speaker. This makes compatibility app gRPC dependencies reachable
+without adding another GoBGP configuration writer; the proxy remains outside
+EvpnCore ownership and is checked for preservation alongside the provider.
+
+### Operator-managed Type-2 acceptance
+
+```bash
+bash tools/run-operator-type2-e2e.sh
+```
+
+This dedicated suite uses operator-managed OVN/OVS and Node-Agent, actual
+Multus/CNI, the direct Unix GoBGP integration and an independent FRR/Linux
+VXLAN endpoint. It checks real MP-BGP routes, native import/export, packet
+captures, full CNI lifecycle, withdrawal and dependency failures.
+See [topology, evidence and recovery limitations](docs/architecture/operator-type2-acceptance.md).
+The suite now attempts agent restart with durable acknowledged export/CNI
+receipts and provider replacement with independent re-attestation plus
+authoritative absence of old local paths. It does not drain routes, clear
+markers, reset provider configuration or replay CNI ADD to make recovery pass.
+Exit 3 still means unsupported mandatory recovery, not full acceptance.
+Existing specialized suites remain separate.
+The [restart ownership foundations](docs/architecture/type2-restart-ownership.md)
+document process fencing, root-owned journal faults, actual Netlink importer
+restart/SIGKILL tests and real local GoBGP exporter SIGKILL tests. Run the
+root-owned exporter and CNI assertions explicitly; ordinary non-root tests skip
+root-only checks.
+
+The CLI interop test (`TestInteropWithEVPNCNIClient`) uses a held subprocess in
+an isolated network namespace, not an arbitrary host PID's namespace. Root
+runs require `CAP_SYS_ADMIN` to create that namespace; non-root runs require
+permitted unprivileged user and network namespaces (`CLONE_NEWUSER` and
+`CLONE_NEWNET`). The fixture fails with an explicit prerequisite error if
+namespace creation is denied; it is not silently skipped and does not use a
+CNI namespace-validation override. Anonymous namespace lifetime is bounded
+by the helper process, which is reaped during test cleanup.
+
+```bash
+go test -race -count=1 ./pkg/evpn ./pkg/nodeagent ./pkg/ownership
+go test -race -c -o /tmp/evpn-exporter.test ./pkg/evpn
+sudo -n /tmp/evpn-exporter.test -test.v -test.run '^TestExportRecovery'
+go test -race -c -o /tmp/evpn-nodeagent.test ./pkg/nodeagent
+sudo -n /tmp/evpn-nodeagent.test -test.v -test.run '^TestCNI|^TestProvider|^TestSpeaker'
+```
+
+A retained AddPath with no durable UUID, unverifiable provider identity and
+foreign conflicts are expected fail-closed cases, reported separately from
+successful safe recovery. Process-crash coverage is not physical power-loss
+certification or production readiness.
 
 **Containerlab is the standard and required environment provisioning mechanism
 for all EVPN-for-OVN E2E tests.** It is not required for unit tests, static
@@ -58,6 +171,8 @@ suite-specific setup, not a second cluster owner.
 | Framework Netlink | Maintained E2E; `framework-netlink` | Native two-node kind, FRR container/underlay, PKI, resource receipts, diagnostics and teardown | OVN/OVS and managed k8gobgp deployment; Framework endpoints, Type-2/RD/RT/VNI, Linux integration, traffic/captures, withdrawal and survivors |
 | Framework OVSDB | Maintained E2E; `framework-ovsdb` | Same shared kind/FRR lifecycle | Managed RIB import, opt-in OVSDB programmer, localnet/provider bridge, OVS VXLAN, traffic, withdrawal and survivors |
 | CNI full lifecycle | Maintained E2E; `cni` with FRR | Same shared kind/FRR lifecycle | Multus/node-agent, ADD/CHECK/DEL, repeats, replacement, negative CHECK, pre-LSP rollback, traffic, withdrawal and survivors |
+| Core Operator lifecycle | Lifecycle E2E; `cni` without FRR | Same Containerlab native kind, locking and scoped teardown | Operator-managed Node-Agent, singleton conflicts, API defaults/rejection, spec updates, workload readiness, cross-namespace finalizer cleanup and independent k8gobgp preservation; not Type-2 traffic acceptance |
+| Operator-managed Type-2 | Integration acceptance; `cni` with FRR | Same shared lock, native kind/FRR topology and scoped teardown | Real operator/Multus/CNI, direct Unix GoBGP, export/import, MP-BGP, VXLAN packets, full lifecycle and recovery; automatic restart convergence remains blocked |
 | Other CNI runner modes | Maintained subsets/diagnostics; `cni`, optional FRR | All modes of `run-cni-mvp-2.4b-multus.sh` use the same common lifecycle | Initial/import/export, no-replacement, provider continuity and binding diagnostics; not substitutes for full lifecycle |
 | Standalone Type-2 fixture | Maintained control-plane component fixture; `type2` | Containerlab Linux speakers, run-owned internal bridge, management PKI and teardown; no Compose alternative | Explicit immutable images, standalone gobgpd, FRR EVPN readiness, exact route lifecycle and process-owned endpoint namespace |
 | Standalone Linux Netlink acceptance | Implemented component runner, not OVN/OVS E2E; consumes `type2` | Same fixture lifecycle; exact labeled helper-container IDs registered with the common owner | Handler/route-helper builds, Linux state and forwarding assertions; requires a diagnostic-tool-equipped immutable runtime image |
@@ -247,7 +362,7 @@ rather than inheriting an open host regular-file descriptor.
 
 ## Offline validation
 
-From the repository root, with Go 1.25.0 installed:
+From the repository root, with Go 1.27.3 installed:
 
 ```bash
 go test ./...
@@ -265,7 +380,7 @@ does not opt into those live tests.
 
 | Test category | Entry point and dependencies | What it asserts | Not covered |
 |---|---|---|---|
-| Go unit and component tests | `go test ./...`; Go 1.25.0 and module dependencies. Live tests are opt-in. | Route validation/import/export, ownership, reconciliation, management APIs, CNI/node-agent services, and focused component behavior. | A package PASS does not establish live OVN/OVS forwarding or any E2E scope. |
+| Go unit and component tests | `go test ./...`; Go 1.27.3 and module dependencies. Live tests are opt-in. | Route validation/import/export, ownership, reconciliation, management APIs, CNI/node-agent services, and focused component behavior. | A package PASS does not establish live OVN/OVS forwarding or any E2E scope. |
 | Python helper and offline integration tests | `python3 -m unittest discover -s tools/lib -p 'test_*.py'`; `python3 -m unittest discover -s tests/e2e -p 'test_*.py'`. | Stubbed runner behavior, evidence parsing, CNI helpers, and fixture configuration. | No live Kubernetes, OVN/OVS, GoBGP, FRR, or workload forwarding unless a separate live runner is explicitly invoked. |
 | Offline Framework integration tests | Go integration/component tests under `pkg/evpn` and `pkg/nodeagent`, through `go test ./...`; test-specific environment variables control live scenarios. | In-process or fixture-backed GoBGP/OVN/Netlink/OVSDB interactions and ownership/withdrawal behavior. | Do not imply independent live Framework acceptance without the corresponding E2E runner and evidence. |
 | Framework Netlink-Programmed E2E | `tools/run-framework-netlink-e2e.sh`; Containerlab-managed Docker/kind, OVN/OVS, upstream k8gobgp, and external FRR peer. | Independent Framework lifecycle, Type-2 exchange, OVN/OVS forwarding, bidirectional traffic, withdrawal, survivor preservation, and cleanup. | One chassis only; not shared-VTEP, two-chassis GoBGP-to-GoBGP, or Type-5 acceptance. |

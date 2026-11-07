@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,6 +70,9 @@ func TestSpeakerPeerHelper(t *testing.T) {
 }
 
 func TestSpeakerProcessContinuity(t *testing.T) {
+	if _, err := os.Readlink("/proc/1/ns/pid"); err != nil {
+		t.Skip("requires root visibility of host PID namespace; run the race test binary as root")
+	}
 	path := filepath.Join(t.TempDir(), "peer.sock")
 	exe, err := os.Executable()
 	if err != nil {
@@ -115,7 +119,15 @@ func TestSpeakerProcessContinuity(t *testing.T) {
 		return cmd
 	}
 	child := start()
-	rejected := &unixSpeakerContinuity{expectedExecutable: "not-the-speaker"}
+	process, err := readSpeakerProcess(int32(child.Process.Pid), uint32(os.Geteuid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, source, _ := providerFixture(int32(child.Process.Pid), uint32(os.Geteuid()), process.ExecutableSHA256)
+	source.runtime.PIDNamespace = process.PIDNamespace
+	rejectedAttestor := *a
+	rejectedAttestor.config.ExecutableSHA256 = strings.Repeat("f", 64)
+	rejected := &unixSpeakerContinuity{attestor: &rejectedAttestor}
 	if c, err := rejected.DialContext(context.Background(), "unix://"+path); err == nil {
 		c.Close()
 		t.Fatal("wrong peer executable accepted")
@@ -123,7 +135,7 @@ func TestSpeakerProcessContinuity(t *testing.T) {
 	if err := rejected.Check(context.Background()); err == nil {
 		t.Fatal("failed binding must not establish continuity")
 	}
-	guard := &unixSpeakerContinuity{expectedExecutable: filepath.Base(exe)}
+	guard := &unixSpeakerContinuity{attestor: a}
 	defer guard.Close()
 	if err := guard.Check(context.Background()); err == nil {
 		t.Fatal("unbound guard accepted")
@@ -139,6 +151,22 @@ func TestSpeakerProcessContinuity(t *testing.T) {
 		}
 	}
 	ev := guard.Evidence()
+	first, err := guard.Incarnation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := guard.Incarnation()
+	if err != nil || first != again {
+		t.Fatal("incarnation not stable")
+	}
+	source.err = fmt.Errorf("API unavailable")
+	if cached, err := guard.Incarnation(); err != nil || cached != first {
+		t.Fatal("incarnation accessor performed full attestation")
+	}
+	if err := guard.Check(context.Background()); err == nil {
+		t.Fatal("Check ignored unavailable API")
+	}
+	source.err = nil
 	if ev.PID != int32(child.Process.Pid) || ev.BootID == "" || ev.StartTicks == "" {
 		t.Fatalf("bad evidence: %+v", ev)
 	}
@@ -152,9 +180,28 @@ func TestSpeakerProcessContinuity(t *testing.T) {
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
-	start()
+	replacement := start()
 	if c, err := guard.DialContext(context.Background(), "unix://"+path); err == nil {
 		c.Close()
 		t.Fatal("replacement peer accepted")
+	}
+	source.runtime.PIDs = []int32{int32(replacement.Process.Pid)}
+	newGuard := &unixSpeakerContinuity{attestor: a}
+	defer newGuard.Close()
+	c, err := newGuard.DialContext(context.Background(), "unix://"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	next, err := newGuard.Incarnation()
+	if err != nil || next == first {
+		t.Fatal("new speaker process incarnation not distinguished")
+	}
+	if err := guard.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := guard.DialContext(context.Background(), "unix://"+path); err == nil {
+		c.Close()
+		t.Fatal("closed guard rebound")
 	}
 }

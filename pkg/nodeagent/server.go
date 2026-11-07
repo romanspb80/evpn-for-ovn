@@ -97,6 +97,9 @@ func (s *Store) delete(key string) {
 
 type CNIServer struct {
 	nodeagentpb.UnimplementedNodeAgentCNIServer
+	operations        sync.Mutex
+	continuity        *cniContinuity
+	stopping          bool
 	store             *Store
 	endpoint          endpoint.EndpointManager
 	network           networkBackend
@@ -138,6 +141,14 @@ func NewCNIServerWithBackendsAndChecker(store *Store, endpointManager endpoint.E
 }
 
 func (s *CNIServer) Add(ctx context.Context, req *nodeagentpb.CNIAddRequest) (*nodeagentpb.CNIAddResponse, error) {
+	s.operations.Lock()
+	defer s.operations.Unlock()
+	if s.stopping {
+		return nil, status.Error(codes.Unavailable, "CNI operations drained")
+	}
+	if s.continuity != nil {
+		return s.continuity.add(ctx, s, req)
+	}
 	identity, runtime, attachment, err := validateAddRequest(req)
 	if err != nil {
 		return nil, err
@@ -212,6 +223,14 @@ func (s *CNIServer) Add(ctx context.Context, req *nodeagentpb.CNIAddRequest) (*n
 }
 
 func (s *CNIServer) Del(ctx context.Context, req *nodeagentpb.CNIDelRequest) (*nodeagentpb.CNIDelResponse, error) {
+	s.operations.Lock()
+	defer s.operations.Unlock()
+	if s.stopping {
+		return nil, status.Error(codes.Unavailable, "CNI operations drained")
+	}
+	if s.continuity != nil {
+		return s.continuity.del(ctx, s, req)
+	}
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
@@ -284,6 +303,16 @@ func (s *CNIServer) Del(ctx context.Context, req *nodeagentpb.CNIDelRequest) (*n
 }
 
 func (s *CNIServer) Check(ctx context.Context, req *nodeagentpb.CNICheckRequest) (*nodeagentpb.CNICheckResponse, error) {
+	s.operations.Lock()
+	defer s.operations.Unlock()
+	if s.stopping {
+		return nil, status.Error(codes.Unavailable, "CNI operations drained")
+	}
+	if s.continuity != nil {
+		if err := s.continuity.check(ctx, s, req); err != nil {
+			return nil, status.Errorf(codes.FailedPrecondition, "%v", err)
+		}
+	}
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
@@ -430,6 +459,7 @@ type UnixServer struct {
 	listener   net.Listener
 	done       chan struct{}
 	stopOnce   sync.Once
+	drain      func()
 }
 
 func StartUnixServer(ctx context.Context, socketPath string, service nodeagentpb.NodeAgentCNIServer) (*UnixServer, error) {
@@ -454,13 +484,24 @@ func StartUnixServer(ctx context.Context, socketPath string, service nodeagentpb
 		return nil, fmt.Errorf("chmod socket %q: %w", socketPath, err)
 	}
 
-	grpcServer := grpc.NewServer()
+	var options []grpc.ServerOption
+	if cni, ok := service.(*CNIServer); ok && cni.continuity != nil && cni.continuity.authority != nil {
+		options = append(options, grpc.Creds(newCNICallerCredentials()))
+	}
+	grpcServer := grpc.NewServer(options...)
 	nodeagentpb.RegisterNodeAgentCNIServer(grpcServer, service)
 	server := &UnixServer{
 		socketPath: socketPath,
 		grpcServer: grpcServer,
 		listener:   listener,
 		done:       make(chan struct{}),
+	}
+	if cni, ok := service.(*CNIServer); ok {
+		server.drain = func() {
+			cni.operations.Lock()
+			defer cni.operations.Unlock()
+			cni.stopping = true
+		}
 	}
 
 	go func() {
@@ -505,6 +546,9 @@ func (s *UnixServer) Stop(ctx context.Context) error {
 
 		_ = s.listener.Close()
 		<-s.done
+		if s.drain != nil {
+			s.drain()
+		}
 		if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			retErr = fmt.Errorf("remove socket %q: %w", s.socketPath, err)
 		}

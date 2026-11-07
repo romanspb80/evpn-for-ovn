@@ -2,6 +2,8 @@ package nodeagent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,13 +16,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/romanspb80/evpn-for-ovn/pkg/evpn"
 	nbdb "github.com/romanspb80/evpn-for-ovn/services/ovsdb_mgmt/ovnnb"
+	"github.com/vishvananda/netns"
 
-	"github.com/osrg/gobgp/v4/api"
 	"github.com/ovn-kubernetes/libovsdb/client"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"golang.org/x/sys/unix"
 )
 
 type RemoteRuntimeOptions struct {
@@ -31,22 +33,24 @@ type RemoteRuntimeOptions struct {
 }
 
 type RemoteRuntimeConfig struct {
-	Enabled      bool                     `json:"Enabled"`
-	GRPCEndpoint string                   `json:"GRPCEndpoint"`
-	ASN          uint32                   `json:"ASN"`
-	RouterID     string                   `json:"RouterID"`
-	Import       evpn.RemoteImportConfig  `json:"Import"`
-	Netlink      evpn.RemoteNetlinkConfig `json:"Netlink"`
+	Enabled               bool                     `json:"Enabled"`
+	GRPCEndpoint          string                   `json:"GRPCEndpoint"`
+	ASN                   uint32                   `json:"ASN"`
+	RouterID              string                   `json:"RouterID"`
+	Import                evpn.RemoteImportConfig  `json:"Import"`
+	Netlink               evpn.RemoteNetlinkConfig `json:"Netlink"`
+	AttestationConfigPath string                   `json:"AttestationConfigPath"`
 }
 
 // RemoteRuntimeStatus is one launch-bound importer reconciliation observation.
 type RemoteRuntimeStatus struct {
-	Time        time.Time                   `json:"Time"`
-	Disabled    bool                        `json:"Disabled,omitempty"`
-	Error       string                      `json:"Error,omitempty"`
-	Snapshot    evpn.RemoteImportSnapshot   `json:"Snapshot"`
-	Receipts    []evpn.RemoteNetlinkReceipt `json:"Receipts"`
-	Withdrawals []evpn.RemoteNetlinkReceipt `json:"Withdrawals"`
+	Time          time.Time                   `json:"Time"`
+	Disabled      bool                        `json:"Disabled,omitempty"`
+	Error         string                      `json:"Error,omitempty"`
+	Snapshot      evpn.RemoteImportSnapshot   `json:"Snapshot"`
+	Receipts      []evpn.RemoteNetlinkReceipt `json:"Receipts"`
+	Withdrawals   []evpn.RemoteNetlinkReceipt `json:"Withdrawals"`
+	RecoveryState string                      `json:"RecoveryState,omitempty"`
 }
 
 func LoadRemoteRuntimeConfig(path string) (RemoteRuntimeConfig, error) {
@@ -71,6 +75,15 @@ func LoadRemoteRuntimeConfig(path string) (RemoteRuntimeConfig, error) {
 	if err := cfg.Validate(); err != nil {
 		return RemoteRuntimeConfig{}, err
 	}
+	if cfg.Enabled && (cfg.Netlink.Recovery != nil || cfg.AttestationConfigPath != "") {
+		var stat unix.Stat_t
+		if err := unix.Fstat(int(f.Fd()), &stat); err != nil {
+			return RemoteRuntimeConfig{}, err
+		}
+		if stat.Uid != 0 || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0022 != 0 || stat.Nlink != 1 {
+			return RemoteRuntimeConfig{}, fmt.Errorf("RECOVERY_BLOCKED: recovery configuration must be a single-link root-owned regular file, not group/world writable")
+		}
+	}
 	return *cfg, nil
 }
 
@@ -92,6 +105,14 @@ func (c RemoteRuntimeConfig) Validate() error {
 	}
 	if err := c.Netlink.Validate(); err != nil {
 		return fmt.Errorf("invalid remote netlink config: %w", err)
+	}
+	if r := c.Netlink.Recovery; r != nil {
+		for _, value := range []string{r.Domain.InstallationUID, r.Domain.NodeUID} {
+			id, err := uuid.Parse(value)
+			if err != nil || id == uuid.Nil {
+				return fmt.Errorf("importer recovery requires installation and Node UUIDs from trusted root configuration")
+			}
+		}
 	}
 	return nil
 }
@@ -196,27 +217,22 @@ func (s *CNIServer) RunRemoteType2Importer(ctx context.Context, runtime RuntimeO
 		return nil
 	}
 
-	conn, err := grpc.NewClient(cfg.GRPCEndpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, continuity, apiClient, err := newProviderTransport(cfg.AttestationConfigPath, cfg.GRPCEndpoint)
 	if err != nil {
 		return fmt.Errorf("connect to GoBGP gRPC endpoint: %w", err)
 	}
-	defer func() { runErr = errors.Join(runErr, conn.Close()) }()
-	apiClient := api.NewGoBgpServiceClient(conn)
-	gate := evpn.SpeakerReadiness{Client: apiClient, ASN: cfg.ASN, RouterID: cfg.RouterID}
-	readOnly, err := evpn.NewReadOnlyType2Importer(&evpn.GoBGPRemoteRIBSource{Client: apiClient, Gate: gate}, cfg.Import)
+	defer func() {
+		if conn != nil {
+			runErr = errors.Join(runErr, conn.Close())
+		}
+		runErr = errors.Join(runErr, continuity.Close())
+	}()
+	gate := attestedReadiness{evpn.SpeakerReadiness{Client: apiClient, ASN: cfg.ASN, RouterID: cfg.RouterID}, continuity}
+	source := &evpn.GoBGPRemoteRIBSource{Client: apiClient, Gate: gate}
+	readOnly, err := evpn.NewReadOnlyType2Importer(source, cfg.Import)
 	if err != nil {
 		return fmt.Errorf("create read-only remote Type-2 importer: %w", err)
 	}
-	backend, err := evpn.NewOwnedOVNNetlinkBackend(cfg.Netlink)
-	if err != nil {
-		return fmt.Errorf("create owned OVN netlink backend: %w", err)
-	}
-	defer func() { runErr = errors.Join(runErr, backend.Close()) }()
-	importer, err := evpn.NewValidatedRemoteType2Importer(readOnly, backend)
-	if err != nil {
-		return fmt.Errorf("create validated remote Type-2 importer: %w", err)
-	}
-
 	var nb client.Client
 	defer func() {
 		if nb != nil {
@@ -244,21 +260,57 @@ func (s *CNIServer) RunRemoteType2Importer(ctx context.Context, runtime RuntimeO
 		}
 		return mappingGate.verify(cfg.Netlink.Networks, switches)
 	}
+	if cfg.Netlink.Recovery != nil {
+		stepCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
+		err := checkMapping(stepCtx)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("RECOVERY_BLOCKED: verify persistent OVN network identity: %w", err)
+		}
+		if err := bindRemoteRecovery(&cfg, mappingGate.uuids); err != nil {
+			return err
+		}
+	}
+	backend, err := evpn.NewOwnedOVNNetlinkBackend(cfg.Netlink)
+	if err != nil {
+		return fmt.Errorf("create owned OVN netlink backend: %w", err)
+	}
+	defer func() { runErr = errors.Join(runErr, backend.Close()) }()
+	importer, err := evpn.NewValidatedRemoteType2Importer(readOnly, backend)
+	if err != nil {
+		return fmt.Errorf("create validated remote Type-2 importer: %w", err)
+	}
 	tick := func() error {
 		stepCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 		mappingErr := checkMapping(stepCtx)
 		err := mappingErr
+		if err == nil && continuity.Evidence().PID != 0 && continuity.Check(stepCtx) != nil && conn != nil {
+			err = errors.Join(conn.Close(), continuity.Close())
+			conn = nil
+		}
+		if err == nil && conn == nil {
+			newConn, newGuard, newClient, connectErr := newProviderTransport(cfg.AttestationConfigPath, cfg.GRPCEndpoint)
+			err = connectErr
+			if err == nil {
+				conn, continuity = newConn, newGuard
+				source.Client = newClient
+				source.Gate = attestedReadiness{evpn.SpeakerReadiness{Client: newClient, ASN: cfg.ASN, RouterID: cfg.RouterID}, newGuard}
+				err = readOnly.RebindSource(source)
+			}
+		}
 		if err == nil {
 			err = importer.ReconcileOnce(stepCtx)
 		}
 		cancel()
 		status := RemoteRuntimeStatus{
-			Time:        time.Now().UTC(),
-			Snapshot:    importer.LastSnapshot(),
-			Receipts:    backend.Receipts(),
-			Withdrawals: backend.Withdrawals(),
+			Time:          time.Now().UTC(),
+			Snapshot:      importer.LastSnapshot(),
+			Receipts:      backend.Receipts(),
+			Withdrawals:   backend.Withdrawals(),
+			RecoveryState: backend.RecoveryState(),
 		}
-		if mappingErr != nil {
+
+		if err != nil {
 			status.Snapshot.Authoritative = false
 		}
 		if err != nil {
@@ -306,5 +358,38 @@ func writeRemoteRuntimeStatus(path string, status *RemoteRuntimeStatus) error {
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("write remote import status %s: %w", filepath.Clean(path), err)
 	}
+	return nil
+}
+
+func bindRemoteRecovery(cfg *RemoteRuntimeConfig, switches map[string]string) error {
+	ns, err := netns.Get()
+	if err != nil {
+		return err
+	}
+	defer ns.Close()
+	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return err
+	}
+	d := &cfg.Netlink.Recovery.Domain
+	actualBoot, actualNS := strings.TrimSpace(string(boot)), ns.UniqueId()
+	if (d.BootID != "" && d.BootID != actualBoot) || (d.NetworkNamespace != "" && d.NetworkNamespace != actualNS) {
+		return fmt.Errorf("RECOVERY_BLOCKED: configured boot/network namespace differs from runtime")
+	}
+	d.BootID, d.NetworkNamespace = actualBoot, actualNS
+	data, err := json.Marshal(struct {
+		Import   evpn.RemoteImportConfig
+		Networks []evpn.RemoteNetlinkNetwork
+		Switches map[string]string
+	}{cfg.Import, cfg.Netlink.Networks, switches})
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(data)
+	digest := hex.EncodeToString(sum[:])
+	if d.ConfigDigest != "" && d.ConfigDigest != digest {
+		return fmt.Errorf("RECOVERY_BLOCKED: configured mapping digest differs from verified OVN/policy")
+	}
+	d.ConfigDigest = digest
 	return nil
 }

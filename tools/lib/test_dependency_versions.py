@@ -22,7 +22,6 @@ class DependencyVersionsTest(unittest.TestCase):
         self.assertIn(f"FRR_IMAGE='{FRR}'", helper)
         self.assertIn("frr version 10.7.1", (ROOT / "frr/frr.conf").read_text())
         for path in ("deploy/operator/examples/evpncore.yaml",
-                     "deploy/operator/manifests/operator.yaml",
                      "tools/lib/cni-evpn-export-test.sh"):
             text = (ROOT / path).read_text()
             self.assertIn(PROVIDER, text)

@@ -8,22 +8,7 @@ kind: Namespace
 metadata:
   name: ovn-system
 ---
-# k8gobgp is managed as an upstream deployment and BGPConfiguration CR, not as a
-# custom in-repo gobgp Service/StatefulSet. The legacy gobgp service definition has
-# been removed to avoid conflicting with the operator-managed speaker lifecycle.
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: k8gobgp
-  namespace: k8gobgp-system
-spec:
-  selector:
-    app.kubernetes.io/name: k8gobgp
-  ports:
-    - name: gobgp-grpc
-      port: 50051
-      targetPort: 50054
+# The upstream k8gobgp installer owns its Service, speaker and BGPConfiguration.
 ---
 apiVersion: v1
 kind: Service
@@ -69,7 +54,9 @@ spec:
             - name: OVN_EVPN_VXLAN_PORTS
               value: "4789"
             - name: OVN_EVPN_LOCAL_IP
-              value: 172.19.0.2
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
           securityContext:
             privileged: true
             capabilities:
@@ -85,6 +72,11 @@ spec:
               hostPort: 4789
               protocol: UDP
               name: vxlan
+          volumeMounts:
+            - name: ovs-runtime
+              mountPath: /var/run/openvswitch
+            - name: ovn-runtime
+              mountPath: /var/run/ovn
         - name: bgp-ad-handler-agent
           image: evpn4ovn/app:kind
           imagePullPolicy: IfNotPresent
@@ -136,6 +128,15 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+      volumes:
+        - name: ovs-runtime
+          hostPath:
+            path: /run/openvswitch
+            type: DirectoryOrCreate
+        - name: ovn-runtime
+          hostPath:
+            path: /run/ovn
+            type: DirectoryOrCreate
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -180,6 +181,78 @@ spec:
       port: 50053
       targetPort: 50053
       nodePort: 30053
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: evpn-node-agent
+  namespace: evpn-system
+spec:
+  selector:
+    matchLabels:
+      app: evpn-node-agent
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
+  template:
+    metadata:
+      labels:
+        app: evpn-node-agent
+    spec:
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      automountServiceAccountToken: false
+      nodeSelector:
+        evpn.romanspb80.github.io/dataplane-ready: "true"
+      initContainers:
+        - name: wait-for-runtime
+          image: evpn4ovn/node-agent:kind
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ec"]
+          args: ["test -S /var/run/ovn/ovnnb_db.sock && test -S /var/run/openvswitch/db.sock"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - {name: ovs-runtime, mountPath: /var/run/openvswitch}
+            - {name: ovn-runtime, mountPath: /var/run/ovn}
+            - {name: agent-runtime, mountPath: /run/evpn-node-agent}
+      containers:
+        - name: agent
+          image: evpn4ovn/node-agent:kind
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/evpn-node-agent"]
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-ec", "nc -z -U /run/evpn-node-agent/agent.sock"]
+            periodSeconds: 5
+          volumeMounts:
+            - {name: ovs-runtime, mountPath: /var/run/openvswitch}
+            - {name: ovn-runtime, mountPath: /var/run/ovn}
+            - {name: agent-runtime, mountPath: /run/evpn-node-agent}
+            - {name: netns, mountPath: /run/netns, mountPropagation: HostToContainer}
+            - {name: gobgp, mountPath: /var/run/gobgp, readOnly: true}
+      volumes:
+        - name: ovs-runtime
+          hostPath: {path: /run/openvswitch, type: DirectoryOrCreate}
+        - name: ovn-runtime
+          hostPath: {path: /run/ovn, type: DirectoryOrCreate}
+        - name: agent-runtime
+          hostPath: {path: /run/evpn-node-agent, type: DirectoryOrCreate}
+        - name: netns
+          hostPath: {path: /run/netns, type: DirectoryOrCreate}
+        - name: gobgp
+          hostPath: {path: /run/gobgp, type: DirectoryOrCreate}
 ---
 apiVersion: apps/v1
 kind: Deployment

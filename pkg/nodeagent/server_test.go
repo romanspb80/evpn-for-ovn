@@ -1,15 +1,19 @@
 package nodeagent
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -763,6 +767,7 @@ func TestSocketCleanupAndGracefulShutdown(t *testing.T) {
 }
 
 func TestInteropWithEVPNCNIClient(t *testing.T) {
+	netns := isolatedInteropNetNS(t)
 	socketPath := uniqueSocketPath(t, "interop")
 	server := startTestServer(t, socketPath)
 	defer func() { _ = server.Stop(context.Background()) }()
@@ -770,9 +775,9 @@ func TestInteropWithEVPNCNIClient(t *testing.T) {
 	conf := fmt.Sprintf(`{"cniVersion":"1.0.0","name":"evpn-net","type":"evpn-cni","nodeAgentSocket":"%s","networkID":"net-h22","logicalSwitch":"ls-h22","attachmentID":"net1","ipAddress":"10.251.3.11/24","macAddress":"0a:58:fb:03:00:11","timeoutSeconds":2}`, socketPath)
 	args := "K8S_POD_NAMESPACE=default;K8S_POD_NAME=pod-interop;K8S_POD_UID=uid-interop"
 
-	stdout, stderr, err := runCNIBinary(t, "ADD", conf, args)
+	stdout, stderr, err := runCNIBinary(t, "ADD", conf, args, netns)
 	if err != nil {
-		t.Fatalf("evpn-cni ADD failed: %v, stderr=%s", err, stderr)
+		t.Fatalf("evpn-cni ADD failed: %v, stdout=%s stderr=%s", err, stdout, stderr)
 	}
 	if strings.TrimSpace(stderr) != "" {
 		t.Fatalf("unexpected ADD stderr: %q", stderr)
@@ -785,7 +790,7 @@ func TestInteropWithEVPNCNIClient(t *testing.T) {
 		t.Fatalf("unexpected cniVersion in ADD output: %#v", out["cniVersion"])
 	}
 
-	stdout, stderr, err = runCNIBinary(t, "CHECK", conf, args)
+	stdout, stderr, err = runCNIBinary(t, "CHECK", conf, args, netns)
 	if err != nil {
 		t.Fatalf("evpn-cni CHECK failed: %v, stderr=%s", err, stderr)
 	}
@@ -793,13 +798,79 @@ func TestInteropWithEVPNCNIClient(t *testing.T) {
 		t.Fatalf("unexpected CHECK output: stdout=%q stderr=%q", stdout, stderr)
 	}
 
-	stdout, stderr, err = runCNIBinary(t, "DEL", conf, args)
+	stdout, stderr, err = runCNIBinary(t, "DEL", conf, args, netns)
 	if err != nil {
 		t.Fatalf("evpn-cni DEL failed: %v, stderr=%s", err, stderr)
 	}
 	if strings.TrimSpace(stdout) != "" || strings.TrimSpace(stderr) != "" {
 		t.Fatalf("unexpected DEL output: stdout=%q stderr=%q", stdout, stderr)
 	}
+}
+
+func TestInteropNetNSHelper(t *testing.T) {
+	if os.Getenv("EVPN_INTEROP_NETNS_HELPER") != "1" {
+		return
+	}
+	fmt.Println("netns-ready")
+	if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func isolatedInteropNetNS(t *testing.T) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestInteropNetNSHelper$")
+	cmd.Env = append(os.Environ(), "EVPN_INTEROP_NETNS_HELPER=1")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: syscall.CLONE_NEWNET}
+	if os.Geteuid() != 0 {
+		cmd.SysProcAttr.Cloneflags |= syscall.CLONE_NEWUSER
+		cmd.SysProcAttr.UidMappings = []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Geteuid(), Size: 1}}
+		cmd.SysProcAttr.GidMappings = []syscall.SysProcIDMap{{ContainerID: 0, HostID: os.Getegid(), Size: 1}}
+		cmd.SysProcAttr.GidMappingsEnableSetgroups = false
+	}
+	input, err := cmd.StdinPipe()
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	output, err := cmd.StdoutPipe()
+	if err != nil {
+		input.Close()
+		cancel()
+		t.Fatal(err)
+	}
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		input.Close()
+		output.Close()
+		cancel()
+		t.Fatalf("isolated CNI fixture requires CAP_SYS_ADMIN (root) or permitted unprivileged user/network namespaces: %v", err)
+	}
+	t.Cleanup(func() {
+		input.Close()
+		err := cmd.Wait()
+		cancel()
+		if err != nil {
+			t.Errorf("network namespace helper cleanup: %v", err)
+		}
+	})
+	if line, err := bufio.NewReader(output).ReadString('\n'); err != nil || line != "netns-ready\n" {
+		t.Fatalf("network namespace helper readiness: line=%q error=%v", line, err)
+	}
+	path := fmt.Sprintf("/proc/%d/ns/net", cmd.Process.Pid)
+	held, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := os.Stat("/proc/self/ns/net")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(held, current) {
+		t.Fatal("CNI fixture must not share the invoking process's network namespace")
+	}
+	return path
 }
 
 func TestAddRollbackInvokesNetworkCleanupOnEndpointFailure(t *testing.T) {
@@ -1082,19 +1153,19 @@ func uniqueSocketPath(t *testing.T, name string) string {
 	return filepath.Join("/tmp", fmt.Sprintf("evpn-nodeagent-%s-%d.sock", name, time.Now().UnixNano()))
 }
 
-func runCNIBinary(t *testing.T, command, stdinConfig, cniArgs string) (stdout string, stderr string, err error) {
+func runCNIBinary(t *testing.T, command, stdinConfig, cniArgs, netns string) (stdout string, stderr string, err error) {
 	t.Helper()
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", "", err
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", "", fmt.Errorf("cannot locate CNI test source")
 	}
-	repoRoot := filepath.Clean(filepath.Join(wd, "..", ".."))
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(source), "..", ".."))
 	cmd := exec.Command("go", "run", "./cmd/evpn-cni")
 	cmd.Dir = repoRoot
 	cmd.Env = append(os.Environ(),
 		"CNI_COMMAND="+command,
 		"CNI_CONTAINERID=container-interop",
-		"CNI_NETNS=/proc/123/ns/net",
+		"CNI_NETNS="+netns,
 		"CNI_IFNAME=net1",
 		"CNI_PATH=/opt/cni/bin",
 		"CNI_ARGS="+cniArgs,

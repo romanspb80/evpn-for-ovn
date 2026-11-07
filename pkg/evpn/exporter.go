@@ -17,20 +17,25 @@ import (
 // ExporterConfig is node-local; networks and dry-run can be reloaded. A disabled
 // configuration never opens a GoBGP connection or withdraws existing routes.
 type ExporterConfig struct {
-	Enabled           bool
-	DryRun            bool
-	ProcessContinuity bool
-	NodeName          string
-	LocalChassis      string
-	GRPCEndpoint      string
-	ASN               uint32
-	RouterID          string
-	Networks          []EVPNNetworkConfig
+	Enabled               bool
+	DryRun                bool
+	ProcessContinuity     bool
+	NodeName              string
+	LocalChassis          string
+	GRPCEndpoint          string
+	ASN                   uint32
+	RouterID              string
+	Networks              []EVPNNetworkConfig
+	AttestationConfigPath string
+	Recovery              *ExportRecoveryConfig
 }
 
 func (c ExporterConfig) Validate() error {
 	if !c.Enabled {
 		return nil
+	}
+	if c.Recovery != nil && (!c.ProcessContinuity || c.AttestationConfigPath == "" || c.Recovery.StateDirectory == "") {
+		return fmt.Errorf("export recovery requires process continuity, provider attestation and a private journal")
 	}
 	if c.NodeName == "" || c.LocalChassis == "" || c.ASN == 0 {
 		return fmt.Errorf("export requires node name, local chassis and nonzero expected ASN")
@@ -143,6 +148,7 @@ type ExportResult struct {
 	Applied             []OwnedType2Route
 	DryRun              bool
 	OwnershipUnverified bool
+	RecoveryState       string
 }
 
 // EndpointExporter never manages speaker configuration. Transient recovery
@@ -155,6 +161,7 @@ type EndpointExporter struct {
 	Source      Type2RIBSource
 	Applier     Type2RouteApplier
 	DryRun      bool
+	Recovery    *ExportRecovery
 	reconciler  *RouteReconciler
 	initialized bool
 	blocked     error
@@ -190,7 +197,15 @@ func (e *EndpointExporter) DrainNetworks(ctx context.Context, networks map[strin
 
 func (e *EndpointExporter) reconcile(ctx context.Context, observer EndpointObserver) (result ExportResult, err error) {
 	result = ExportResult{DryRun: e.DryRun}
-	defer func() { result.OwnershipUnverified = e.blocked != nil || err != nil }()
+	defer func() {
+		result.OwnershipUnverified = e.blocked != nil || err != nil
+		if e.Recovery != nil {
+			result.RecoveryState = "RUNNING"
+			if result.OwnershipUnverified {
+				result.RecoveryState = "RECOVERY_BLOCKED"
+			}
+		}
+	}()
 	if e.reconciler == nil {
 		e.reconciler = NewRouteReconciler()
 	}
@@ -219,11 +234,17 @@ func (e *EndpointExporter) reconcile(ctx context.Context, observer EndpointObser
 	}
 	if e.Continuity != nil && e.initialized {
 		if err := e.Continuity.Check(ctx); err != nil {
+			if e.Recovery != nil {
+				return result, fmt.Errorf("RECOVERY_BLOCKED: speaker re-attestation required: %w", err)
+			}
 			e.blocked = fmt.Errorf("speaker continuity lost; no writes: %w", err)
 			return result, e.blocked
 		}
 	}
 	if err := e.Gate.Check(ctx); err != nil {
+		if e.Recovery != nil {
+			return result, err
+		}
 		if len(result.Applied) != 0 && (e.Continuity == nil || e.Continuity.Check(ctx) != nil) {
 			e.blocked = fmt.Errorf("speaker continuity lost; restart/resync required: %w", err)
 			return result, e.blocked
@@ -235,7 +256,17 @@ func (e *EndpointExporter) reconcile(ctx context.Context, observer EndpointObser
 			return result, fmt.Errorf("speaker continuity unverified; no writes: %w", err)
 		}
 	}
-	if !e.initialized {
+	if e.Recovery != nil {
+		receipts, err := e.Recovery.Recover(ctx)
+		if err != nil {
+			return result, err
+		}
+		if err := e.reconciler.resyncDurable(ctx, e.Source, receipts); err != nil {
+			return result, err
+		}
+		result.Applied = e.reconciler.AppliedRoutes()
+		e.initialized = true
+	} else if !e.initialized {
 		if err := e.reconciler.Resync(ctx, e.Source, nil); err != nil {
 			return result, err
 		}
@@ -263,6 +294,9 @@ func (e *EndpointExporter) reconcile(ctx context.Context, observer EndpointObser
 	}
 	for _, delta := range deltas {
 		if err := e.Gate.Check(ctx); err != nil {
+			if e.Recovery != nil {
+				return result, err
+			}
 			if e.Continuity == nil || e.Continuity.Check(ctx) != nil {
 				e.blocked = fmt.Errorf("speaker readiness lost before mutation: %w", err)
 				return result, e.blocked
@@ -271,6 +305,9 @@ func (e *EndpointExporter) reconcile(ctx context.Context, observer EndpointObser
 		}
 		if e.Continuity != nil {
 			if err := e.Continuity.Check(ctx); err != nil {
+				if e.Recovery != nil {
+					return result, err
+				}
 				e.blocked = fmt.Errorf("speaker continuity lost before mutation: %w", err)
 				return result, e.blocked
 			}

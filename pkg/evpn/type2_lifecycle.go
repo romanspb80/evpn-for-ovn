@@ -139,6 +139,7 @@ func (r *RouteReconciler) Resync(ctx context.Context, source Type2RIBSource, rec
 	if source == nil {
 		return fmt.Errorf("RIB source is required")
 	}
+
 	paths, err := source.Snapshot(ctx)
 	if err != nil {
 		return fmt.Errorf("read local Type-2 RIB: %w", err)
@@ -194,6 +195,57 @@ func (r *RouteReconciler) Resync(ctx context.Context, source Type2RIBSource, rec
 	}
 	r.applied, r.foreign, r.synchronized = applied, foreign, true
 	return nil
+}
+
+// Only ExportRecovery may use this path: payload checks are readback of a
+// durable UUID in a verified incarnation, not acquisition of RIB ownership.
+func (r *RouteReconciler) resyncDurable(ctx context.Context, source Type2RIBSource, receipts []OwnedType2Route) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.synchronized, r.pending = false, nil
+	paths, err := source.Snapshot(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: recovery RIB unavailable: %v", ErrRouteOwnership, err)
+	}
+	claims := map[string]OwnedType2Route{}
+	for _, receipt := range receipts {
+		route, err := BuildType2Route(receipt.Endpoint)
+		if err != nil || receipt.PathUUID == "" {
+			return fmt.Errorf("%w: invalid durable receipt", ErrRouteOwnership)
+		}
+		key := route.NLRI.String()
+		if _, duplicate := claims[key]; duplicate {
+			return fmt.Errorf("%w: duplicate durable wire route", ErrRouteOwnership)
+		}
+		claims[key] = receipt
+	}
+	applied, foreign := map[string]OwnedType2Route{}, map[string]bool{}
+	for _, path := range paths {
+		if path.NLRI == nil {
+			return fmt.Errorf("%w: nil recovery NLRI", ErrRouteOwnership)
+		}
+		if !path.Local {
+			continue
+		}
+		key := path.NLRI.String()
+		receipt, claimed := claims[key]
+		if !claimed {
+			foreign[key] = true
+			continue
+		}
+		if _, duplicate := applied[key]; duplicate {
+			return fmt.Errorf("%w: multiple local paths share durable route", ErrRouteOwnership)
+		}
+		if !ribPathMatchesEndpoint(path, receipt.Endpoint) || (path.PathUUID != "" && path.PathUUID != receipt.PathUUID) {
+			return fmt.Errorf("%w: durable UUID payload conflict", ErrRouteOwnership)
+		}
+		applied[key] = receipt
+	}
+	if len(applied) != len(claims) {
+		return fmt.Errorf("%w: durable receipt disappeared during recovery", ErrRouteOwnership)
+	}
+	r.applied, r.foreign, r.synchronized = applied, foreign, true
+	return ctx.Err()
 }
 
 func ribPathMatchesEndpoint(path Type2RIBPath, ep LocalEndpoint) bool {

@@ -3,7 +3,7 @@
 ## Current EvpnCore implementation
 
 The only project-owned CRD is namespaced
-`evpn.core.example.com/v1alpha1`, kind `EvpnCore`
+`evpn.romanspb80.github.io/v1alpha1`, kind `EvpnCore`
 (`evpncores`, short name `ecore`). Sources:
 [types](../../deploy/operator/api/v1alpha1/evpncore_types.go),
 [controller](../../deploy/operator/controllers/evpncore_controller.go),
@@ -12,19 +12,22 @@ The only project-owned CRD is namespaced
 
 | Surface | Actual behavior |
 |---|---|
-| Reconciliation | Watches EvpnCore only, ensures app/OVN namespaces, reads the first available core manifest, creates/updates its objects and requeues after 30 seconds. |
-| Managed resources | Core manifest has Namespaces, Services and Deployments for OVN/OVS, evpn-mgmt, ovsdb-mgmt and separate bgp-ad-handler; optional Netlink agent configuration is disabled by default. |
-| k8gobgp | Manifest creates a Service selecting upstream pods. It does **not** install the upstream CRDs/DaemonSet or reconcile BGPConfiguration. |
-| Image fields | `appImage`, `gobgpImage`, `ovnImage` exist in the CRD/type but are not consumed by the reconciler. Environment defaults in operator.yaml do not make those fields effective. |
-| Namespace fields | Namespace creation uses spec/defaults, but explicit namespaces in YAML are preserved. Do not assume complete manifest relocation. |
-| Existing deployment env | Matching environment overrides are preserved during apply; this is not a full declarative replacement of all runtime configuration. |
-| Readiness | Sets `phase=Ready`, `ready=true`, reason `core resources reconciled` immediately after successful apply. No dependency/pod/BGP readiness gate, conditions or observedGeneration. |
-| Lifecycle | No owner references, finalizer, child `Owns` watches or uninstall. `enabled=false` skips reconciliation; it does not delete the deployment. |
-| Process/RBAC | Leader election and health/metrics listeners disabled in main. RBAC is broad; granted daemonset/Gateway permissions do not prove those resources are managed by the core manifest. |
+| Reconciliation | YAML-driven rendering and three-way patches, workload watches and 30-second resync; unchanged resources/status skip writes. |
+| Managed resources | Core Services/Deployments plus optional Node-Agent DaemonSet configured through spec; OVN/OVS is still single-replica. |
+| k8gobgp | Independent CRDs, speaker, Service and BGPConfiguration; default provider `k8gobgp`, unsupported/standalone values rejected. |
+| Image fields | `appImage`, `ovnImage`, `nodeAgent.image` are effective; deprecated `gobgpImage` remains unused by design. |
+| Namespace fields | App/OVN resources and their management service dependencies relocate with spec. |
+| Existing deployment env | Matching environment overrides remain a compatibility escape hatch; explicit namespace relocation takes precedence. |
+| Readiness | Current-generation Deployment/DaemonSet rollout counts gate Ready; conditions distinguish reconciling, degraded, invalid configuration and deletion. No BGP/traffic health claim. |
+| Lifecycle | Singleton installation Lease, UID-scoped child journal and cross-namespace finalizer cleanup; disable pauses rather than uninstalls. Namespaces/network state are retained. |
+| Process/RBAC | Leader election enabled; health/metrics listeners remain disabled. Unneeded Gateway/Secret/StatefulSet permissions removed, but cross-namespace host privileges still need hardening. |
 
-This is **experimental scaffolding**, not the accepted suites' installer.
-Effective image/configuration, readiness and deletion semantics are
-[K8S-01](backlog.md#p1-reliability-and-contract-clarification).
+See the [operator architecture/API/lifecycle guide](../architecture/evpn-core-operator.md)
+for the singleton/admission distinction, Node-Agent configuration, breaking API
+group change, cleanup semantics and installation limits. Operator lifecycle has
+its own E2E bootstrap; specialized dataplane suites retain their independent
+evidence-specific runtime deployments. This is still **experimental**, not
+production or multi-chassis acceptance.
 
 ## k8gobgp and application ownership
 

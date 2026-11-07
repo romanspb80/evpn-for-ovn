@@ -18,7 +18,10 @@ func TestSpeakerContinuityReconnect_Live(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	guard := &unixSpeakerContinuity{}
+	guard, err := NewAttestedSpeakerContinuity(os.Getenv("EVPN_PROVIDER_ATTESTATION_CONFIG"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer guard.Close()
 	var first SpeakerProcessEvidence
 	for i := 0; i < 2; i++ {

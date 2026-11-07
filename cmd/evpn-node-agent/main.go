@@ -24,6 +24,7 @@ func run() int {
 	var networkBackend string
 	var ovnNBEndpoint string
 	var ovsDBEndpoint string
+	var cniContinuityConfig string
 	var exportOptions nodeagent.ExportRuntimeOptions
 	var remoteOptions nodeagent.RemoteRuntimeOptions
 	flag.StringVar(&socketPath, "socket", "/run/evpn-node-agent/agent.sock", "Unix domain socket path for NodeAgentCNI gRPC server")
@@ -31,6 +32,7 @@ func run() int {
 	flag.StringVar(&networkBackend, "network-backend", "in-memory", "Network backend: in-memory or linux-veth")
 	flag.StringVar(&ovnNBEndpoint, "ovn-nb-endpoint", "unix:/var/run/ovn/ovnnb_db.sock", "OVN NBDB endpoint for real-ovn-ovs mode")
 	flag.StringVar(&ovsDBEndpoint, "ovsdb-endpoint", "unix:/var/run/openvswitch/db.sock", "OVSDB endpoint for real-ovn-ovs mode")
+	flag.StringVar(&cniContinuityConfig, "cni-continuity-config", "", "Root-owned CNI continuity JSON configuration; disabled by default")
 	flag.StringVar(&exportOptions.ConfigPath, "evpn-export-config", "", "Optional node-local EVPN export JSON config; disabled by default")
 	flag.StringVar(&exportOptions.StatusPath, "evpn-export-status", "", "Optional exporter status JSON file")
 	flag.StringVar(&exportOptions.SBEndpoint, "ovn-sb-endpoint", "unix:/var/run/ovn/ovnsb_db.sock", "OVN SBDB endpoint for EVPN readiness reads")
@@ -41,6 +43,13 @@ func run() int {
 	flag.DurationVar(&remoteOptions.Interval, "evpn-remote-interval", 2*time.Second, "Remote EVPN import reconciliation interval")
 	flag.DurationVar(&remoteOptions.Timeout, "evpn-remote-timeout", 5*time.Second, "Timeout for one remote EVPN import reconciliation")
 	flag.Parse()
+	authority, err := nodeagent.AcquireAgentAuthority()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to acquire evpn-node-agent authority: %v\n", err)
+		return 1
+	}
+	defer authority.Close()
+
 	if exportOptions.ConfigPath != "" {
 		if _, err := nodeagent.LoadExporterConfig(exportOptions.ConfigPath); err != nil {
 			fmt.Fprintf(os.Stderr, "invalid EVPN exporter configuration: %v\n", err)
@@ -70,6 +79,19 @@ func run() int {
 	}
 	if cleanup != nil {
 		defer cleanup()
+	}
+	if cniContinuityConfig != "" {
+		cfg, err := nodeagent.LoadCNIContinuityConfig(cniContinuityConfig)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid CNI continuity configuration: %v\n", err)
+			return 1
+		}
+		closeContinuity, err := service.EnableCNIContinuity(ctx, cfg, options)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "CNI recovery blocked: %v\n", err)
+			return 1
+		}
+		defer closeContinuity()
 	}
 	server, err := nodeagent.StartUnixServer(ctx, socketPath, service)
 	if err != nil {

@@ -27,8 +27,9 @@ The standalone OVSDB route importer is an opt-in test/runtime component and is
 not part of the default deployment. CNI/Multus and the node-agent are created
 by their dedicated disposable E2E runner; the checked-in CNI examples are
 under [`deploy/kind/cni-multus-test/`](../../deploy/kind/cni-multus-test/).
-The optional operator resources are experimental scaffolding. See its
-[actual apply/readiness/lifecycle boundaries](../roadmap/kubernetes-integration.md)
+The optional operator now manages a configurable Node-Agent DaemonSet with
+singleton ownership, workload readiness and finalizer cleanup. See its
+[actual API/readiness/lifecycle boundaries](evpn-core-operator.md)
 and the [management API limitations](../api/README.md).
 
 The active external peer is pinned to official FRR 10.7.1 on Quay. Upstream

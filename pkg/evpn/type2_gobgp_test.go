@@ -20,6 +20,11 @@ import (
 )
 
 func newType2TestSpeaker(t *testing.T, bgpPorts ...int32) (*server.BgpServer, *GoBGPType2Adapter) {
+	s, adapter, _ := newType2TestSpeakerAddress(t, bgpPorts...)
+	return s, adapter
+}
+
+func newType2TestSpeakerAddress(t *testing.T, bgpPorts ...int32) (*server.BgpServer, *GoBGPType2Adapter, string) {
 	t.Helper()
 	port := reserveTCPPort(t)
 	for attempts := 0; slices.Contains(bgpPorts, port); attempts++ {
@@ -48,7 +53,7 @@ func newType2TestSpeaker(t *testing.T, bgpPorts ...int32) (*server.BgpServer, *G
 			t.Fatal("local GoBGP gRPC server did not become ready")
 		}
 	}
-	return s, &GoBGPType2Adapter{Client: api.NewGoBgpServiceClient(conn)}
+	return s, &GoBGPType2Adapter{Client: api.NewGoBgpServiceClient(conn)}, address
 }
 
 type failingType2Client struct {

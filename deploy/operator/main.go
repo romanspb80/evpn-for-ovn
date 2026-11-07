@@ -26,10 +26,12 @@ func main() {
 
 	cfg := ctrl.GetConfigOrDie()
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
-		Scheme:                 scheme,
-		LeaderElection:         false,
-		Metrics:                metricsserver.Options{BindAddress: "0"},
-		HealthProbeBindAddress: "0",
+		Scheme:                  scheme,
+		LeaderElection:          true,
+		LeaderElectionID:        "evpn-core-operator.evpn.romanspb80.github.io",
+		LeaderElectionNamespace: controllers.LockNamespace,
+		Metrics:                 metricsserver.Options{BindAddress: "0"},
+		HealthProbeBindAddress:  "0",
 	})
 	if err != nil {
 		logger.Error(err, "unable to start manager")

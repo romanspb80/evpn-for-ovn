@@ -18,12 +18,18 @@ import (
 // writer ownership of each wire route across controllers.
 type GoBGPType2Adapter struct {
 	Client api.GoBgpServiceClient
+	Gate   ReadinessGate
 	mu     sync.Mutex
 }
 
 func (a *GoBGPType2Adapter) Snapshot(ctx context.Context) ([]Type2RIBPath, error) {
 	if a.Client == nil {
 		return nil, fmt.Errorf("GoBGP client is required")
+	}
+	if a.Gate != nil {
+		if err := a.Gate.Check(ctx); err != nil {
+			return nil, err
+		}
 	}
 	stream, err := a.Client.ListPath(ctx, &api.ListPathRequest{
 		TableType:        api.TableType_TABLE_TYPE_GLOBAL,
@@ -33,16 +39,27 @@ func (a *GoBGPType2Adapter) Snapshot(ctx context.Context) ([]Type2RIBPath, error
 	if err != nil {
 		return nil, err
 	}
+	if stream == nil {
+		return nil, fmt.Errorf("nil GoBGP RIB stream")
+	}
 	var paths []Type2RIBPath
 	for {
 		response, err := stream.Recv()
 		if err == io.EOF {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if a.Gate != nil {
+				if err := a.Gate.Check(ctx); err != nil {
+					return nil, err
+				}
+			}
 			return paths, nil
 		}
 		if err != nil {
 			return nil, err
 		}
-		if response == nil || response.Destination == nil {
+		if response == nil || response.Destination == nil || len(response.Destination.Paths) == 0 {
 			return nil, fmt.Errorf("incomplete GoBGP RIB response")
 		}
 		for _, p := range response.Destination.Paths {
@@ -106,6 +123,11 @@ func (a *GoBGPType2Adapter) Add(ctx context.Context, route Type2Route) (string, 
 		}
 		path.Nlri = nil
 	}
+	if a.Gate != nil {
+		if err := a.Gate.Check(ctx); err != nil {
+			return "", err
+		}
+	}
 	response, err := a.Client.AddPath(ctx, &api.AddPathRequest{
 		TableType: api.TableType_TABLE_TYPE_GLOBAL, Path: path,
 	})
@@ -146,6 +168,11 @@ func (a *GoBGPType2Adapter) Delete(ctx context.Context, owned OwnedType2Route) e
 		}
 		// GoBGP v4.5.0 ListPath omits UUIDs. The trusted AddPath receipt is
 		// still an exact deletion handle; never fall back to deleting NLRI.
+		if a.Gate != nil {
+			if err := a.Gate.Check(ctx); err != nil {
+				return err
+			}
+		}
 		_, err = a.Client.DeletePath(ctx, &api.DeletePathRequest{
 			TableType: api.TableType_TABLE_TYPE_GLOBAL, Uuid: id[:],
 		})

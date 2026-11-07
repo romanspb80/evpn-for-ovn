@@ -8,7 +8,7 @@ before using any live example. Downloaded Go modules are third-party source;
 
 ## Prerequisites
 
-- Go 1.25.0, as declared in [`go.mod`](go.mod)
+- Go 1.27.3, as declared in [`go.mod`](go.mod)
 - Network access on first use to download Go modules, unless they are already
   cached
 

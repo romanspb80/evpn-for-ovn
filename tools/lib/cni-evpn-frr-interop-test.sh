@@ -155,7 +155,7 @@ PY
 }
 
 interop_setup_config() {
-  OVN_POD="$(k -n cni-test get pod -l app=ovn-runtime -o jsonpath='{.items[0].metadata.name}')"
+  OVN_POD="$(k -n cni-test get pod -l "${OVN_RUNTIME_LABEL:-app=ovn-runtime}" -o jsonpath='{.items[0].metadata.name}')"
   LOCAL_CHASSIS="$(rt ovs-vsctl --bare get Open_vSwitch . external_ids:system-id | tr -d '"')"
   [[ -n "${LOCAL_CHASSIS}" ]]
   docker exec "${WORKER}" ip -4 -o addr show | grep -F " ${LOCAL_VTEP}/24 " >/dev/null
@@ -2373,7 +2373,7 @@ interop_run_failed_add_rollback() {
   worker_call="/tmp/rollback-${rollback_uid}"
   printf '%s\n' "${rollback_uid}" >"${EVIDENCE_DIR}/rollback-add-uid.txt" || return 1
   printf '%s\n' "${rollback_netns}" >"${EVIDENCE_DIR}/rollback-add-netns.txt" || return 1
-  python3 - "${source_call}" "${local_call}" "${rollback_uid}" <<'PY' || return 1
+  python3 - "${source_call}" "${local_call}" "${rollback_uid}" "${rollback_container}" <<'PY' || return 1
 import pathlib
 import shutil
 import sys
@@ -2392,6 +2392,7 @@ for line in lines:
             "K8S_POD_NAMESPACE": "cni-test",
             "K8S_POD_NAME": "pod-rollback",
             "K8S_POD_UID": uid,
+            "K8S_POD_INFRA_CONTAINER_ID": sys.argv[4],
         }
         seen = set()
         rewritten = []
@@ -2402,7 +2403,7 @@ for line in lines:
                 seen.add(arg_key)
             else:
                 rewritten.append(item)
-        if seen != set(replacements):
+        if not {"K8S_POD_NAMESPACE", "K8S_POD_NAME", "K8S_POD_UID"}.issubset(seen):
             raise SystemExit(f"CNI_ARGS lacks required Kubernetes identity: {seen}")
         value = ";".join(rewritten)
         found_args = True
@@ -2433,14 +2434,43 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as output:
     result = json.load(output)
 assert result.get("code") == 999, result
-assert "open netns" in result.get("msg", "").lower(), result
-assert "no such file or directory" in result.get("msg", "").lower(), result
+message=result.get("msg", "").lower()
+assert "open netns" in message or message.startswith("hold cni network namespace: open "), result
+assert "no such file or directory" in message, result
 PY
   interop_wait_uid_absent "${rollback_uid}" rollback-failed-add || return 1
   interop_wait_rib_route "${LOCAL_MAC}" "${LOCAL_IP}" absent rollback-failed-add || return 1
 
   docker exec "${WORKER}" ip netns add "${rollback_ns}" || return 1
   docker exec "${WORKER}" ip netns exec "${rollback_ns}" ip link set lo up || return 1
+  if [[ "${CNI_CREATION_IDENTITY:-false}" == true ]]; then
+    docker exec "${WORKER}" cat /run/evpn-node-agent/cni-receipts-v1/journal.json \
+      >"${EVIDENCE_DIR}/forged-add-journal-before.json" || return 1
+    interop_replay_cni_operation "${worker_call}" ADD \
+      "${EVIDENCE_DIR}/forged-add-rejected" failure "${rollback_netns}" \
+      "${rollback_container}" || return 1
+    docker exec "${WORKER}" cat /run/evpn-node-agent/cni-receipts-v1/journal.json \
+      >"${EVIDENCE_DIR}/forged-add-journal-after.json" || return 1
+    python3 - "${EVIDENCE_DIR}" <<'PY' || return 1
+import json,pathlib,sys
+p=pathlib.Path(sys.argv[1])
+result=json.loads((p/"forged-add-rejected.stdout").read_text())
+assert result.get("code")==999,result
+message=result.get("msg","")
+assert "code = FailedPrecondition desc = CNI continuity: " in message,result
+before=json.loads((p/"forged-add-journal-before.json").read_text())
+after=json.loads((p/"forged-add-journal-after.json").read_text())
+assert before==after,"unauthorized ADD changed durable endpoint ownership"
+PY
+    interop_wait_uid_absent "${rollback_uid}" forged-add-rejected || return 1
+    interop_wait_rib_route "${LOCAL_MAC}" "${LOCAL_IP}" absent forged-add-rejected || return 1
+    docker exec "${WORKER}" ip -n "${rollback_ns}" -j link |
+      tee "${EVIDENCE_DIR}/forged-add-netns.json" |
+      python3 -c 'import json,sys; links=json.load(sys.stdin); assert [v["ifname"] for v in links]==["lo"],links' || return 1
+    docker exec "${WORKER}" ip netns del "${rollback_ns}" || return 1
+    echo "unpublished fake Pod/sandbox ADD intentionally BLOCKED with unchanged journal; real replacement ADD follows"
+    return 0
+  fi
   interop_replay_cni_operation "${worker_call}" ADD \
     "${EVIDENCE_DIR}/rollback-add-retry" success "${rollback_netns}" \
     "${rollback_container}" || return 1
@@ -3055,7 +3085,10 @@ interop_verify_full_lifecycle() {
     return 1
   }
 
-  interop_capture_local_uuids || return 1
+  # Earlier snapshots can predate activation, speaker replacement or Pod A replacement.
+  docker exec "${WORKER}" cat /run/evpn-node-agent/export-status.json \
+    >"${EVIDENCE_DIR}/export-status-before-initial-delete.json" || return 1
+  interop_capture_local_uuids "${EVIDENCE_DIR}/export-status-before-initial-delete.json" || return 1
   interop_capture_northd_health before-initial-cni-del || return 1
   k -n cni-test delete pod pod-a --wait=true --timeout=120s \
     | tee "${EVIDENCE_DIR}/initial-cni-del.txt" || return 1
@@ -3078,7 +3111,10 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as output:
     result = json.load(output)
 assert result.get("code") == 999, result
-assert "not found" in result.get("msg", "").lower(), result
+message=result.get("msg", "")
+assert "not found" in message.lower() or message == (
+    "node-agent Check RPC failed: rpc error: code = FailedPrecondition desc = "
+    "no matching durable active endpoint ACK"), result
 PY
   interop_wait_uid_absent "${uid_a}" negative-check-no-recreate || return 1
   interop_wait_rib_route "${LOCAL_MAC}" "${LOCAL_IP}" absent negative-check-no-recreate || return 1

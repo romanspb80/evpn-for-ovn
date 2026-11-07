@@ -404,6 +404,19 @@ func NewReadOnlyType2Importer(source RemoteRIBSource, config RemoteImportConfig)
 	return &ReadOnlyType2Importer{source: source, config: copy}, nil
 }
 
+// RebindSource retains confirmed generations but requires two fresh complete
+// observations after a transport/provider incarnation change.
+func (i *ReadOnlyType2Importer) RebindSource(source RemoteRIBSource) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if source == nil {
+		return fmt.Errorf("remote RIB source required")
+	}
+	i.source, i.pending = source, ""
+	i.confirmed.Authoritative = false
+	return nil
+}
+
 func copyRemoteSnapshot(s RemoteImportSnapshot) RemoteImportSnapshot {
 	s.Endpoints = append([]DesiredRemoteEndpoint(nil), s.Endpoints...)
 	s.Issues = append([]RemoteImportIssue(nil), s.Issues...)

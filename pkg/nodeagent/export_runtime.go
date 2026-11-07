@@ -2,6 +2,8 @@ package nodeagent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,14 +12,17 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/romanspb80/evpn-for-ovn/pkg/evpn"
+	nbdb "github.com/romanspb80/evpn-for-ovn/services/ovsdb_mgmt/ovnnb"
+	"github.com/vishvananda/netns"
 
 	"github.com/osrg/gobgp/v4/api"
 	"github.com/ovn-kubernetes/libovsdb/client"
+	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 type ExportRuntimeOptions struct {
@@ -55,7 +60,87 @@ func LoadExporterConfig(path string) (evpn.ExporterConfig, error) {
 	if err := decoder.Decode(&extra); err != io.EOF {
 		return evpn.ExporterConfig{}, fmt.Errorf("export config must contain exactly one JSON object")
 	}
-	return *cfg, cfg.Validate()
+	if err := cfg.Validate(); err != nil {
+		return evpn.ExporterConfig{}, err
+	}
+	if cfg.Enabled && (cfg.Recovery != nil || cfg.AttestationConfigPath != "") {
+		var stat unix.Stat_t
+		if err := unix.Fstat(int(f.Fd()), &stat); err != nil {
+			return evpn.ExporterConfig{}, err
+		}
+		if stat.Uid != 0 || stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Mode&0022 != 0 || stat.Nlink != 1 {
+			return evpn.ExporterConfig{}, fmt.Errorf("RECOVERY_BLOCKED: exporter recovery config must be root-owned, single-link and not group/world writable")
+		}
+	}
+	return *cfg, nil
+}
+
+func bindExporterRecovery(ctx context.Context, cfg *evpn.ExporterConfig, nb client.Client) error {
+	if cfg.Recovery == nil {
+		return nil
+	}
+	recovery := *cfg.Recovery
+	cfg.Recovery = &recovery
+	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return err
+	}
+	namespace, err := netns.Get()
+	if err != nil {
+		return err
+	}
+	identity := namespace.UniqueId()
+	if err := namespace.Close(); err != nil {
+		return err
+	}
+	var switches []*nbdb.LogicalSwitch
+	if err := selectExportRows(ctx, nb, "Logical_Switch", []string{"_uuid", "name", "ports", "other_config"}, &switches); err != nil {
+		return fmt.Errorf("RECOVERY_BLOCKED: exporter network identity: %w", err)
+	}
+	uuids := map[string]string{}
+	for _, network := range cfg.Networks {
+		for _, ls := range switches {
+			if ls.Name == network.LogicalSwitch {
+				if uuids[ls.Name] != "" || ls.UUID == "" {
+					return fmt.Errorf("RECOVERY_BLOCKED: ambiguous exporter switch identity")
+				}
+				uuids[ls.Name] = ls.UUID
+			}
+		}
+		if uuids[network.LogicalSwitch] == "" {
+			return fmt.Errorf("RECOVERY_BLOCKED: missing exporter switch %s", network.LogicalSwitch)
+		}
+	}
+	pin, err := os.ReadFile(cfg.AttestationConfigPath)
+	if err != nil {
+		return err
+	}
+	immutable := *cfg
+	immutable.Enabled, immutable.DryRun, immutable.Recovery = false, false, nil
+	data, err := json.Marshal(struct {
+		Config      evpn.ExporterConfig
+		Switches    map[string]string
+		Attestation []byte
+	}{immutable, uuids, pin})
+	if err != nil {
+		return err
+	}
+	hash := sha256.Sum256(data)
+	actual := recovery.Domain
+	actual.BootID = strings.TrimSpace(string(boot))
+	actual.NetworkNamespace = identity
+	actual.ConfigDigest = hex.EncodeToString(hash[:])
+	for _, pair := range [][2]string{
+		{recovery.Domain.BootID, actual.BootID},
+		{recovery.Domain.NetworkNamespace, actual.NetworkNamespace},
+		{recovery.Domain.ConfigDigest, actual.ConfigDigest},
+	} {
+		if pair[0] != "" && pair[0] != pair[1] {
+			return fmt.Errorf("RECOVERY_BLOCKED: exporter ownership domain changed")
+		}
+	}
+	cfg.Recovery.Domain = actual
+	return nil
 }
 
 func validateLocalExportConfig(cfg evpn.ExporterConfig) error {
@@ -105,6 +190,7 @@ func (s *CNIServer) RunEndpointExporter(ctx context.Context, runtime RuntimeOpti
 	var authority *net.UnixListener
 	var native *evpn.LocalOVNNetlinkObserver
 	continuity := &unixSpeakerContinuity{}
+	var exporterRecovery *evpn.ExportRecovery
 	defer func() {
 		for _, c := range []client.Client{nb, ovs, sb} {
 			if c != nil {
@@ -115,6 +201,9 @@ func (s *CNIServer) RunEndpointExporter(ctx context.Context, runtime RuntimeOpti
 			conn.Close()
 		}
 		continuity.Close()
+		if exporterRecovery != nil {
+			exporterRecovery.Close()
+		}
 		if native != nil {
 			native.Close()
 		}
@@ -133,15 +222,6 @@ func (s *CNIServer) RunEndpointExporter(ctx context.Context, runtime RuntimeOpti
 		defer cancel()
 		if err == nil && cfg.Enabled {
 			err = validateLocalExportConfig(cfg)
-		}
-		if err == nil && cfg.Enabled && bound != nil {
-			err = validateExporterAuthorityReload(*bound, cfg)
-			old, next := *bound, cfg
-			old.Networks, next.Networks = nil, nil
-			old.DryRun, next.DryRun = false, false
-			if err == nil && !reflect.DeepEqual(old, next) {
-				err = fmt.Errorf("speaker/node identity change requires explicit exporter restart; existing receipts are not transferable")
-			}
 		}
 		if err == nil && cfg.Enabled && authority == nil {
 			authority, err = evpn.AcquireExporterAuthority()
@@ -182,6 +262,9 @@ func (s *CNIServer) RunEndpointExporter(ctx context.Context, runtime RuntimeOpti
 						selected.native = native
 					}
 					exporter.Observer = selected
+					if cfg.Recovery != nil {
+						exporter.Observer = continuityExportObserver{s, selected}
+					}
 				}
 			}
 			if err != nil {
@@ -194,26 +277,60 @@ func (s *CNIServer) RunEndpointExporter(ctx context.Context, runtime RuntimeOpti
 			}
 		}
 		if err == nil && cfg.Enabled {
+			err = bindExporterRecovery(stepCtx, &cfg, nb)
+		}
+		if err == nil && cfg.Enabled && bound != nil {
+			err = validateExporterAuthorityReload(*bound, cfg)
+			old, next := *bound, cfg
+			old.Networks, next.Networks = nil, nil
+			old.DryRun, next.DryRun = false, false
+			if err == nil && !reflect.DeepEqual(old, next) {
+				err = fmt.Errorf("speaker/node identity change requires explicit exporter restart; existing receipts are not transferable")
+			}
+		}
+		if err == nil && cfg.Enabled {
 			if bound == nil {
 				copy := cfg
 				bound = &copy
 			}
 			observer.config = cfg
 			exporter.DryRun = cfg.DryRun
-			if !cfg.DryRun && conn == nil {
-				dialOptions := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
-				if cfg.ProcessContinuity {
-					dialOptions = append(dialOptions, grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
-						return continuity.DialContext(ctx, cfg.GRPCEndpoint)
-					}))
-					exporter.Continuity = continuity
-				}
-				conn, err = grpc.NewClient(cfg.GRPCEndpoint, dialOptions...)
+			if !cfg.DryRun && conn != nil && cfg.Recovery != nil && continuity.Check(stepCtx) != nil {
+				err = conn.Close()
+				err = errors.Join(err, continuity.Close())
+				conn = nil
+			}
+			if !cfg.DryRun && err == nil && conn == nil {
+				var newConn *grpc.ClientConn
+				var newGuard *unixSpeakerContinuity
+				var apiClient api.GoBgpServiceClient
+				newConn, newGuard, apiClient, err = newProviderTransport(cfg.AttestationConfigPath, cfg.GRPCEndpoint)
 				if err == nil {
-					apiClient := api.NewGoBgpServiceClient(conn)
-					adapter := &evpn.GoBGPType2Adapter{Client: apiClient}
-					exporter.Gate = evpn.SpeakerReadiness{Client: apiClient, ASN: cfg.ASN, RouterID: cfg.RouterID}
+					conn, continuity = newConn, newGuard
+					gate := attestedReadiness{evpn.SpeakerReadiness{Client: apiClient, ASN: cfg.ASN, RouterID: cfg.RouterID}, continuity}
+					adapter := &evpn.GoBGPType2Adapter{Client: apiClient, Gate: gate}
+					exporter.Gate, exporter.Continuity = gate, continuity
 					exporter.Source, exporter.Applier = adapter, adapter
+					if cfg.Recovery != nil {
+						// Bind the actual authenticated transport with a read-only
+						// RPC before reusing the initialized exporter's receipts.
+						err = gate.Check(stepCtx)
+						if err != nil {
+							err = errors.Join(err, conn.Close(), continuity.Close())
+							conn = nil
+						}
+					}
+					if cfg.Recovery != nil && err == nil {
+						applier := continuityRouteApplier{s, adapter}
+						if exporterRecovery == nil {
+							exporterRecovery, err = evpn.OpenExportRecovery(*cfg.Recovery, adapter, applier, continuity)
+						} else {
+							err = exporterRecovery.Rebind(adapter, applier, continuity)
+						}
+						if err == nil {
+							exporter.Recovery, exporter.Applier = exporterRecovery, exporterRecovery
+						}
+					}
 				}
 			}
 			if err == nil {
@@ -243,7 +360,7 @@ func (s *CNIServer) RunEndpointExporter(ctx context.Context, runtime RuntimeOpti
 	for {
 		select {
 		case <-ctx.Done():
-			if native != nil && len(last.Applied) != 0 {
+			if native != nil && len(last.Applied) != 0 && exporter.Recovery == nil {
 				shutdown, cancel := context.WithTimeout(context.Background(), opts.Timeout)
 				defer cancel()
 				networks := map[string]bool{}

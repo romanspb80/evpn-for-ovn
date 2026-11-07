@@ -44,6 +44,7 @@ type pluginConfig struct {
 	WorkloadUID       string   `json:"workloadUID,omitempty"`
 	Incarnation       string   `json:"incarnation,omitempty"`
 	SupportedVersions []string `json:"supportedVersions,omitempty"`
+	CreationIdentity  bool     `json:"creationIdentity,omitempty"`
 }
 
 type cniArgs struct {
@@ -75,6 +76,15 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 
 	req := buildAddRequest(conf, parsedArgs, args)
+	// Hold the requested namespace through the actual RPC so the server can
+	// bind its kernel identity to this authenticated CNI invocation.
+	if conf.CreationIdentity {
+		namespace, err := os.Open(args.Netns)
+		if err != nil {
+			return fmt.Errorf("hold CNI network namespace: %w", err)
+		}
+		defer namespace.Close()
+	}
 	client, closeClient, err := newNodeAgentClient(conf.NodeAgentSocket, dialTimeout(conf))
 	if err != nil {
 		return err

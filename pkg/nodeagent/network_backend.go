@@ -268,7 +268,11 @@ func (b *linuxVethBackend) Delete(_ context.Context, key string, _ *endpointReco
 		inferredHost := hostVethNameForKey(key)
 		link, err := netlink.LinkByName(inferredHost)
 		if err != nil {
-			return nil
+			var missing netlink.LinkNotFoundError
+			if errors.As(err, &missing) {
+				return nil
+			}
+			return fmt.Errorf("observe host interface: %w", err)
 		}
 		if link.Attrs() == nil || link.Attrs().Alias != ownerAliasForKey(key) {
 			return fmt.Errorf("host interface %q is not owned by endpoint", inferredHost)
@@ -280,6 +284,10 @@ func (b *linuxVethBackend) Delete(_ context.Context, key string, _ *endpointReco
 	}
 	link, err := netlink.LinkByName(state.HostIfName)
 	if err != nil {
+		var missing netlink.LinkNotFoundError
+		if !errors.As(err, &missing) {
+			return fmt.Errorf("observe host interface: %w", err)
+		}
 		// Missing interface is safe and idempotent.
 		b.mu.Lock()
 		delete(b.records, key)
@@ -291,6 +299,33 @@ func (b *linuxVethBackend) Delete(_ context.Context, key string, _ *endpointReco
 	}
 	if err := netlink.LinkDel(link); err != nil {
 		return fmt.Errorf("delete host interface %q: %w", state.HostIfName, err)
+	}
+	b.mu.Lock()
+	delete(b.records, key)
+	b.mu.Unlock()
+	return nil
+}
+
+func (b *linuxVethBackend) DeleteAcknowledged(ctx context.Context, key string, rec *endpointRecord, index int) error {
+	if index <= 0 {
+		return errors.New("missing acknowledged host veth index")
+	}
+	link, err := netlink.LinkByName(rec.endpointSpec.OVSInterfaceName)
+	var missing netlink.LinkNotFoundError
+	if errors.As(err, &missing) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if link.Attrs() == nil || link.Attrs().Index != index {
+		return errors.New("acknowledged host veth index changed")
+	}
+	if _, err := b.Check(ctx, key, rec); err != nil {
+		return err
+	}
+	if err := netlink.LinkDel(link); err != nil {
+		return err
 	}
 	b.mu.Lock()
 	delete(b.records, key)

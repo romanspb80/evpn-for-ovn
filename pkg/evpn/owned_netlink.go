@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/romanspb80/evpn-for-ovn/pkg/ownership"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
@@ -34,6 +35,13 @@ type RemoteNetlinkConfig struct {
 	ExclusiveWriter bool
 	StateDirectory  string
 	Networks        []RemoteNetlinkNetwork
+	Recovery        *RemoteNetlinkRecovery
+}
+
+// Recovery is opt-in. The runtime binds ConfigDigest to verified OVN UUIDs and
+// import policy; the backend also checks the actual boot and network namespace.
+type RemoteNetlinkRecovery struct {
+	Domain ownership.Domain
 }
 
 func (c RemoteNetlinkConfig) Validate() error {
@@ -68,6 +76,8 @@ type RemoteDeviceIdentity struct {
 	VNI         int
 	Local       string
 	Port        int
+	MAC         string
+	Alias       string
 }
 
 type RemoteKernelEntry struct {
@@ -104,6 +114,7 @@ type RemoteNetlinkReceipt struct {
 	FDB         RemoteObjectReceipt
 	Neighbor    *RemoteObjectReceipt
 	Status      string
+	Retiring    bool
 }
 
 type ownedKernel interface {
@@ -130,6 +141,11 @@ type ownedNetlinkState struct {
 	closed             bool
 	markerPath         string
 	subscribed         bool
+	journal            *ownership.Journal
+	snapshot           RemoteImportSnapshot
+	recoveryState      string
+	// Tests stop a process at actual mutation boundaries.
+	fault func(string)
 }
 
 // NewOwnedOVNNetlinkBackend binds the existing backend to this process's netns.
@@ -173,10 +189,22 @@ func NewOwnedOVNNetlinkBackend(config RemoteNetlinkConfig) (*OVNNetlinkBackend, 
 	}
 	s.subscribed = true
 	b := &OVNNetlinkBackend{owned: s}
+	if config.Recovery != nil {
+		if err := s.openRecovery(strings.TrimSpace(string(boot)), ns.UniqueId()); err != nil {
+			b.Close()
+			return nil, err
+		}
+	}
 	for _, network := range config.Networks {
 		for _, name := range []string{network.BridgeDevice, network.VXLANDevice} {
 			id, err := s.device(name)
 			if err != nil {
+				b.Close()
+				return nil, err
+			}
+			if expected, ok := s.devices[name]; ok && expected != id {
+				s.blocked = "managed device identity changed: " + name
+				err := s.quarantineError()
 				b.Close()
 				return nil, err
 			}
@@ -199,8 +227,12 @@ func NewOwnedOVNNetlinkBackend(config RemoteNetlinkConfig) (*OVNNetlinkBackend, 
 			for _, entry := range entries {
 				if entry.Flags&netlink.NTF_EXT_LEARNED != 0 ||
 					(scope.family == unix.AF_BRIDGE && len(entry.IP) != 0) {
-					b.Close()
-					return nil, fmt.Errorf("network %s has preexisting remote kernel state; no startup adoption", network.NetworkID)
+					if s.journal == nil || !s.hasConfirmedEntry(kernelEntry(entry)) {
+						s.blocked = fmt.Sprintf("network %s has unowned remote kernel state; no startup adoption", network.NetworkID)
+						err := s.quarantineError()
+						b.Close()
+						return nil, err
+					}
 				}
 			}
 		}
@@ -209,11 +241,26 @@ func NewOwnedOVNNetlinkBackend(config RemoteNetlinkConfig) (*OVNNetlinkBackend, 
 		b.Close()
 		return nil, err
 	}
-	if err := acquireRemoteMarker(config.StateDirectory, s.controller, s.target); err != nil {
-		b.Close()
-		return nil, err
+	if s.markerPath == "" {
+		if s.journal != nil {
+			if err := s.checkpoint(); err != nil {
+				b.Close()
+				return nil, err
+			}
+		}
+		if err := acquireRemoteMarker(config.StateDirectory, s.controller, s.target); err != nil {
+			b.Close()
+			return nil, err
+		}
+		s.markerPath = filepath.Join(config.StateDirectory, "remote-netlink-owner")
 	}
-	s.markerPath = filepath.Join(config.StateDirectory, "remote-netlink-owner")
+	if s.journal != nil {
+		if err := s.verifyRecovered(context.Background()); err != nil {
+			b.Close()
+			return nil, err
+		}
+		s.recoveryState = "RECONCILING_STATE"
+	}
 	return b, nil
 }
 
@@ -259,7 +306,7 @@ func (b *OVNNetlinkBackend) Close() error {
 				}
 			}()
 		}
-		return s.kernel.Close()
+		return errors.Join(s.kernel.Close(), closeOwnershipJournal(s.journal))
 	}
 	return nil
 }
@@ -308,7 +355,8 @@ func (s *ownedNetlinkState) device(name string) (RemoteDeviceIdentity, error) {
 
 func remoteDeviceIdentity(link netlink.Link) RemoteDeviceIdentity {
 	a := link.Attrs()
-	id := RemoteDeviceIdentity{Name: a.Name, Ifindex: a.Index, Kind: link.Type(), MasterIndex: a.MasterIndex}
+	id := RemoteDeviceIdentity{Name: a.Name, Ifindex: a.Index, Kind: link.Type(), MasterIndex: a.MasterIndex,
+		MAC: a.HardwareAddr.String(), Alias: a.Alias}
 	if v, ok := link.(*netlink.Vxlan); ok {
 		id.VNI, id.Local, id.Port = v.VxlanId, v.SrcAddr.String(), v.Port
 	}
@@ -322,7 +370,16 @@ func (s *ownedNetlinkState) check(ctx context.Context) error {
 	if s.closed {
 		return fmt.Errorf("remote backend is closed")
 	}
-	if s.markerPath != "" {
+	if s.journal != nil {
+		if _, _, err := s.journal.Snapshot(); err != nil {
+			s.blocked = err.Error()
+		}
+	}
+	if s.markerPath != "" && s.journal != nil {
+		if err := s.verifyMarker(); err != nil {
+			s.blocked = err.Error()
+		}
+	} else if s.markerPath != "" {
 		f, err := os.OpenFile(s.markerPath, os.O_RDONLY|unix.O_NOFOLLOW, 0)
 		if err != nil {
 			s.blocked = "ownership marker lost"
@@ -363,13 +420,13 @@ drained:
 		s.blocked = "link observation continuity lost"
 	}
 	if s.blocked != "" {
-		return fmt.Errorf("remote ownership quarantined: %s", s.blocked)
+		return s.quarantineError()
 	}
 	for name, expected := range s.devices {
 		got, err := s.device(name)
 		if err != nil || got != expected {
-			s.blocked = "device identity changed: " + name
-			return fmt.Errorf("%s: %v", s.blocked, err)
+			s.blocked = fmt.Sprintf("device identity changed: %s: %v", name, err)
+			return s.quarantineError()
 		}
 	}
 	return nil
@@ -421,7 +478,7 @@ func (s *ownedNetlinkState) slot(ctx context.Context, want RemoteKernelEntry) ([
 	entries, err := s.kernel.NeighList(want.Ifindex, want.Family)
 	if err != nil {
 		s.blocked = "kernel observation failed: " + err.Error()
-		return nil, err
+		return nil, s.quarantineError()
 	}
 	var found []RemoteKernelEntry
 	for _, n := range entries {
@@ -460,7 +517,7 @@ func (s *ownedNetlinkState) confirm(ctx context.Context, r *RemoteObjectReceipt,
 	}
 	s.blocked = "kernel entry differs from confirmed operation"
 	r.Status, r.Error = "conflict", s.blocked
-	return fmt.Errorf("%s: want=%+v observed=%+v", s.blocked, r.Request, found)
+	return errors.Join(s.quarantineError(), fmt.Errorf("want=%+v observed=%+v", r.Request, found))
 }
 
 func definitiveReject(err error) bool {
@@ -487,17 +544,34 @@ func (s *ownedNetlinkState) applyObject(ctx context.Context, r *RemoteObjectRece
 	if len(found) != 0 {
 		r.Status, r.Error = "conflict", "preexisting kernel slot is not owned"
 		s.blocked = r.Error
-		return fmt.Errorf("%s: %+v", r.Error, found)
+		return errors.Join(s.quarantineError(), fmt.Errorf("observed=%+v", found))
 	}
 	if err := s.check(ctx); err != nil {
 		return err
 	}
 	r.Status = "pending"
+	seq, err := s.beginMutation("netlink-add", r)
+	if err != nil {
+		return err
+	}
+	found, err = s.slot(ctx, r.Request)
+	if err != nil {
+		return err
+	}
+	if len(found) != 0 {
+		s.blocked = "kernel slot changed while persisting creation intent"
+		return fmt.Errorf("%s", s.blocked)
+	}
+	s.boundary("before-add")
 	err = s.kernel.NeighAdd(r.Request.neigh())
+	s.boundary("after-add")
 	if err != nil {
 		r.Status, r.Error = "failed", err.Error()
 		if !definitiveReject(err) {
 			r.Status, s.blocked = "outcome-unknown", "unacknowledged kernel creation"
+		}
+		if s.journal != nil {
+			s.blocked, s.recoveryState = "unresolved durable Netlink add intent: "+err.Error(), "RECOVERY_BLOCKED"
 		}
 		return fmt.Errorf("exclusive kernel creation: %w", err)
 	}
@@ -507,6 +581,11 @@ func (s *ownedNetlinkState) applyObject(ctx context.Context, r *RemoteObjectRece
 		s.blocked = "creation ACK without verified readback"
 		return err
 	}
+	s.boundary("before-add-ack")
+	if err := s.ackMutation(seq); err != nil {
+		return err
+	}
+	s.boundary("after-add-ack")
 	return nil
 }
 
@@ -536,11 +615,23 @@ func (s *ownedNetlinkState) withdrawObject(ctx context.Context, r *RemoteObjectR
 		return err
 	}
 	// Including the full tuple is not kernel-level ownership CAS.
-	err := s.kernel.NeighDel(r.Observed.neigh())
+	seq, err := s.beginMutation("netlink-delete", r)
+	if err != nil {
+		return err
+	}
+	if err := s.confirm(ctx, r, false); err != nil {
+		return err
+	}
+	s.boundary("before-delete")
+	err = s.kernel.NeighDel(r.Observed.neigh())
+	s.boundary("after-delete")
 	if err != nil {
 		r.Error = err.Error()
 		if !definitiveReject(err) {
 			r.Status, s.blocked = "outcome-unknown", "unacknowledged kernel deletion"
+		}
+		if s.journal != nil {
+			s.blocked, s.recoveryState = "unresolved durable Netlink delete intent: "+err.Error(), "RECOVERY_BLOCKED"
 		}
 		return fmt.Errorf("owned kernel deletion: %w", err)
 	}
@@ -549,6 +640,11 @@ func (s *ownedNetlinkState) withdrawObject(ctx context.Context, r *RemoteObjectR
 		r.Status, s.blocked = "outcome-unknown", "deletion ACK without verified absence"
 		return err
 	}
+	s.boundary("before-delete-ack")
+	if err := s.ackMutation(seq); err != nil {
+		return err
+	}
+	s.boundary("after-delete-ack")
 	return nil
 }
 
@@ -596,22 +692,7 @@ func (b *OVNNetlinkBackend) ownedApply(ctx context.Context, route ImportedType2R
 			return fmt.Errorf("stale route incarnation")
 		}
 		s.latest[route.Key] = route.incarnation
-		fdb := RemoteKernelEntry{Family: unix.AF_BRIDGE, Ifindex: s.devices[network.VXLANDevice].Ifindex,
-			MAC: route.MAC, IP: route.RemoteVTEP, State: netlink.NUD_NOARP | netlink.NUD_PERMANENT,
-			Flags: netlink.NTF_SELF | netlink.NTF_EXT_LEARNED, Type: unix.RTN_UNICAST}
-		receipt = &RemoteNetlinkReceipt{Controller: s.controller, Target: s.target, Network: network,
-			Endpoint: *route.validated, Incarnation: route.incarnation, Generation: route.generation,
-			Devices: []RemoteDeviceIdentity{s.devices[network.BridgeDevice], s.devices[network.VXLANDevice]},
-			FDB:     RemoteObjectReceipt{Request: fdb, Status: "unattempted"}}
-		if route.IP != "" {
-			family := unix.AF_INET6
-			if net.ParseIP(route.IP).To4() != nil {
-				family = unix.AF_INET
-			}
-			receipt.Neighbor = &RemoteObjectReceipt{Request: RemoteKernelEntry{Family: family,
-				Ifindex: s.devices[network.BridgeDevice].Ifindex, MAC: route.MAC, IP: route.IP,
-				State: netlink.NUD_NOARP, Flags: netlink.NTF_EXT_LEARNED}, Status: "unattempted"}
-		}
+		receipt = s.newReceipt(network, route)
 		s.receipts[route.Key] = receipt
 	}
 	receipt.Status = "partially-applied"
@@ -624,7 +705,27 @@ func (b *OVNNetlinkBackend) ownedApply(ctx context.Context, route ImportedType2R
 		}
 	}
 	receipt.Status = "applied"
-	return nil
+	return s.checkpoint()
+}
+
+func (s *ownedNetlinkState) newReceipt(network RemoteNetlinkNetwork, route ImportedType2Route) *RemoteNetlinkReceipt {
+	fdb := RemoteKernelEntry{Family: unix.AF_BRIDGE, Ifindex: s.devices[network.VXLANDevice].Ifindex,
+		MAC: route.MAC, IP: route.RemoteVTEP, State: netlink.NUD_NOARP | netlink.NUD_PERMANENT,
+		Flags: netlink.NTF_SELF | netlink.NTF_EXT_LEARNED, Type: unix.RTN_UNICAST}
+	r := &RemoteNetlinkReceipt{Controller: s.controller, Target: s.target, Network: network,
+		Endpoint: *route.validated, Incarnation: route.incarnation, Generation: route.generation,
+		Devices: []RemoteDeviceIdentity{s.devices[network.BridgeDevice], s.devices[network.VXLANDevice]},
+		FDB:     RemoteObjectReceipt{Request: fdb, Status: "unattempted"}}
+	if route.IP != "" {
+		family := unix.AF_INET6
+		if net.ParseIP(route.IP).To4() != nil {
+			family = unix.AF_INET
+		}
+		r.Neighbor = &RemoteObjectReceipt{Request: RemoteKernelEntry{Family: family,
+			Ifindex: s.devices[network.BridgeDevice].Ifindex, MAC: route.MAC, IP: route.IP,
+			State: netlink.NUD_NOARP, Flags: netlink.NTF_EXT_LEARNED}, Status: "unattempted"}
+	}
+	return r
 }
 
 func (b *OVNNetlinkBackend) ownedWithdraw(ctx context.Context, route ImportedType2Route) error {
@@ -644,6 +745,10 @@ func (b *OVNNetlinkBackend) ownedWithdraw(ctx context.Context, route ImportedTyp
 		return fmt.Errorf("withdrawal requires current controller/route receipt")
 	}
 	receipt.Status = "partially-withdrawn"
+	receipt.Retiring = true
+	if err := s.checkpoint(); err != nil {
+		return err
+	}
 	if receipt.Neighbor != nil {
 		if err := s.withdrawObject(ctx, receipt.Neighbor); err != nil {
 			return err
@@ -658,5 +763,5 @@ func (b *OVNNetlinkBackend) ownedWithdraw(ctx context.Context, route ImportedTyp
 		s.withdrawals = append([]RemoteNetlinkReceipt(nil), s.withdrawals[len(s.withdrawals)-64:]...)
 	}
 	delete(s.receipts, route.Key)
-	return nil
+	return s.checkpoint()
 }

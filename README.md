@@ -1,33 +1,30 @@
 # EVPN for OVN
 
-EVPN for OVN is an experimental, reusable Go Framework that integrates GoBGP
-EVPN control-plane state with OVN/OVS.
+EVPN-for-OVN is an experimental modular SDN framework for developing and
+testing EVPN over OVN. It combines project-owned Type-2 route processing,
+endpoint reconciliation and ownership-aware recovery with the reused GoBGP
+BGP engine and OVN/OVS data plane.
 
-EVPN-for-OVN is under active development, with a focus on modular architecture,
-interoperability, and expanding EVPN capabilities for cloud-native networking
-environments.
+Kubernetes / Multus is the implemented platform integration, **not the
+framework's primary purpose**. OpenStack / Neutron and standalone OVN platform
+adapters are design targets, not implemented integrations. Direct Go services,
+standalone fixtures and an opt-in OVSDB importer already support independent
+experimentation; they are not a supported cross-platform installation.
 
 [![EVPN Framework architecture](docs/uml/evpn-overview.svg)](docs/uml/evpn-overview.svg)
 
 ## Architecture
 
-The Framework provides route processing, network and endpoint services,
-ownership-aware reconciliation, OVN/OVS integration, and dataplane adapters.
-It can be used and tested independently of Kubernetes CNI or Multus.
+[![EVPN modular architecture and component ownership](docs/uml/evpn-modular-architecture.svg)](docs/uml/evpn-modular-architecture.svg)
 
-The two alternative integrations are:
+The framework programs owned EVPN routes and network integration state;
+**OVN/OVS forwards workload packets**. Netlink-Programmed and
+OVSDB-Programmed integration are alternative paths, not parallel writers.
+k8gobgp independently manages the current Kubernetes GoBGP provider and
+`BGPConfiguration`; it is not an EVPN core module.
 
-- **Netlink-Programmed:** imports and exports GoBGP Type-2 state and reconciles
-  owned Linux EVPN integration state. `ovn-controller` observes that state;
-  OVN/OVS remains responsible for workload forwarding.
-- **OVSDB-Programmed:** an opt-in standalone importer reads the GoBGP gRPC RIB
-  and reconciles route-derived OVN/OVSDB provider-bridge, localnet, and VXLAN
-  state.
-
-Kubernetes CNI/Multus is an application consumer. It implements CNI
-ADD/CHECK/DEL and translates Kubernetes attachment identity into Framework
-operations. OpenStack Neutron and other orchestrators are potential future
-consumers, not implemented integrations.
+The [architecture guide](docs/architecture/framework-first.md) records the
+verified component ownership matrix, existing interfaces and design targets.
 
 ## Verified capabilities
 
@@ -40,12 +37,18 @@ consumers, not implemented integrations.
 - One-chassis CNI Full Lifecycle E2E, including replacement, packet-path
   verification, idempotency, negative CHECK, pre-LSP rollback, survivor
   preservation, and cleanup.
+- Operator-managed Type-2 acceptance: normal and forced-SIGKILL runs passed
+  18/18 each, including authenticated CNI creation, Node-Agent/speaker recovery,
+  post-replacement forwarding, UUID-scoped withdrawal and cleanup.
 
 These results do not establish shared-VTEP lifecycle, two-chassis
 GoBGP-to-GoBGP operation, multi-VTEP lifecycle, EVPN Type-5, dynamic IPAM, or
 production readiness. The complete acceptance scope and evidence are in the
 [Testing Guide](TESTING_GUIDE.md).
 
+Recovery is bounded: ambiguous AddPath outcomes without a durable UUID remain
+**BLOCKED**, not adopted by matching route attributes. See the
+[operator acceptance record](docs/architecture/operator-type2-acceptance.md).
 The reported live results are historical, scoped private-source acceptance.
 They are not fresh validation of a future public snapshot.
 
@@ -60,9 +63,11 @@ Containerlab management TLS does not secure Framework gRPC.
 Privileged containers, host mounts and broad Operator permissions are lab
 assumptions, not production defaults. See [SECURITY.md](SECURITY.md).
 
-The optional EvpnCore Operator applies core manifests; k8gobgp separately
-reconciles `BGPConfiguration` and manages gobgpd. Node Agent provides reusable
-endpoint services and CNI orchestration. CMS is only a test/demo emulator,
+The optional EvpnCore Operator manages YAML-driven workloads, including
+Node-Agent, with singleton ownership, readiness and finalizer cleanup.
+Node-Agent hosts endpoint services, Type-2 loops and CNI runtime authority;
+its Kubernetes/containerd recovery wiring is not a generic platform adapter.
+CMS is only a test/demo emulator,
 not a mandatory Framework service; no CMS runtime is required by the maintained
 Framework or CNI acceptance runners.
 
@@ -77,14 +82,16 @@ are in the [Testing Guide](TESTING_GUIDE.md).
 
 ## Documentation
 
-- [Framework architecture](docs/architecture/framework-first.md)
-- [Integration modes](docs/architecture/integrations.md)
-- [Kind deployment](docs/architecture/deployment.md)
-- [Kubernetes CNI application](docs/applications/cni/README.md)
+- [Framework boundaries and ownership matrix](docs/architecture/framework-first.md)
+- [Control / data plane and integration modes](docs/architecture/integrations.md)
+- [GoBGP provider management and dependencies](docs/architecture/runtime-dependencies.md)
+- [Operator lifecycle](docs/architecture/evpn-core-operator.md) and [lab deployment](docs/architecture/deployment.md)
+- [CNI lifecycle](docs/applications/cni/README.md) and [creation authority](docs/architecture/cni-creation-authority.md)
+- [Ownership and recovery](docs/architecture/type2-restart-ownership.md)
 - [Testing and acceptance](TESTING_GUIDE.md)
 - [Current roadmap and task register](docs/roadmap/README.md)
 - [Framework priorities](docs/roadmap/framework.md) and [upstream plan](docs/roadmap/upstream/README.md)
-- [Operator and proposed CRDs](docs/roadmap/kubernetes-integration.md)
+- [Platform integration targets](docs/roadmap/integrations/README.md)
 - [Framework and application API reference](docs/api/README.md)
 - [First public release gates](docs/roadmap/release.md)
 - [Known OVN/OVS issues](docs/known-issues/README.md)

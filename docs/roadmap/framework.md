@@ -1,6 +1,8 @@
 # Framework capabilities and evolution
 
-The Framework is independent of Kubernetes, CNI and Multus. GoBGP provides
+The Framework's Go route and endpoint services can be exercised independently
+of Kubernetes, CNI and Multus; current Node-Agent authority/recovery and
+EvpnCore orchestration remain Kubernetes/runtime integrations. GoBGP provides
 EVPN control-plane services; OVN/OVS owns workload forwarding in **both**
 integration modes. This page describes capabilities, not a second task list.
 All priorities and acceptance criteria are in the [backlog](backlog.md).
@@ -16,6 +18,7 @@ All priorities and acceptance criteria are in the [backlog](backlog.md).
 | Endpoint/attachment services | `pkg/endpoint`, `pkg/attachment`, reusable `pkg/nodeagent` managers: identity-owned NB LSP and local OVS attachment, usable without CNI. Independent Framework tests use direct managers. |
 | CNI application | Separate `evpn-cni`/NodeAgentCNI ADD/CHECK/DEL; static addressing, replacement, idempotency, negative CHECK, pre-LSP failure rollback, survivor and cleanup acceptance. |
 | Standalone fixtures | `tools/e2e/netlink/`: isolated Type-2 route/withdrawal fixtures; these bypass the k8gobgp manager and do not prove managed Kubernetes acceptance. |
+| Operator-managed recovery | [Phase D record](../architecture/operator-type2-acceptance.md): normal and forced-SIGKILL 18/18 runs, including CNI authority, agent/speaker recovery, post-replacement packets, UUID withdrawal and cleanup. Bounded Netlink path, not generalized recovery or OVSDB-mode acceptance. |
 
 C4.4f.2q.2 ran each independent Framework integration and the single-chassis
 CNI lifecycle twice. This is historical private-source acceptance, not a fresh
@@ -39,7 +42,8 @@ Post-LSP compensation and partial provider-FDB invalidation remain open
 
 ## Experimental deployment versus planned capabilities
 
-The optional `EvpnCore` Operator is manifest-apply scaffolding, not a
+The optional `EvpnCore` Operator has YAML-driven singleton lifecycle,
+Node-Agent deployment, workload readiness and conservative cleanup; it is not a
 production installer. Supported standalone/Kubernetes installation is
 [DEP-01](backlog.md#p2-planned-capabilities-and-integrations), separate from
 experimental first-release reproduction. Operator responsibilities and planned CRDs are in
@@ -51,7 +55,11 @@ unification are completed historical q1/q2 work, not pending roadmap tasks.
 Shared-VTEP, two-chassis, multi-VTEP, RR, Type-5/IP-VRF, Single VXLAN
 Device/VLAN segmentation and dynamic IPAM are **planned, not accepted**
 (FW-06 through FW-12). DCI and Neutron are future
-[integrations](integrations/README.md). Multihoming and quantitative
+[integrations](integrations/README.md). A standalone OVN platform adapter remains
+planned despite existing direct fixtures/importer code; it is distinct from a
+standalone GoBGP provider (currently rejected by EvpnCore). See the
+[implemented-versus-target boundary matrix](../architecture/framework-first.md#implemented-boundaries-versus-design-targets).
+Multihoming and quantitative
 convergence/performance are research-only (RS-01/RS-02).
 
 Publication hygiene and licensing are [P0 release gates](release.md);

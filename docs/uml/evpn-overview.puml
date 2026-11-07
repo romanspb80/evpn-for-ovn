@@ -1,71 +1,45 @@
 @startuml
 top to bottom direction
-skinparam backgroundColor #FFFFFF
-skinparam defaultFontName Arial
-skinparam defaultFontSize 17
-skinparam defaultFontColor #1E293B
+skinparam backgroundColor #FCFCFD
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 18
+skinparam defaultFontColor #172B4D
 skinparam shadowing false
-skinparam roundCorner 15
+skinparam roundCorner 16
 skinparam nodesep 45
-skinparam ranksep 55
-skinparam ArrowColor #94A3B8
-skinparam ArrowThickness 1.5
-skinparam note {
-  BackgroundColor #F8FAFC
-  BorderColor #CBD5E1
-}
+skinparam ranksep 45
+skinparam ArrowColor #475569
+skinparam ArrowThickness 2
 skinparam rectangle {
-  BackgroundColor #FFFFFF
-  BorderColor #CBD5E1
-  BorderThickness 1.5
+  BorderThickness 2
+  BackgroundColor #F8FAFC
+  BorderColor #475569
 }
-
-rectangle "EVPN-for-OVN\nReusable Go Framework" as Framework #EAF2FF
-
-together {
-  rectangle "Standalone Framework\nconsumer" as Standalone
-  rectangle "Kubernetes CNI / Multus\napplication" as Kubernetes
-  rectangle "OpenStack Neutron\n(future consumer)" as OpenStack
-}
+title EVPN-for-OVN | modular SDN framework
 
 together {
-  rectangle "Netlink-Programmed\nFramework integration" as Netlink #EAF6F0
-  rectangle "OVSDB-Programmed\nFramework integration" as OVSDB #EAF6F0
-  rectangle "GoBGP\nEVPN control plane" as GoBGP #F3F6FA
+  rectangle "Kubernetes / Multus\nImplemented integration" as K8s #FFF4DB
+  rectangle "OpenStack / Neutron\nPLANNED adapter" as Neutron #FFF4DB
+  rectangle "Standalone OVN\nPLANNED platform integration" as Standalone #FFF4DB
 }
+rectangle "EVPN-for-OVN Framework" as Framework #E8F1FF
 together {
-  rectangle "Linux EVPN\nintegration state" as Kernel #FFF7E7
-  rectangle "OVN NBDB / OVSDB\nowned route state" as NBDB #FFF7E7
+  rectangle "GoBGP EVPN control plane" as GoBGP #F1F5F9
+  rectangle "OVN / OVS data plane" as OVN #F1F5F9
 }
-rectangle "ovn-controller" as Controller #EAF2FF
-rectangle "OVN / OVS\nworkload forwarding" as Forwarding #EAF2FF
-rectangle "EVPN overlay /\nremote VTEPs" as Overlay #F3F6FA
-rectangle "External FRR peer\n(validation)" as FRR
-rectangle "Kubernetes deployment (optional integration layer)" {
-  rectangle "BGPConfiguration CRD" as BGPConfig
-  rectangle "k8gobgp manager\nKubernetes-native GoBGP management" as BGPManager
-  BGPConfig --> BGPManager : reconciliation
-}
+rectangle "External EVPN networks" as Peers #F1F5F9
 
-Standalone --> Framework
-Kubernetes --> Framework
-OpenStack ..> Framework : future
-Framework --> Netlink
-Framework --> OVSDB
-Framework --> GoBGP : gRPC Type-2 lifecycle
-BGPManager --> GoBGP : configuration
-Netlink --> Kernel
-Kernel --> Controller : observed
-OVSDB --> NBDB : Type-2 route import
-NBDB --> Controller : OVN reconciliation
-Controller --> Forwarding
-GoBGP <--> FRR : BGP EVPN routes
-Overlay <--> FRR : peer-side VXLAN / workload
-Forwarding <..> Overlay : workload traffic
-note bottom of BGPManager
-  BGP identity / peers / AF / VRFs are CRD-owned.
-  Upstream DaemonSet image runs manager + gobgpd.
-  Framework owns its Type-2 paths and integration state.
-  Non-Kubernetes deployments need no k8gobgp.
-end note
+K8s --> Framework
+Neutron -[#925C00,dashed]-> Framework
+Standalone -[#925C00,dashed]-> Framework
+Framework -[#2457A7]-> GoBGP : EVPN routes
+Framework --> OVN : network state
+GoBGP <-[#2457A7]-> Peers : BGP EVPN
+OVN <-[#18724B]-> Peers : VXLAN packets
+
+legend bottom
+  Solid: implemented | Dashed + PLANNED: design target
+  Blue arrows: route control | Green arrows: packets
+endlegend
+footer Experimental framework | Details: docs/architecture/framework-first.md
 @enduml

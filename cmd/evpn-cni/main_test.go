@@ -54,6 +54,18 @@ func (m *mockNodeAgentServer) Check(ctx context.Context, req *nodeagentpb.CNIChe
 	return m.checkFn(ctx, req)
 }
 
+func TestCmdAddRequiresHeldNamespace(t *testing.T) {
+	args := &skel.CmdArgs{
+		ContainerID: "sandbox-a",
+		Netns:       "/nonexistent/evpn-cni-namespace",
+		IfName:      "net1",
+		StdinData:   []byte(`{"cniVersion":"1.0.0","name":"evpn","type":"evpn-cni","nodeAgentSocket":"/nonexistent/agent.sock","networkID":"n24","attachmentID":"s","creationIdentity":true}`),
+	}
+	if err := cmdAdd(args); err == nil || !strings.Contains(err.Error(), "hold CNI network namespace") {
+		t.Fatalf("unheld namespace was allowed to reach RPC: %v", err)
+	}
+}
+
 func TestCmdAddMapsRequestAndPrintsResult(t *testing.T) {
 	t.Helper()
 
@@ -109,7 +121,7 @@ func TestCmdAddMapsRequestAndPrintsResult(t *testing.T) {
 	}`, socket)
 	args := &skel.CmdArgs{
 		ContainerID: "container-123",
-		Netns:       "/proc/100/ns/net",
+		Netns:       "/proc/self/ns/net",
 		IfName:      "eth1",
 		Args:        "K8S_POD_NAMESPACE=default;K8S_POD_NAME=pod-a;K8S_POD_UID=uid-a;K8S_NODE_NAME=node-a",
 		StdinData:   []byte(conf),
@@ -132,7 +144,7 @@ func TestCmdAddMapsRequestAndPrintsResult(t *testing.T) {
 	if gotReq.GetRuntime().GetContainerId() != "container-123" {
 		t.Fatalf("unexpected container_id: %q", gotReq.GetRuntime().GetContainerId())
 	}
-	if gotReq.GetRuntime().GetNetnsPath() != "/proc/100/ns/net" {
+	if gotReq.GetRuntime().GetNetnsPath() != "/proc/self/ns/net" {
 		t.Fatalf("unexpected netns_path: %q", gotReq.GetRuntime().GetNetnsPath())
 	}
 	if gotReq.GetK8S().GetPodNamespace() != "default" || gotReq.GetK8S().GetPodName() != "pod-a" || gotReq.GetK8S().GetPodUid() != "uid-a" {
@@ -186,7 +198,7 @@ func TestCmdDelAcceptsIdempotentOutcomes(t *testing.T) {
 			conf := fmt.Sprintf(`{"cniVersion":"1.0.0","name":"evpn-net","type":"evpn-cni","nodeAgentSocket":"%s","networkID":"net-h22","attachmentID":"net1","timeoutSeconds":2}`, socket)
 			args := &skel.CmdArgs{
 				ContainerID: "container-123",
-				Netns:       "/proc/100/ns/net",
+				Netns:       "/proc/self/ns/net",
 				IfName:      "eth1",
 				StdinData:   []byte(conf),
 			}
@@ -218,7 +230,7 @@ func TestCmdCheckMapsRequestAndPropagatesFailure(t *testing.T) {
 	conf := fmt.Sprintf(`{"cniVersion":"1.0.0","name":"evpn-net","type":"evpn-cni","nodeAgentSocket":"%s","networkID":"net-h22","attachmentID":"net1","timeoutSeconds":2}`, socket)
 	args := &skel.CmdArgs{
 		ContainerID: "container-123",
-		Netns:       "/proc/100/ns/net",
+		Netns:       "/proc/self/ns/net",
 		IfName:      "eth1",
 		Args:        "K8S_POD_NAMESPACE=default;K8S_POD_NAME=pod-check;K8S_POD_UID=uid-check",
 		StdinData:   []byte(conf),
@@ -243,7 +255,7 @@ func TestInvalidConfigAndUnavailableSocketAndDeadline(t *testing.T) {
 	t.Run("invalid-config-no-socket", func(t *testing.T) {
 		args := &skel.CmdArgs{
 			ContainerID: "container-123",
-			Netns:       "/proc/100/ns/net",
+			Netns:       "/proc/self/ns/net",
 			IfName:      "eth1",
 			StdinData:   []byte(`{"cniVersion":"1.0.0","name":"evpn-net","type":"evpn-cni","networkID":"net-h22","attachmentID":"net1"}`),
 		}
@@ -259,7 +271,7 @@ func TestInvalidConfigAndUnavailableSocketAndDeadline(t *testing.T) {
 	t.Run("unavailable-socket", func(t *testing.T) {
 		args := &skel.CmdArgs{
 			ContainerID: "container-123",
-			Netns:       "/proc/100/ns/net",
+			Netns:       "/proc/self/ns/net",
 			IfName:      "eth1",
 			StdinData:   []byte(`{"cniVersion":"1.0.0","name":"evpn-net","type":"evpn-cni","nodeAgentSocket":"/tmp/does-not-exist.sock","networkID":"net-h22","attachmentID":"net1","timeoutSeconds":1}`),
 		}
@@ -287,7 +299,7 @@ func TestInvalidConfigAndUnavailableSocketAndDeadline(t *testing.T) {
 
 		args := &skel.CmdArgs{
 			ContainerID: "container-123",
-			Netns:       "/proc/100/ns/net",
+			Netns:       "/proc/self/ns/net",
 			IfName:      "eth1",
 			StdinData:   []byte(fmt.Sprintf(`{"cniVersion":"1.0.0","name":"evpn-net","type":"evpn-cni","nodeAgentSocket":"%s","networkID":"net-h22","attachmentID":"net1","timeoutSeconds":1}`, socket)),
 		}

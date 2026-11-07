@@ -2,14 +2,90 @@ package nodeagent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/romanspb80/evpn-for-ovn/pkg/evpn"
+	"github.com/romanspb80/evpn-for-ovn/pkg/ownership"
 	nbdb "github.com/romanspb80/evpn-for-ovn/services/ovsdb_mgmt/ovnnb"
 )
+
+func TestRemoteRecoveryDomainBinding(t *testing.T) {
+	cfg := validRemoteRuntimeConfig()
+	cfg.Netlink.Recovery = &evpn.RemoteNetlinkRecovery{Domain: ownership.Domain{
+		InstallationUID: "7b2caa55-3f84-43ad-99e9-dcaad600a6ac", NodeUID: "46b08606-9b26-4098-90d7-02c14098122b",
+	}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := bindRemoteRecovery(&cfg, map[string]string{"ls24b": "switch-original"}); err != nil {
+		t.Fatal(err)
+	}
+	d := cfg.Netlink.Recovery.Domain
+	if d.BootID == "" || d.NetworkNamespace == "" || len(d.ConfigDigest) != 64 {
+		t.Fatal("runtime domain not bound to actual node-local identities", d)
+	}
+	if err := bindRemoteRecovery(&cfg, map[string]string{"ls24b": "switch-recreated"}); err == nil {
+		t.Fatal("changed OVN UUID accepted")
+	}
+	cfg.Netlink.Recovery.Domain = d
+	cfg.Import.Networks[0].AllowedVTEPs = []string{"198.51.100.99"}
+	if err := bindRemoteRecovery(&cfg, map[string]string{"ls24b": "switch-original"}); err == nil {
+		t.Fatal("changed import policy accepted")
+	}
+	cfg.Netlink.Recovery.Domain = d
+	cfg.Netlink.Recovery.Domain.NetworkNamespace = "foreign-netns"
+	if err := bindRemoteRecovery(&cfg, nil); err == nil {
+		t.Fatal("foreign network namespace accepted")
+	}
+	cfg.Netlink.Recovery.Domain.InstallationUID = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("missing installation identity accepted")
+	}
+}
+
+func TestRemoteRecoveryConfigOwnership(t *testing.T) {
+	cfg := validRemoteRuntimeConfig()
+	cfg.Netlink.Recovery = &evpn.RemoteNetlinkRecovery{Domain: ownership.Domain{
+		InstallationUID: "7b2caa55-3f84-43ad-99e9-dcaad600a6ac", NodeUID: "46b08606-9b26-4098-90d7-02c14098122b",
+	}}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "remote.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = LoadRemoteRuntimeConfig(path)
+	if os.Geteuid() != 0 {
+		if err == nil {
+			t.Fatal("non-root recovery configuration accepted")
+		}
+		return
+	}
+	if err != nil {
+		t.Fatal("trusted root configuration rejected", err)
+	}
+	if err := os.Chmod(path, 0666); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadRemoteRuntimeConfig(path); err == nil {
+		t.Fatal("writable recovery configuration accepted")
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(path, path+".alias"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadRemoteRuntimeConfig(path); err == nil {
+		t.Fatal("multiply linked recovery configuration accepted")
+	}
+}
 
 func TestLoadRemoteRuntimeConfigStrictAndOptIn(t *testing.T) {
 	for _, tc := range []struct {

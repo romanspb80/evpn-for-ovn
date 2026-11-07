@@ -24,6 +24,9 @@ func NewValidatedRemoteType2Importer(reader *ReadOnlyType2Importer, backend *OVN
 	}
 	i := NewRemoteType2Importer(nil, nil, backend)
 	i.verified, i.ownedBackend = reader, backend
+	if err := i.restoreReceipts(); err != nil {
+		return nil, err
+	}
 	return i, nil
 }
 
@@ -105,6 +108,14 @@ func (i *RemoteType2Importer) applyValidatedSnapshot(ctx context.Context, snapsh
 			generation: snapshot.Generation, validated: &copy}
 	}
 	i.confirmedGeneration, i.confirmedDigest = snapshot.Generation, remoteHash(snapshot.Endpoints)
+	s := i.ownedBackend.owned
+	s.mu.Lock()
+	s.snapshot = copyRemoteSnapshot(snapshot)
+	err := s.checkpoint()
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	// Deterministic withdrawal-first order also handles MAC/IP/VNI remapping.
 	keys := make([]string, 0, len(i.active))
 	for key := range i.active {
@@ -132,6 +143,9 @@ func (i *RemoteType2Importer) applyValidatedSnapshot(ctx context.Context, snapsh
 	for _, key := range keys {
 		route, ok := i.active[key]
 		if !ok {
+			if i.epoch == ^uint64(0) {
+				return fmt.Errorf("route incarnation exhausted")
+			}
 			i.epoch++
 			route = desired[key]
 			route.incarnation = i.epoch
@@ -143,5 +157,10 @@ func (i *RemoteType2Importer) applyValidatedSnapshot(ctx context.Context, snapsh
 			return err
 		}
 	}
+	s.mu.Lock()
+	if s.journal != nil {
+		s.recoveryState = "RUNNING"
+	}
+	s.mu.Unlock()
 	return nil
 }

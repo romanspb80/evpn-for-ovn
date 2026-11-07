@@ -40,7 +40,7 @@ node "kind cluster (disposable lab; not a production dependency)" {
   }
   package "Optional project Operator" {
     component "EvpnCore CRD" as EvpnCore
-    component "EvpnCore reconciler\napply-only readiness" as Operator
+    component "EvpnCore reconciler\nYAML lifecycle / workload readiness" as Operator
   }
 }
 component "External FRR peer\n+ remote workload" as FRR
@@ -60,6 +60,7 @@ Handler --> OvsdbMgmt : management RPCs
 OvsdbMgmt --> OVN : NBDB / OVSDB
 EvpnCore --> Operator : reconcile
 Operator ..> Bundle : apply core manifest\nalso OVN Deployment / Services
+Operator --> Agent : optional managed DaemonSet
 
 note bottom of BGPService
   Service declaration does not install a proxy or listener.
@@ -68,7 +69,8 @@ note bottom of BGPService
 end note
 note bottom of Operator
   Does not own upstream BGPConfiguration, CRDs or DaemonSet.
-  Image fields are inert; Ready means apply succeeded.
+  App / OVN / agent image fields configure managed workloads.
+  Singleton lock, journal and finalizer; Ready gates rollout, not traffic.
   Future EvpnGateway / EvpnVTEP / EvpnNetwork are not implemented.
 end note
 note bottom of Importer

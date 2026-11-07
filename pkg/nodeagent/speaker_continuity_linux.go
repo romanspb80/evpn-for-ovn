@@ -2,10 +2,12 @@ package nodeagent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,20 +16,25 @@ import (
 )
 
 type SpeakerProcessEvidence struct {
-	PID        int32
-	StartTicks string
-	BootID     string
-	Executable string
+	PID              int32
+	StartTicks       string
+	BootID           string
+	Executable       string
+	UID              uint32
+	ExecutableSHA256 string
+	PIDNamespace     string
+	Workload         SpeakerWorkloadEvidence
 }
 
 // unixSpeakerContinuity pins the peer of the actual gRPC transport, not a
 // separately probed socket. The pidfd remains tied to that process after exit.
 type unixSpeakerContinuity struct {
-	mu                 sync.Mutex
-	fd                 int
-	bound              bool
-	evidence           SpeakerProcessEvidence
-	expectedExecutable string
+	mu       sync.Mutex
+	fd       int
+	bound    bool
+	evidence SpeakerProcessEvidence
+	attestor *providerAttestor
+	closed   bool
 }
 
 func pollSpeakerPIDFD(fds []unix.PollFd, poll func([]unix.PollFd, int) (int, error)) error {
@@ -55,10 +62,54 @@ func (s *unixSpeakerContinuity) checkLocked() error {
 	return nil
 }
 
-func (s *unixSpeakerContinuity) Check(context.Context) error {
+func (s *unixSpeakerContinuity) Check(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.checkLocked(); err != nil {
+		return err
+	}
+	if s.attestor == nil {
+		return fmt.Errorf("provider attestation configuration required")
+	}
+	process, err := readSpeakerProcess(s.evidence.PID, s.evidence.UID)
+	if err != nil {
+		return err
+	}
+	process.Workload = s.evidence.Workload
+	if process != s.evidence {
+		return fmt.Errorf("speaker process identity changed")
+	}
+	workload, err := s.attestor.attest(ctx, process)
+	if err != nil {
+		return err
+	}
+	if workload != s.evidence.Workload {
+		return fmt.Errorf("speaker workload identity changed")
+	}
+	after, err := readSpeakerProcess(s.evidence.PID, s.evidence.UID)
+	if err != nil {
+		return err
+	}
+	after.Workload = workload
+	if after != s.evidence {
+		return fmt.Errorf("speaker changed during provider attestation")
+	}
 	return s.checkLocked()
+}
+
+func (s *unixSpeakerContinuity) Incarnation() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.attestor == nil {
+		return "", fmt.Errorf("provider attestation configuration required")
+	}
+	if err := s.checkLocked(); err != nil {
+		return "", err
+	}
+	e := s.evidence
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s/%d/%s/%d/%s/%s/%s/%s/%s/%s/%s", e.BootID, e.PID, e.StartTicks,
+		e.UID, e.ExecutableSHA256, e.Workload.NodeUID, e.Workload.DaemonSetUID, e.Workload.PodUID, e.Workload.ContainerID, e.Workload.ConfigUID, e.Workload.ConfigDigest)))
+	return hex.EncodeToString(h[:]), nil
 }
 
 func (s *unixSpeakerContinuity) Evidence() SpeakerProcessEvidence {
@@ -70,6 +121,7 @@ func (s *unixSpeakerContinuity) Evidence() SpeakerProcessEvidence {
 func (s *unixSpeakerContinuity) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.closed = true
 	if !s.bound {
 		return nil
 	}
@@ -81,6 +133,12 @@ func (s *unixSpeakerContinuity) Close() error {
 func (s *unixSpeakerContinuity) DialContext(ctx context.Context, target string) (net.Conn, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		return nil, fmt.Errorf("speaker continuity closed; create a new attested transport")
+	}
+	if s.attestor == nil {
+		return nil, fmt.Errorf("provider attestation configuration required")
+	}
 	if s.bound {
 		if err := s.checkLocked(); err != nil {
 			return nil, err
@@ -90,14 +148,14 @@ func (s *unixSpeakerContinuity) DialContext(ctx context.Context, target string) 
 	if err != nil {
 		return nil, err
 	}
-	if err := s.bind(c.(*net.UnixConn)); err != nil {
+	if err := s.bind(ctx, c.(*net.UnixConn)); err != nil {
 		c.Close()
 		return nil, err
 	}
 	return c, nil
 }
 
-func (s *unixSpeakerContinuity) bind(c *net.UnixConn) error {
+func (s *unixSpeakerContinuity) bind(ctx context.Context, c *net.UnixConn) error {
 	raw, err := c.SyscallConn()
 	if err != nil {
 		return err
@@ -128,35 +186,23 @@ func (s *unixSpeakerContinuity) bind(c *net.UnixConn) error {
 	if s.bound && cred.Pid != s.evidence.PID {
 		return fmt.Errorf("gRPC peer changed from pinned speaker process")
 	}
-	proc := fmt.Sprintf("/proc/%d", cred.Pid)
-	exe, err := os.Readlink(proc + "/exe")
-	if err != nil {
-		return fmt.Errorf("read actual speaker executable: %w", err)
-	}
-	expected := s.expectedExecutable
-	if expected == "" {
-		expected = "gobgpd"
-	}
-	if filepath.Base(exe) != expected {
-		return fmt.Errorf("Unix peer executable %q is not %q", exe, expected)
-	}
-	stat, err := os.ReadFile(proc + "/stat")
+	evidence, err := readSpeakerProcess(cred.Pid, cred.Uid)
 	if err != nil {
 		return err
 	}
-	// comm may contain spaces or parentheses; fields after its last ')' start at 3.
-	fields := strings.Fields(string(stat[strings.LastIndexByte(string(stat), ')')+1:]))
-	if len(fields) < 20 {
-		return fmt.Errorf("incomplete speaker process stat")
-	}
-	if _, err := strconv.ParseUint(fields[19], 10, 64); err != nil {
-		return fmt.Errorf("invalid speaker start time: %w", err)
-	}
-	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	workload, err := s.attestor.attest(ctx, evidence)
 	if err != nil {
 		return err
 	}
-	evidence := SpeakerProcessEvidence{PID: cred.Pid, StartTicks: fields[19], BootID: strings.TrimSpace(string(boot)), Executable: exe}
+	evidence.Workload = workload
+	after, err := readSpeakerProcess(cred.Pid, cred.Uid)
+	if err != nil {
+		return err
+	}
+	after.Workload = workload
+	if after != evidence {
+		return fmt.Errorf("speaker changed while binding provider attestation")
+	}
 	fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
 	if err := pollSpeakerPIDFD(fds, unix.Poll); err != nil || fds[0].Revents != 0 {
 		return fmt.Errorf("speaker peer exited while binding evidence: %v", err)
@@ -170,4 +216,88 @@ func (s *unixSpeakerContinuity) bind(c *net.UnixConn) error {
 	s.fd, s.bound, s.evidence = fd, true, evidence
 	fd = -1
 	return nil
+}
+
+func readSpeakerProcess(pid int32, uid uint32) (SpeakerProcessEvidence, error) {
+	var none SpeakerProcessEvidence
+	proc := fmt.Sprintf("/proc/%d", pid)
+	exe, err := os.Readlink(proc + "/exe")
+	if err != nil {
+		return none, fmt.Errorf("read actual speaker executable: %w", err)
+	}
+	f, err := os.Open(proc + "/exe")
+	if err != nil {
+		return none, err
+	}
+	h := sha256.New()
+	_, err = io.Copy(h, f)
+	f.Close()
+	if err != nil {
+		return none, err
+	}
+	pidNamespace, err := os.Readlink(proc + "/ns/pid")
+	if err != nil {
+		return none, err
+	}
+	for _, ns := range []string{"pid", "net"} {
+		actual, err := os.Readlink(proc + "/ns/" + ns)
+		if err != nil {
+			return none, err
+		}
+		host, err := os.Readlink("/proc/1/ns/" + ns)
+		if err != nil || (ns == "net" && actual != host) {
+			return none, fmt.Errorf("speaker requires shared host %s namespace", ns)
+		}
+		agent, err := os.Readlink("/proc/self/ns/" + ns)
+		if err != nil || agent != host {
+			return none, fmt.Errorf("attesting agent requires shared host %s namespace", ns)
+		}
+	}
+	stat, err := os.ReadFile(proc + "/stat")
+	if err != nil {
+		return none, err
+	}
+	// comm may contain spaces or parentheses; fields after its last ')' start at 3.
+	end := strings.LastIndexByte(string(stat), ')')
+	if end < 0 {
+		return none, fmt.Errorf("invalid speaker process stat")
+	}
+	fields := strings.Fields(string(stat[end+1:]))
+	if len(fields) < 20 {
+		return none, fmt.Errorf("incomplete speaker process stat")
+	}
+	if _, err := strconv.ParseUint(fields[19], 10, 64); err != nil {
+		return none, fmt.Errorf("invalid speaker start time: %w", err)
+	}
+	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		return none, err
+	}
+	// Re-read all process UIDs: SO_PEERCRED is a connection-time snapshot,
+	// whereas setuid/exec transitions after the connection must fail closed.
+	status, err := os.ReadFile(proc + "/status")
+	if err != nil {
+		return none, err
+	}
+	found := false
+	for _, line := range strings.Split(string(status), "\n") {
+		if !strings.HasPrefix(line, "Uid:") {
+			continue
+		}
+		uids := strings.Fields(strings.TrimPrefix(line, "Uid:"))
+		if len(uids) != 4 {
+			return none, fmt.Errorf("invalid process UID evidence")
+		}
+		for _, value := range uids {
+			n, err := strconv.ParseUint(value, 10, 32)
+			if err != nil || uint32(n) != uid {
+				return none, fmt.Errorf("process UID changed from Unix peer credential")
+			}
+		}
+		found = true
+	}
+	if !found || strings.TrimSpace(string(boot)) == "" {
+		return none, fmt.Errorf("incomplete process evidence")
+	}
+	return SpeakerProcessEvidence{PID: pid, StartTicks: fields[19], BootID: strings.TrimSpace(string(boot)), Executable: exe, UID: uid, PIDNamespace: pidNamespace, ExecutableSHA256: hex.EncodeToString(h.Sum(nil))}, nil
 }

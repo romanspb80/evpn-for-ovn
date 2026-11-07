@@ -1,0 +1,4 @@
+FROM evpn4ovn/node-agent-test:cni-24b-base
+COPY operator /usr/local/bin/evpn-core-operator
+COPY evpn-node-agent evpn-cni nodeagent.test evpn.test provider-grpc-proxy /usr/local/bin/
+COPY core-resources.yaml /core-resources.yaml

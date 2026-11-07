@@ -3,7 +3,11 @@
 The EVPN Framework provides shared GoBGP route processing, network and
 endpoint services, ownership-aware reconciliation, and OVN/OVS integration.
 Its two dataplane integrations are alternatives. OVN/OVS owns workload
-forwarding in both.
+forwarding in both. These are networking integration paths, not platform
+adapters: neither the opt-in standalone importer nor these test fixtures
+implements the planned standalone OVN platform lifecycle.
+See the [framework boundary matrix](framework-first.md) and
+[modular diagram](../uml/evpn-modular-architecture.svg).
 
 ## Netlink-Programmed
 
@@ -54,7 +58,12 @@ Type-2 paths; the adapters own only their integration state. See the
 before enabling upstream Netlink writers or calling legacy management
 `StartBgp`/`AddPeer` APIs.
 
-The integrations do not establish EVPN Type-5, dynamic IPAM, generalized
-restart/adoption guarantees, or production installation readiness. The current
+The operator-managed Netlink path has bounded
+[Phase D recovery acceptance](operator-type2-acceptance.md), including
+agent/speaker replacement and post-recovery forwarding/withdrawal. That does
+not confer equivalent restart guarantees on the OVSDB path or authorize
+ambiguous AddPath/Netlink adoption. The integrations do not establish EVPN
+Type-5, dynamic IPAM, generalized restart/adoption guarantees, or production
+installation readiness. The current
 acceptance evidence and exact test commands are in the
 [Testing Guide](../../TESTING_GUIDE.md).

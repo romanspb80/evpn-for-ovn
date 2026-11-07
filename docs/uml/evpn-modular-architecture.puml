@@ -1,0 +1,70 @@
+@startuml
+top to bottom direction
+skinparam backgroundColor #FCFCFD
+skinparam defaultFontName SansSerif
+skinparam defaultFontSize 18
+skinparam defaultFontColor #172B4D
+skinparam shadowing false
+skinparam roundCorner 16
+skinparam nodesep 35
+skinparam ranksep 50
+skinparam ArrowColor #475569
+skinparam ArrowThickness 2
+skinparam rectangle {
+  BorderThickness 2
+  BackgroundColor #FFFFFF
+  BorderColor #475569
+}
+title EVPN-for-OVN | ownership and module boundaries
+
+rectangle "Project integration / orchestration" as Integrations #FFFBF2 {
+  rectangle "EVPN Operator\nEvpnCore YAML lifecycle\nReadiness / finalization" as Operator #FFF4DB
+  rectangle "EVPN CNI Adapter\nADD / CHECK / DEL\nAttachment translation" as CNI #FFF4DB
+  rectangle "Node-Agent\nEndpoint services / Type-2 loops\nCNI authority / runtime verification" as Agent #FFF4DB
+  rectangle "Neutron / standalone adapters\nPLANNED platform integration" as Future #FFF4DB
+}
+rectangle "EVPN Core (logical responsibilities)" as Core #F5F9FF {
+  rectangle "EVPN Type-2 import / export\nRoute validation / reconcile\nGoBGP route adapter" as Routes #E8F1FF
+  rectangle "Endpoint reconciliation\nIdentity-owned ports\nand OVS attachments" as Endpoints #E8F1FF
+  rectangle "OVN integration\nNetlink or OVSDB state\nAlternative network paths" as Integration #E8F1FF
+  rectangle "Ownership and recovery\nFences / journals / receipts\nAmbiguous outcomes BLOCKED" as Recovery #E8F1FF
+}
+rectangle "Reused third-party solutions" as Reused #F8FAFC {
+  rectangle "Kubernetes / containerd\nWorkloads / sandbox evidence" as Kube #F1F5F9
+  rectangle "Multus\nExternal Kubernetes integration\nInvokes EVPN CNI Adapter" as Multus #F1F5F9
+  rectangle "k8gobgp | independent\nBGPConfiguration owner\nManager + gobgpd image" as Provider #F1F5F9
+  rectangle "GoBGP | reused BGP engine\nSessions, EVPN RIB, route gRPC" as GoBGP #F1F5F9
+  rectangle "Linux / Netlink state\nIntegration FDB and neighbors" as Linux #F1F5F9
+  rectangle "OVN / OVS\nNB / SB, northd, ovn-controller\nWorkload VXLAN forwarding" as OVN #F1F5F9
+}
+rectangle "External EVPN peers / VTEPs\nFRR / Linux acceptance peer" as Peers #F1F5F9
+
+Operator --> Agent : deploys / configures
+Kube --> Multus : CNI invocation
+CNI --> Agent : Unix endpoint RPC
+Future -[#925C00,dashed]-> Endpoints : target reuse
+Agent --> Routes : runs Type-2 loops
+Agent --> Endpoints : invokes services
+Endpoints --> Integration : OVN / OVS attachment
+Routes --> Integration : accepted route state
+Integration -[hidden]right-> Recovery
+Agent --> Kube : identity evidence
+Operator --> Kube : workload reconciliation
+Provider -[#475569]-> GoBGP : BGP identity / peers\nindependent writer
+Routes <-[#2457A7]-> GoBGP : RIB reads / AddPath\nUUID-only DeletePath
+Integration --> Linux : Netlink mode
+Linux --> OVN : observed by ovn-controller
+Integration --> OVN : alternative OVSDB mode
+GoBGP <-[#2457A7]-> Peers : MP-BGP EVPN routes
+OVN <-[#18724B]-> Peers : VXLAN packets
+
+legend bottom
+  |= Color / line |= Meaning |
+  |<#E8F1FF> Blue | Project-owned core responsibilities |
+  |<#FFF4DB> Amber | Project-owned optional integration / orchestration |
+  |<#F1F5F9> Slate | Third-party implementations and infrastructure |
+  | Solid / dashed + PLANNED | Implemented / design target |
+  | Blue arrow / green arrow | Route control / packet forwarding |
+endlegend
+footer EVPN Core: logical core responsibilities - not a standalone runtime.\nRecovery spans core and runtime modules; platform independence remains a design target.
+@enduml
