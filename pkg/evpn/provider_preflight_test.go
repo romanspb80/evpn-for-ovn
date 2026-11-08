@@ -178,7 +178,11 @@ func providerRawReplacement(t *testing.T, ctx context.Context, adapter *GoBGPTyp
 	ep.RouteDistinguisher = "64512:32003"
 	add := func(endpoint LocalEndpoint) []byte {
 		route := mustProviderRoute(t, endpoint)
-		path, err := apiutil.NewPath(bgp.RF_EVPN, route.NLRI, false, route.PathAttributes, time.Now())
+		nlri, attrs, err := type2RouteToGoBGP(route)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path, err := apiutil.NewPath(bgp.RF_EVPN, nlri, false, attrs, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -249,9 +253,9 @@ func checkProviderRIB(t *testing.T, ctx context.Context, adapter *GoBGPType2Adap
 		for _, path := range paths {
 			if ribPathMatchesEndpoint(path, ep) {
 				count++
-				mac := path.NLRI.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute)
+				mac := path.NLRI
 				t.Logf("RIB RD=%s etag=%d MAC=%s IP=%s labels=%v NH=%s attrs=%v UUID=%q",
-					mac.RD, mac.ETag, mac.MacAddress, mac.IPAddress, mac.Labels, pathNextHop(path.PathAttributes), path.PathAttributes, path.PathUUID)
+					mac.RD, mac.EthernetTag, mac.MAC, mac.IP, mac.Labels, path.PathAttributes.NextHop, path.PathAttributes, path.PathUUID)
 			}
 		}
 		if count != 1 {

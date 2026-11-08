@@ -470,7 +470,7 @@ func TestGoBGPFRRType2Interop(t *testing.T) {
 		if err != nil {
 			t.Fatalf("build Type-2 route: %v", err)
 		}
-		if _, err := gobgp.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{{Family: bgp.RF_EVPN, Nlri: route.NLRI, Attrs: route.PathAttributes}}}); err != nil {
+		if _, err := gobgp.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{mustGoBGPType2Path(t, route)}}); err != nil {
 			t.Fatalf("advertise GoBGP Type-2 route: %v", err)
 		}
 		waitForFRRRoutePresent(t, endpoint.MACAddress, primaryIP(endpoint.IPAddresses), 15*time.Second)
@@ -480,7 +480,7 @@ func TestGoBGPFRRType2Interop(t *testing.T) {
 			t.Fatalf("FRR EVPN table missing advertised route\n%s", frrTable)
 		}
 
-		if err := gobgp.DeletePath(apiutil.DeletePathRequest{Paths: []*apiutil.Path{{Family: bgp.RF_EVPN, Nlri: route.NLRI, Attrs: route.PathAttributes}}}); err != nil {
+		if err := gobgp.DeletePath(apiutil.DeletePathRequest{Paths: []*apiutil.Path{mustGoBGPType2Path(t, route)}}); err != nil {
 			t.Fatalf("withdraw GoBGP Type-2 route: %v", err)
 		}
 		waitForFRRRouteAbsent(t, endpoint.MACAddress, primaryIP(endpoint.IPAddresses), 15*time.Second)
@@ -616,14 +616,14 @@ func TestGoBGPFRRType2VXLANDataPlaneInterop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build Type-2 route: %v", err)
 	}
-	if _, err := gobgp.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{{Family: bgp.RF_EVPN, Nlri: route.NLRI, Attrs: route.PathAttributes}}}); err != nil {
+	if _, err := gobgp.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{mustGoBGPType2Path(t, route)}}); err != nil {
 		t.Fatalf("advertise GoBGP Type-2 route: %v", err)
 	}
 	waitForFRRRoutePresent(t, endpoint.MACAddress, primaryIP(endpoint.IPAddresses), 15*time.Second)
 	waitForFRRVXLANFDBPresent(t, endpoint.MACAddress, localIP, 20*time.Second)
 	t.Logf("[GoBGP -> FRR dataplane] VXLAN FDB on %s contains MAC %s via VTEP %s:\n%s", vxlanName, endpoint.MACAddress, localIP, frrVXLANFDB(t))
 
-	if err := gobgp.DeletePath(apiutil.DeletePathRequest{Paths: []*apiutil.Path{{Family: bgp.RF_EVPN, Nlri: route.NLRI, Attrs: route.PathAttributes}}}); err != nil {
+	if err := gobgp.DeletePath(apiutil.DeletePathRequest{Paths: []*apiutil.Path{mustGoBGPType2Path(t, route)}}); err != nil {
 		t.Fatalf("withdraw GoBGP Type-2 route: %v", err)
 	}
 	waitForFRRRouteAbsent(t, endpoint.MACAddress, primaryIP(endpoint.IPAddresses), 15*time.Second)
@@ -690,7 +690,7 @@ func TestGoBGPFRRType2VXLANPacketForwarding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build Type-2 route: %v", err)
 	}
-	if _, err := gobgp.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{{Family: bgp.RF_EVPN, Nlri: route.NLRI, Attrs: route.PathAttributes}}}); err != nil {
+	if _, err := gobgp.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{mustGoBGPType2Path(t, route)}}); err != nil {
 		t.Fatalf("advertise GoBGP Type-2 route: %v", err)
 	}
 	waitForFRRRoutePresent(t, endpoint.MACAddress, primaryIP(endpoint.IPAddresses), 15*time.Second)
@@ -772,7 +772,7 @@ func TestGoBGPFRRType2VXLANPacketForwarding(t *testing.T) {
 	}
 	t.Logf("[I2-A.1] host FDB:\n%s\n[FRR] FDB:\n%s", fdbHost, fdbFRR)
 
-	if err := gobgp.DeletePath(apiutil.DeletePathRequest{Paths: []*apiutil.Path{{Family: bgp.RF_EVPN, Nlri: route.NLRI, Attrs: route.PathAttributes}}}); err != nil {
+	if err := gobgp.DeletePath(apiutil.DeletePathRequest{Paths: []*apiutil.Path{mustGoBGPType2Path(t, route)}}); err != nil {
 		t.Fatalf("withdraw GoBGP Type-2 route during forwarding validation: %v", err)
 	}
 	waitForFRRRouteAbsent(t, endpoint.MACAddress, primaryIP(endpoint.IPAddresses), 15*time.Second)
@@ -844,7 +844,7 @@ func TestGoBGPFRRType2Lifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatalf("build Type-2 route: %v", err)
 		}
-		if _, err := gobgp.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{{Family: bgp.RF_EVPN, Nlri: route.NLRI, Attrs: route.PathAttributes}}}); err != nil {
+		if _, err := gobgp.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{mustGoBGPType2Path(t, route)}}); err != nil {
 			t.Fatalf("advertise Type-2 route: %v", err)
 		}
 		waitForFRRRoutePresent(t, endpoint.MACAddress, primaryIP(endpoint.IPAddresses), 20*time.Second)
@@ -857,7 +857,7 @@ func TestGoBGPFRRType2Lifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatalf("build Type-2 route for withdrawal: %v", err)
 		}
-		if err := gobgp.DeletePath(apiutil.DeletePathRequest{Paths: []*apiutil.Path{{Family: bgp.RF_EVPN, Nlri: route.NLRI, Attrs: route.PathAttributes}}}); err != nil {
+		if err := gobgp.DeletePath(apiutil.DeletePathRequest{Paths: []*apiutil.Path{mustGoBGPType2Path(t, route)}}); err != nil {
 			t.Fatalf("withdraw Type-2 route: %v", err)
 		}
 		waitForFRRRouteAbsent(t, endpoint.MACAddress, primaryIP(endpoint.IPAddresses), 20*time.Second)
@@ -890,7 +890,7 @@ func TestGoBGPFRRType2Lifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatalf("build duplicate route: %v", err)
 		}
-		if _, err := gobgp.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{{Family: bgp.RF_EVPN, Nlri: route.NLRI, Attrs: route.PathAttributes}}}); err != nil {
+		if _, err := gobgp.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{mustGoBGPType2Path(t, route)}}); err != nil {
 			t.Fatalf("duplicate advertise route: %v", err)
 		}
 		waitForFRRRoutePresent(t, endpoint.MACAddress, primaryIP(endpoint.IPAddresses), 20*time.Second)
@@ -912,7 +912,7 @@ func TestGoBGPFRRType2Lifecycle(t *testing.T) {
 			if err != nil {
 				t.Fatalf("build reannounce route: %v", err)
 			}
-			if _, err := gobgp.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{{Family: bgp.RF_EVPN, Nlri: route.NLRI, Attrs: route.PathAttributes}}}); err != nil {
+			if _, err := gobgp.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{mustGoBGPType2Path(t, route)}}); err != nil {
 				t.Fatalf("reannounce after session recovery: %v", err)
 			}
 		}
@@ -982,11 +982,12 @@ func TestGoBGPFRRType2VXLANRouteImport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build local Type-2 route: %v", err)
 	}
-	if _, err := gobgp.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{{Family: bgp.RF_EVPN, Nlri: localRoute.NLRI, Attrs: localRoute.PathAttributes}}}); err != nil {
+	localPath := mustGoBGPType2Path(t, localRoute)
+	if _, err := gobgp.AddPath(apiutil.AddPathRequest{Paths: []*apiutil.Path{localPath}}); err != nil {
 		t.Fatalf("advertise local Type-2 route: %v", err)
 	}
 	defer func() {
-		_ = gobgp.DeletePath(apiutil.DeletePathRequest{Paths: []*apiutil.Path{{Family: bgp.RF_EVPN, Nlri: localRoute.NLRI, Attrs: localRoute.PathAttributes}}})
+		_ = gobgp.DeletePath(apiutil.DeletePathRequest{Paths: []*apiutil.Path{localPath}})
 	}()
 	waitForFRRRoutePresent(t, localEndpoint.MACAddress, primaryIP(localEndpoint.IPAddresses), 15*time.Second)
 	waitForFRRVXLANFDBPresent(t, localEndpoint.MACAddress, localIP, 20*time.Second)
@@ -1171,6 +1172,15 @@ func runHostCommand(t *testing.T, args ...string) error {
 		return fmt.Errorf("sudo %s failed: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+func mustGoBGPType2Path(t *testing.T, route Type2Route) *apiutil.Path {
+	t.Helper()
+	nlri, attrs, err := type2RouteToGoBGP(route)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &apiutil.Path{Family: bgp.RF_EVPN, Nlri: nlri, Attrs: attrs}
 }
 
 func mustHostCommand(t *testing.T, args ...string) string {

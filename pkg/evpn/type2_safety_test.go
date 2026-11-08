@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"sync"
 	"testing"
-
-	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
 )
 
 type memoryType2API struct {
@@ -29,8 +27,9 @@ func (a *memoryType2API) Add(_ context.Context, route Type2Route) (string, error
 		return "", a.addErr
 	}
 	id := fmt.Sprintf("path-%d", a.adds)
+	nlri := route.NLRI
 	a.paths = append(a.paths, Type2RIBPath{
-		PathUUID: id, Local: true, NLRI: route.NLRI, PathAttributes: route.PathAttributes,
+		PathUUID: id, Local: true, NLRI: &nlri, PathAttributes: route.PathAttributes,
 	})
 	return id, nil
 }
@@ -162,7 +161,7 @@ func TestType2PlansAreFencedAndImmutable(t *testing.T) {
 	ep.IPAddresses[0] = "10.0.0.99"
 	newPlan[0].Endpoint.RouteTargets[0] = "65000:999"
 	newPlan[0].Action = RouteWithdraw
-	newPlan[0].NLRI.RouteType = bgp.EVPN_IP_PREFIX
+	newPlan[0].NLRI.MAC = "02:00:00:00:00:ff"
 	applyType2(t, r, api, newPlan)
 	applied := r.AppliedRoutes()
 	if applied[0].Endpoint.RouteTargets[0] != "65000:100" || primaryIP(applied[0].Endpoint.IPAddresses) != "10.251.1.11" {
@@ -290,12 +289,13 @@ func TestType2WireIdentityIsNotEndpointIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.NLRI.String() != second.NLRI.String() || ep.RouteKey() == next.RouteKey() {
+	if !first.NLRI.Equal(second.NLRI) || first.NLRI.Key() != second.NLRI.Key() ||
+		sameType2NLRIValue(first.NLRI, second.NLRI) || ep.RouteKey() == next.RouteKey() {
 		t.Fatal("endpoint generation/attributes confused with RFC7432 wire prefix")
 	}
 	next.RouteDistinguisher = "65000:2000"
 	second, err = BuildType2Route(next)
-	if err != nil || first.NLRI.String() == second.NLRI.String() {
+	if err != nil || first.NLRI.Equal(second.NLRI) {
 		t.Fatalf("RD not part of wire identity: %v", err)
 	}
 }

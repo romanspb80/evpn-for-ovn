@@ -31,8 +31,7 @@ func TestMACOnlyPinnedGoBGPAPI(t *testing.T) {
 	if err != nil || len(rib) != 1 || !rib[0].Local {
 		t.Fatalf("binary MAC-only API roundtrip: %+v %v", rib, err)
 	}
-	n := rib[0].NLRI.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute)
-	if n.IPAddressLength != 0 {
+	if rib[0].NLRI == nil || rib[0].NLRI.IP != "" {
 		t.Fatal("MAC-only API changed NLRI IP length")
 	}
 	applyType2(t, r, adapter, planType2(t, r))
@@ -53,16 +52,20 @@ func TestExplicitMACOnlyType2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := route.NLRI.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute)
-	if got.IPAddressLength != 0 || got.IPAddress.IsValid() || got.ETag != 0 {
+	got, _, err := type2RouteToGoBGP(route)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotNLRI := got.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute)
+	if gotNLRI.IPAddressLength != 0 || gotNLRI.IPAddress.IsValid() || gotNLRI.ETag != 0 {
 		t.Fatal("invalid MAC-only encoding")
 	}
-	wire, err := got.Serialize()
+	wire, err := gotNLRI.Serialize()
 	if err != nil {
 		t.Fatal(err)
 	}
 	decoded := &bgp.EVPNMacIPAdvertisementRoute{}
-	if err := decoded.DecodeFromBytes(wire); err != nil || decoded.String() != got.String() {
+	if err := decoded.DecodeFromBytes(wire); err != nil || decoded.String() != gotNLRI.String() {
 		t.Fatalf("MAC-only roundtrip: %v", err)
 	}
 	ep.IPAddresses = []string{"10.77.0.11"}

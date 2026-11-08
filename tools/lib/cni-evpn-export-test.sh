@@ -6,8 +6,10 @@ K8GOBGP_IMAGE_ID='sha256:5210e18534979372154487954bad4fc00ad14758923b4ae058e6b0a
 
 export_setup_provider() {
   local image="${K8GOBGP_IMAGE}"
-  curl -fsSL --retry 2 https://github.com/purelb/k8gobgp/releases/download/v0.2.8/install.yaml -o "${EVIDENCE_DIR}/provider-install.yaml"
-  echo "f28c6fe7e45b5e535524de09fd13986c6956e112903c960e14f5b1cdeae91008  ${EVIDENCE_DIR}/provider-install.yaml" | sha256sum -c -
+  e2e_fetch_pinned_artifact \
+    https://github.com/purelb/k8gobgp/releases/download/v0.2.8/install.yaml \
+    f28c6fe7e45b5e535524de09fd13986c6956e112903c960e14f5b1cdeae91008 \
+    k8gobgp-v0.2.8-install.yaml "${EVIDENCE_DIR}/provider-install.yaml"
   sed "s|ghcr.io/purelb/k8gobgp:0.2.8|${image}|" "${EVIDENCE_DIR}/provider-install.yaml" | k apply -f -
   k -n k8gobgp-system patch ds k8gobgp --type=strategic -p \
     "{\"spec\":{\"template\":{\"spec\":{\"nodeSelector\":{\"kubernetes.io/hostname\":\"${WORKER}\"},\"volumes\":[{\"name\":\"gobgp-socket\",\"emptyDir\":null,\"hostPath\":{\"path\":\"/run/gobgp-export-test\",\"type\":\"DirectoryOrCreate\"}}]}}}}"

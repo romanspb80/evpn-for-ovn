@@ -193,6 +193,12 @@ func (g *remoteNetworkMappingGate) verify(networks []evpn.RemoteNetlinkNetwork, 
 // RunRemoteType2Importer uses one config snapshot for its lifetime and never
 // polls the speaker separately from the importer's single reconciliation call.
 func (s *CNIServer) RunRemoteType2Importer(ctx context.Context, runtime RuntimeOptions, opts RemoteRuntimeOptions, report func(RemoteRuntimeStatus)) (runErr error) {
+	return RunRemoteType2Importer(ctx, runtime, opts, report)
+}
+
+// RunRemoteType2Importer runs the importer without requiring the CNI server
+// runtime. The method wrapper remains for existing callers.
+func RunRemoteType2Importer(ctx context.Context, runtime RuntimeOptions, opts RemoteRuntimeOptions, report func(RemoteRuntimeStatus)) (runErr error) {
 	if opts.ConfigPath == "" {
 		return nil
 	}
@@ -217,7 +223,14 @@ func (s *CNIServer) RunRemoteType2Importer(ctx context.Context, runtime RuntimeO
 		return nil
 	}
 
-	conn, continuity, apiClient, err := newProviderTransport(cfg.AttestationConfigPath, cfg.GRPCEndpoint)
+	var installationUID, nodeUID string
+	if cfg.Netlink.Recovery != nil {
+		installationUID = cfg.Netlink.Recovery.Domain.InstallationUID
+		nodeUID = cfg.Netlink.Recovery.Domain.NodeUID
+	}
+	conn, continuity, apiClient, err := newProviderTransport(
+		cfg.AttestationConfigPath, cfg.GRPCEndpoint, cfg.ASN, cfg.RouterID, installationUID, nodeUID,
+	)
 	if err != nil {
 		return fmt.Errorf("connect to GoBGP gRPC endpoint: %w", err)
 	}
@@ -260,13 +273,16 @@ func (s *CNIServer) RunRemoteType2Importer(ctx context.Context, runtime RuntimeO
 		}
 		return mappingGate.verify(cfg.Netlink.Networks, switches)
 	}
-	if cfg.Netlink.Recovery != nil {
-		stepCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
-		err := checkMapping(stepCtx)
-		cancel()
-		if err != nil {
+	stepCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
+	err = checkMapping(stepCtx)
+	cancel()
+	if err != nil {
+		if cfg.Netlink.Recovery != nil {
 			return fmt.Errorf("RECOVERY_BLOCKED: verify persistent OVN network identity: %w", err)
 		}
+		return fmt.Errorf("verify configured OVN network mapping before importer ownership: %w", err)
+	}
+	if cfg.Netlink.Recovery != nil {
 		if err := bindRemoteRecovery(&cfg, mappingGate.uuids); err != nil {
 			return err
 		}
@@ -289,7 +305,9 @@ func (s *CNIServer) RunRemoteType2Importer(ctx context.Context, runtime RuntimeO
 			conn = nil
 		}
 		if err == nil && conn == nil {
-			newConn, newGuard, newClient, connectErr := newProviderTransport(cfg.AttestationConfigPath, cfg.GRPCEndpoint)
+			newConn, newGuard, newClient, connectErr := newProviderTransport(
+				cfg.AttestationConfigPath, cfg.GRPCEndpoint, cfg.ASN, cfg.RouterID, installationUID, nodeUID,
+			)
 			err = connectErr
 			if err == nil {
 				conn, continuity = newConn, newGuard

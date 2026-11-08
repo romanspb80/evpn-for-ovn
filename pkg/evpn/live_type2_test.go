@@ -3,7 +3,6 @@ package evpn
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -319,10 +318,10 @@ func TestLiveGoBGPType2RouteExchange_UsesRouteBuilder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build route: %v", err)
 	}
-	if route.NLRI == nil {
-		t.Fatal("expected NLRI from BuildType2Route")
+	if route.NLRI.MAC != "00:aa:bb:cc:dd:ee" || route.NLRI.IP != "10.20.30.40" || route.NLRI.Labels[0] != 500 {
+		t.Fatalf("unexpected Type-2 domain route: %+v", route.NLRI)
 	}
-	if got := fmt.Sprintf("%T", route.NLRI.RouteTypeData); got != "*bgp.EVPNMacIPAdvertisementRoute" {
-		t.Fatalf("unexpected NLRI type: %s", got)
+	if _, _, err := type2RouteToGoBGP(route); err != nil {
+		t.Fatalf("GoBGP boundary conversion failed: %v", err)
 	}
 }

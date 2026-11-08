@@ -38,25 +38,29 @@ func importPath(t *testing.T, mutate func(*bgp.EVPNMacIPAdvertisementRoute, *[]b
 	if err != nil {
 		t.Fatal(err)
 	}
-	attrs := route.PathAttributes
-	if mutate != nil {
-		mutate(route.NLRI.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute), &attrs)
+	nativeNLRI, attrs, err := type2RouteToGoBGP(route)
+	if err != nil {
+		t.Fatal(err)
 	}
-	route.NLRI.Length = uint8(route.NLRI.RouteTypeData.Len())
+	nativeRoute := nativeNLRI.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute)
+	if mutate != nil {
+		mutate(nativeRoute, &attrs)
+	}
+	nativeNLRI.Length = uint8(nativeRoute.Len())
 	for idx, attr := range attrs {
 		if hop, ok := attr.(*bgp.PathAttributeNextHop); ok {
-			attrs[idx], err = bgp.NewPathAttributeMpReachNLRI(bgp.RF_EVPN, []bgp.PathNLRI{{NLRI: route.NLRI}}, hop.Value)
+			attrs[idx], err = bgp.NewPathAttributeMpReachNLRI(bgp.RF_EVPN, []bgp.PathNLRI{{NLRI: nativeNLRI}}, hop.Value)
 			if err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
-	p, err := apiutil.NewPath(bgp.RF_EVPN, route.NLRI, false, attrs, time.Now())
+	p, err := apiutil.NewPath(bgp.RF_EVPN, nativeNLRI, false, attrs, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !route.NLRI.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute).IPAddress.IsValid() {
-		p.NlriBinary, err = route.NLRI.Serialize()
+	if !nativeRoute.IPAddress.IsValid() {
+		p.NlriBinary, err = nativeNLRI.Serialize()
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -67,6 +67,12 @@ The optional EvpnCore Operator manages YAML-driven workloads, including
 Node-Agent, with singleton ownership, readiness and finalizer cleanup.
 Node-Agent hosts endpoint services, Type-2 loops and CNI runtime authority;
 its Kubernetes/containerd recovery wiring is not a generic platform adapter.
+The opt-in `evpn-node-agent --standalone-evpn-import` mode (with
+`--mode=real-ovn-ovs --network-backend=linux-veth`) runs only the existing
+Type-2 importer, without starting the CNI service or requiring Kubernetes/CRI.
+It requires a root-owned remote-import configuration and standalone GoBGP
+attestation. Standalone local endpoint export is not enabled: it still needs a
+trusted endpoint/attachment authorization source.
 CMS is only a test/demo emulator,
 not a mandatory Framework service; no CMS runtime is required by the maintained
 Framework or CNI acceptance runners.

@@ -19,12 +19,15 @@ ACTIVE_CASE=setup
 OPERATOR_INSTALLED=0
 CNI_INSTALLED=0
 PROVIDER_PIN_CONTAINER=""
+STANDALONE_GOBGP_POD=""
 export ROOT KIND_CLUSTER WORKER EVIDENCE_DIR KUBECONFIG EVPN_FRR_INTEROP_TEST
 source "${ROOT}/tools/lib/containerlab-e2e.sh"
+source "${ROOT}/tools/lib/e2e-artifact-cache.sh"
 source "${ROOT}/tools/lib/cni-agent-image-test.sh"
 source "${ROOT}/tools/lib/cni-evpn-export-test.sh"
 source "${ROOT}/tools/lib/cni-evpn-frr-interop-test.sh"
 source "${ROOT}/tools/lib/operator-cni-test.sh"
+source "${ROOT}/tools/lib/standalone-export-smoke-test.sh"
 e2e_lab_acquire
 [[ ! -e "${EVIDENCE_DIR}" ]]
 mkdir -p "${EVIDENCE_DIR}/build"
@@ -52,6 +55,9 @@ cleanup() {
     docker rm "${PROVIDER_PIN_CONTAINER}" >/dev/null || cleanup_rc=1
   fi
   if [[ -f "${EVIDENCE_DIR}/lab.json" ]]; then
+    if [[ -n "${STANDALONE_GOBGP_POD}" ]]; then
+      standalone_smoke_capture_diagnostics || cleanup_rc=1
+    fi
     if (( ${#INTEROP_CAPTURE_UNITS[@]} > 0 )) || [[ -n "${INTEROP_CAPTURE_STAGING_DIR}" ]]; then
       interop_capture_stop || cleanup_rc=1
     fi
@@ -79,14 +85,19 @@ cleanup() {
     e2e_lab_down || cleanup_rc=1
   fi
   test_image_cleanup || cleanup_rc=1
-  python3 - "${EVIDENCE_DIR}" "${rc}" "${cleanup_rc}" <<'PY'
+  python3 - "${EVIDENCE_DIR}" "${rc}" "${cleanup_rc}" "${EVPN_STANDALONE_EXPORT_SMOKE:-0}" <<'PY'
 import csv, json, pathlib, sys
 p=pathlib.Path(sys.argv[1])
-cases={name:{"status":"NOT TESTED"} for name in (
+names=(
     "setup","operator_ownership","cni_lifecycle","cni_identity","type2_export","type2_import",
     "mp_bgp_exchange","dataplane_forwarding","route_withdrawal","operator_restart",
     "importer_restart","node_agent_restart","speaker_restart","bgp_session_loss",
-    "nbdb_unavailability","ovsdb_unavailability","withdrawal_during_failure","cleanup")}
+    "nbdb_unavailability","ovsdb_unavailability","withdrawal_during_failure",
+    "cleanup")
+if sys.argv[4] == "1":
+    names=("setup","standalone_export_advertise","standalone_export_revoke",
+           "standalone_export_restart","standalone_restore","cleanup")
+cases={name:{"status":"NOT TESTED"} for name in names}
 for row in csv.reader((p/"cases.tsv").open(), delimiter="\t"):
     name,status,time,*detail=row
     cases[name]={"status":status,"time":time,"detail":detail[0] if detail else ""}
@@ -95,6 +106,9 @@ result={"suite":"operator-managed-type2","cases":cases,"testExit":int(sys.argv[2
         "cleanupExit":int(sys.argv[3]),"evidenceDirectory":str(p),
         "topology":"single operator OVN chassis plus independent FRR/Linux VXLAN endpoint",
         "restartRecovery":"acknowledged UUID recovery and independently attested empty replacement RIB; ambiguous retained AddPath remains blocked"}
+if sys.argv[4] == "1":
+    result["suite"]="operator-managed-type2-standalone-export-smoke"
+    result["topology"]="reused single operator OVN/OVS chassis plus existing GoBGP/FRR EVPN peer"
 result["status"]=("FAIL" if result["testExit"] or result["cleanupExit"] or any(c["status"]=="FAIL" for c in cases.values())
                   else "PASS" if all(c["status"]=="PASS" for c in cases.values()) else "BLOCKED")
 (p/"result.json").write_text(json.dumps(result,indent=2)+"\n")
@@ -110,8 +124,16 @@ PY
   exit "${result_rc}"
 }
 trap cleanup EXIT
-trap 'exit $?' ERR
+trap 'rc=$?; printf "line=%s command=%s exit=%s\n" "${LINENO}" "${BASH_COMMAND}" "${rc}" | tee "${EVIDENCE_DIR}/first-failure.txt" >&2; exit "${rc}"' ERR
 for command in go docker kubectl kind curl python3 sudo; do command -v "${command}" >/dev/null; done
+# The snap launcher reopens redirected /tmp descriptors in its private mount
+# namespace. Use the same installed kubectl binary without that launcher.
+if [[ "$(readlink -f "$(command -v kubectl)")" == /usr/bin/snap &&
+      -x /snap/kubectl/current/kubectl ]]; then
+  export PATH="/snap/kubectl/current:${PATH}"
+fi
+command -v kubectl | tee "${EVIDENCE_DIR}/kubectl-path.txt"
+kubectl version --client | tee "${EVIDENCE_DIR}/kubectl-version.txt"
 test_image_snapshot
 test_image_ensure_base
 test_image_require_new_tag "${AGENT_IMAGE}"
@@ -204,8 +226,13 @@ NODE_UID="$(k get node "${WORKER}" -o jsonpath='{.metadata.uid}')"
 DAEMONSET_UID="$(k -n k8gobgp-system get ds/k8gobgp -o jsonpath='{.metadata.uid}')"
 PROVIDER_PIN_CONTAINER="$(docker create --name "evpn-provider-pin-${RUN_ID,,}" "${K8GOBGP_IMAGE}")"
 docker cp "${PROVIDER_PIN_CONTAINER}:/usr/local/bin/gobgpd" "${EVIDENCE_DIR}/gobgpd-pin"
+docker cp "${PROVIDER_PIN_CONTAINER}:/usr/local/bin/gobgp" "${EVIDENCE_DIR}/gobgp-pin"
 GOBGPD_SHA="$(sha256sum "${EVIDENCE_DIR}/gobgpd-pin")"
 GOBGPD_SHA="${GOBGPD_SHA%% *}"
+GOBGP_SHA="$(sha256sum "${EVIDENCE_DIR}/gobgp-pin")"
+GOBGP_SHA="${GOBGP_SHA%% *}"
+printf '%s  gobgp-pin\n' "${GOBGP_SHA}" >>"${EVIDENCE_DIR}/provider-binary-sha256.txt"
+printf '%s  gobgpd-pin\n' "${GOBGPD_SHA}" >>"${EVIDENCE_DIR}/provider-binary-sha256.txt"
 docker rm "${PROVIDER_PIN_CONTAINER}" >/dev/null
 PROVIDER_PIN_CONTAINER=""
 docker exec "${WORKER}" ctr version | tee "${EVIDENCE_DIR}/containerd-version.txt"
@@ -309,6 +336,12 @@ ag nc -z -U /run/evpn-node-agent/agent.sock
 k -n cni-test wait --for=condition=Ready evpncore/type2 --timeout=240s
 rt sh -ec 'ovn-nbctl --version; ovs-vsctl --version; test "$(ovsdb-client get-schema-version unix:/var/run/ovn/ovnnb_db.sock OVN_Northbound)" = 7.19.0; test "$(ovsdb-client get-schema-version unix:/var/run/ovn/ovnsb_db.sock OVN_Southbound)" = 21.13.0' | tee "${EVIDENCE_DIR}/runtime.txt"
 case_status setup PASS
+
+if [[ "${EVPN_STANDALONE_EXPORT_SMOKE:-0}" == 1 ]]; then
+  ACTIVE_CASE=standalone_export_advertise
+  standalone_export_smoke
+  exit 0
+fi
 
 verify_operator_ownership() {
   k -n cni-test get evpncore/type2 deployment/ovn-ovs ds/evpn-node-agent -o json |

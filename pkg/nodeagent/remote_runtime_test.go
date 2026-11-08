@@ -120,7 +120,7 @@ func TestRemoteRuntimeDisabledDoesNotInitializeBackend(t *testing.T) {
 		t.Fatal(err)
 	}
 	var reported []RemoteRuntimeStatus
-	err := (&CNIServer{}).RunRemoteType2Importer(context.Background(), RuntimeOptions{
+	err := RunRemoteType2Importer(context.Background(), RuntimeOptions{
 		Mode: RuntimeModeInMemory, NetworkBackend: "in-memory",
 	}, RemoteRuntimeOptions{ConfigPath: path}, func(status RemoteRuntimeStatus) {
 		reported = append(reported, status)

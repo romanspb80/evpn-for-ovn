@@ -110,3 +110,16 @@ func TestCNIExportErrorAndAbsent(t *testing.T) {
 		t.Fatal("absence not distinguished")
 	}
 }
+
+func TestCNIExportUncertainBindingReadinessIsNotAuthoritativeAbsence(t *testing.T) {
+	o, s := readyExportObserver(t)
+	s.data.Bindings[0].Up = nil
+
+	desired, err := o.DesiredLocalEndpoints(context.Background())
+	if err == nil || desired != nil {
+		t.Fatalf("unknown binding readiness became an empty authoritative observation: endpoints=%v err=%v", desired, err)
+	}
+	if len(o.Observations) != 1 || o.Observations[0].State != "observation-error" {
+		t.Fatalf("uncertain readiness was not reported as an observation error: %+v", o.Observations)
+	}
+}

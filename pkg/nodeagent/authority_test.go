@@ -18,6 +18,37 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+func serializeAgentAuthorityTest(t *testing.T) {
+	t.Helper()
+	path := filepath.Join(os.TempDir(), "evpn4ovn-nodeagent-authority-test.lock")
+	fd, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0600)
+	if err != nil {
+		t.Fatalf("open authority test lock: %v", err)
+	}
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		unix.Close(fd)
+		t.Fatalf("inspect authority test lock: %v", err)
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Uid != uint32(os.Geteuid()) ||
+		stat.Nlink != 1 || stat.Mode&0077 != 0 {
+		unix.Close(fd)
+		t.Fatalf("authority test lock must be private, single-link, regular, and owned by this user")
+	}
+	if err := unix.Flock(fd, unix.LOCK_EX); err != nil {
+		unix.Close(fd)
+		t.Fatalf("lock authority test fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := unix.Flock(fd, unix.LOCK_UN); err != nil {
+			t.Errorf("unlock authority test fixture: %v", err)
+		}
+		if err := unix.Close(fd); err != nil {
+			t.Errorf("close authority test fixture lock: %v", err)
+		}
+	})
+}
+
 type authorityTestService struct{ *CNIServer }
 
 func (s authorityTestService) Add(ctx context.Context, _ *nodeagentpb.CNIAddRequest) (*nodeagentpb.CNIAddResponse, error) {
@@ -97,6 +128,7 @@ func awaitAuthorityEvent(t *testing.T, events <-chan string, expected string) {
 }
 
 func TestAgentAuthorityLifecycle(t *testing.T) {
+	serializeAgentAuthorityTest(t)
 	// Deliberately not parallel: production authority covers the entire netns.
 	for _, mode := range []string{"graceful", "stopped", "killed"} {
 		t.Run(mode, func(t *testing.T) {
@@ -152,6 +184,7 @@ func TestAgentAuthorityLifecycle(t *testing.T) {
 }
 
 func TestAgentAuthorityWaitsForActiveRPC(t *testing.T) {
+	serializeAgentAuthorityTest(t)
 	path := filepath.Join(t.TempDir(), "cni.sock")
 	owner, stop, events := startAuthorityOwner(t, path)
 	conn, err := grpc.NewClient("unix://"+path, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -188,6 +221,7 @@ func TestAgentAuthorityWaitsForActiveRPC(t *testing.T) {
 }
 
 func TestAgentAuthoritySameProcessContender(t *testing.T) {
+	serializeAgentAuthorityTest(t)
 	lock, err := AcquireAgentAuthority()
 	if err != nil {
 		t.Fatal(err)

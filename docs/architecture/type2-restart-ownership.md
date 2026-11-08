@@ -2,8 +2,9 @@
 
 Automatic importer recovery and narrowly scoped exporter/CNI recovery are
 implemented as opt-in runtime modes. Provider transport requires independently
-verified Unix-peer, Kubernetes and containerd evidence. Retained ambiguous
-AddPath outcomes remain blocked. This is not universal recovery or a
+verified Unix-peer evidence plus either Kubernetes/containerd identity or
+explicit standalone service pins. Retained ambiguous AddPath outcomes remain
+blocked. This is not universal recovery or a
 production-readiness claim; see the actual
 [operator-managed acceptance results](operator-type2-acceptance.md).
 
@@ -51,8 +52,8 @@ placement, immutable image, and running container ID. Independently queried
 containerd container metadata and `tasks list`/`tasks ps` must associate that
 exact host PID with the same running container, Pod UID/name/namespace and
 image; `/proc/PID/ns/pid` must match the independently observed runtime task
-root PID's namespace. A gobgpd child of the k8gobgp manager is supported; cgroup names are not
-identity authority.
+root PID's namespace. A gobgpd child of the k8gobgp manager is supported; in
+Kubernetes mode, cgroup names are not identity authority.
 
 Read-only dynamic Kubernetes access to `bgp.purelb.io/v1` resource `configs`
 also verifies the BGPConfiguration UID, deletion state and SHA256 of canonical
@@ -64,7 +65,8 @@ pins. Normal Kubernetes JSON specs can be hashed with
 
 The root-owned JSON file and all parent directories must be non-writable by
 group/other and contain no symlinks; the file must be single-link and bounded.
-Example (replace every identity/hash with independently obtained actual values):
+Kubernetes-mode example (replace every identity/hash with independently
+obtained actual values):
 
 ```json
 {
@@ -100,8 +102,46 @@ read-only at the paths above, and uses the read-only
 `evpn-provider-observer` ServiceAccount with its in-cluster token. This RBAC is
 administrator-owned, outside EvpnCore's managed-resource lifecycle.
 
-The containerd socket must be root-owned, mode 0600, with trusted parent
-directories. **A read-only socket mount does not restrict runtime RPCs**:
+Standalone speaker attestation is selected explicitly with `mode: "standalone"`
+and a `standalone` object; Kubernetes fields cannot be mixed into that mode and
+there is no fallback to Kubernetes after an attestation failure. The protected
+pin includes installation, node and service UUIDs, expected UID, executable
+path and SHA256, exact argv, GoBGP config path and SHA256, ASN, router ID, and
+the expected unified cgroup-v2 path (for example
+`/system.slice/gobgpd.service`). The actual gRPC transport must still be a
+node-local Unix socket: kernel `SO_PEERCRED` and `SO_PEERPIDFD` bind the peer to
+the process being checked. Each attestation checks that process's cgroup,
+UIDs, executable, arguments and selected root-protected config; the GoBGP API
+ASN/router ID are checked only after peer attestation. Process start identity,
+service pins and config digest contribute to the speaker incarnation, so a
+replacement process cannot inherit old receipts based on its API response.
+Standalone mode requires visible host PID/network/cgroup namespaces, unified
+cgroup v2, and kernel `SO_PEERPIDFD`; it does not construct Kubernetes or
+containerd clients. This is an attestation option for the existing Node-Agent
+runtime, not a standalone daemon or deployment topology.
+
+```json
+{
+  "mode": "standalone",
+  "standalone": {
+    "installationUID": "<INSTALLATION-UUID>",
+    "nodeUID": "<NODE-UUID>",
+    "serviceUID": "<SERVICE-UUID>",
+    "expectedUID": 0,
+    "cgroupPath": "/system.slice/gobgpd.service",
+    "executablePath": "/usr/bin/gobgpd",
+    "executableSHA256": "<64-lowercase-hex>",
+    "arguments": ["/usr/bin/gobgpd", "-f", "/etc/gobgp/gobgpd.yaml"],
+    "goBGPConfigPath": "/etc/gobgp/gobgpd.yaml",
+    "goBGPConfigSHA256": "<64-lowercase-hex>",
+    "asn": 64512,
+    "routerID": "192.0.2.1"
+  }
+}
+```
+
+For Kubernetes mode, the containerd socket must be root-owned, mode 0600, with
+trusted parent directories. **A read-only socket mount does not restrict runtime RPCs**:
 possession of it is containerd administrator authority. Only the three
 read-only inspection commands above are invoked locally; no runtime API or
 arbitrary command is exposed through agent RPC. The static ctr executable is

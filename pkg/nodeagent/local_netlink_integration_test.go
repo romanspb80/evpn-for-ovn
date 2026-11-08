@@ -152,9 +152,9 @@ func TestNativeLocalExporter_Live(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	peerPaths := func() []string {
+	peerPaths := func() []evpn.Type2NLRI {
 		t.Helper()
-		var paths []string
+		var paths []evpn.Type2NLRI
 		err := peer.ListPath(apiutil.ListPathRequest{TableType: api.TableType_TABLE_TYPE_GLOBAL, Family: bgp.RF_EVPN},
 			func(prefix bgp.NLRI, routePaths []*apiutil.Path) {
 				nlri, ok := prefix.(*bgp.EVPNNLRI)
@@ -180,7 +180,19 @@ func TestNativeLocalExporter_Live(t *testing.T) {
 					if hop != "192.0.2.1" || !rt || n.ETag != 0 || len(n.Labels) != 1 || n.Labels[0] != 100 {
 						t.Errorf("invalid standard peer Type-2: %s hop=%s RT=%v", prefix, hop, rt)
 					}
-					paths = append(paths, prefix.String())
+					ip := ""
+					if n.IPAddressLength != 0 {
+						ip = n.IPAddress.String()
+					}
+					esi, err := n.ESI.Serialize()
+					if err != nil {
+						t.Errorf("invalid Type-2 ESI: %v", err)
+						return
+					}
+					paths = append(paths, evpn.Type2NLRI{
+						RD: n.RD.String(), ESI: hex.EncodeToString(esi),
+						EthernetTag: n.ETag, MAC: n.MacAddress.String(), IP: ip, Labels: append([]uint32(nil), n.Labels...),
+					})
 				}
 			})
 		if err != nil {
@@ -202,7 +214,7 @@ func TestNativeLocalExporter_Live(t *testing.T) {
 					}
 					found := false
 					for _, path := range paths {
-						found = found || path == route.NLRI.String()
+						found = found || path.Equal(route.NLRI)
 					}
 					matches = matches && found
 				}
@@ -312,7 +324,7 @@ func TestNativeLocalExporter_Live(t *testing.T) {
 		t.Fatal("native local removal did not remove OVN FDB")
 	}
 	rib, err := adapter.Snapshot(ctx)
-	if err != nil || len(rib) != 1 || rib[0].NLRI.String() != route.NLRI.String() {
+	if err != nil || len(rib) != 1 || rib[0].NLRI == nil || !rib[0].NLRI.Equal(route.NLRI) {
 		t.Fatalf("foreign GoBGP route not protected: %+v %v", rib, err)
 	}
 	command("ovn-nbctl", "--", "lsp-add", "contract-ls", "contract-local", "--",

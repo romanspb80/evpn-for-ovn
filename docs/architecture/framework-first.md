@@ -206,6 +206,7 @@ or proof of production readiness.
 | Provider and dependencies | [Runtime/ownership audit](runtime-dependencies.md) |
 | Operator and lab deployment | [EvpnCore lifecycle](evpn-core-operator.md), [kind deployment](deployment.md) |
 | CNI lifecycle | [Application guide](../applications/cni/README.md), [creation authority](cni-creation-authority.md), [continuity](cni-endpoint-continuity.md) |
+| Standalone endpoint authorization | [Protected local authorization snapshot](standalone-endpoint-authorization.md) |
 | Ownership/recovery and acceptance | [Restart contract](type2-restart-ownership.md), [operator Type-2 acceptance](operator-type2-acceptance.md), [Testing Guide](../../TESTING_GUIDE.md) |
 | Platform roadmap | [Integration targets](../roadmap/integrations/README.md), [framework capabilities](../roadmap/framework.md) |
 

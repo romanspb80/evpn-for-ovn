@@ -54,8 +54,18 @@ INTEROP_WORKER_PID=''
 INTEROP_FRR_PID=''
 
 provider_exec() {
-  timeout --kill-after=2s 15s kubectl --context "kind-${KIND_CLUSTER}" \
-    -n k8gobgp-system exec "${PROVIDER_POD}" -- "$@"
+  if [[ -n "${STANDALONE_GOBGP_POD:-}" ]]; then
+    if [[ "${1:-}" == gobgp ]]; then
+      shift
+      set -- gobgp --target unix:///run/gobgp/gobgp.sock "$@"
+    fi
+    timeout --kill-after=2s 15s kubectl --kubeconfig "${KUBECONFIG}" \
+      --context "kind-${KIND_CLUSTER}" -n cni-test \
+      exec "${STANDALONE_GOBGP_POD}" -c ovn-ovs -- "$@" </dev/null
+  else
+    timeout --kill-after=2s 15s kubectl --context "kind-${KIND_CLUSTER}" \
+      -n k8gobgp-system exec "${PROVIDER_POD}" -- "$@" </dev/null
+  fi
 }
 interop_exec_pod() {
   timeout --kill-after=2s 15s kubectl --context "kind-${KIND_CLUSTER}" \
@@ -1627,10 +1637,13 @@ interop_wait_lifecycle_binding() {
 }
 
 interop_wait_rib_route() {
-  local mac="$1" ip="$2" mode="$3" label="$4" deadline=$((SECONDS+90)) local_rib frr_rib found
+  local mac="$1" ip="$2" mode="$3" label="$4" deadline=$((SECONDS+90)) local_rib="" frr_rib="" found
   while (( SECONDS < deadline )); do
-    local_rib="$(provider_exec gobgp global rib -a evpn 2>/dev/null || true)"
-    frr_rib="$(docker exec "${FRR_CONTAINER}" vtysh -c 'show bgp l2vpn evpn route detail' 2>/dev/null || true)"
+    if ! local_rib="$(provider_exec gobgp global rib -a evpn 2>"${EVIDENCE_DIR}/gobgp-rib-${label}.stderr")" ||
+       ! frr_rib="$(docker exec "${FRR_CONTAINER}" vtysh -c 'show bgp l2vpn evpn route detail' 2>"${EVIDENCE_DIR}/frr-rib-${label}.stderr")"; then
+      sleep 1
+      continue
+    fi
     found=0
     if grep -Fq "${mac}" <<<"${local_rib}" && grep -Fq "${ip}" <<<"${local_rib}" &&
       grep -Fq "${mac}" <<<"${frr_rib}" && grep -Fq "${ip}" <<<"${frr_rib}"; then

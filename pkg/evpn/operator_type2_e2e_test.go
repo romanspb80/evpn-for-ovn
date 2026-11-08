@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/osrg/gobgp/v4/api"
-	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -35,18 +34,18 @@ func TestOperatorManagedType2Wire_Live(t *testing.T) {
 	}
 	seen := make(map[string]int)
 	for _, path := range paths {
-		route, ok := path.NLRI.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute)
-		if !ok {
+		route := path.NLRI
+		if route == nil {
 			t.Fatal("non-Type-2 path in Type-2 snapshot")
 		}
-		mac := route.MacAddress.String()
+		mac := route.MAC
 		switch mac {
 		case "0a:58:f0:00:00:0a", "0a:58:f0:00:00:0b":
 			ip := "10.244.240.10"
 			if mac == "0a:58:f0:00:00:0b" {
 				ip = "10.244.240.11"
 			}
-			macOnly := route.IPAddressLength == 0
+			macOnly := route.IP == ""
 			ips := []string{ip}
 			key := mac + "|" + ip
 			if macOnly {
@@ -62,30 +61,23 @@ func TestOperatorManagedType2Wire_Live(t *testing.T) {
 			if !path.Local || !ribPathMatchesEndpoint(path, want) {
 				t.Fatalf("local NLRI/origin/RD/RT/VNI/next-hop mismatch: %+v", path)
 			}
-			if route.ETag != 0 {
-				t.Fatalf("unexpected Ethernet Tag: %d", route.ETag)
+			if route.EthernetTag != 0 {
+				t.Fatalf("unexpected Ethernet Tag: %d", route.EthernetTag)
 			}
 			seen[key]++
 		case "0a:58:f0:01:00:0c":
-			if path.Local || route.RD.String() != "198.18.0.3:1000" || route.ETag != 0 ||
-				len(route.Labels) != 1 || route.Labels[0] != 1000 || pathNextHop(path.PathAttributes) != remoteVTEP {
+			if path.Local || route.RD != "198.18.0.3:1000" || route.EthernetTag != 0 ||
+				len(route.Labels) != 1 || route.Labels[0] != 1000 || path.PathAttributes.NextHop != remoteVTEP {
 				t.Fatalf("remote NLRI/RD/VNI/next-hop/origin-location mismatch: %+v", path)
 			}
-			ip := route.IPAddress.String()
-			if route.IPAddressLength == 0 {
-				ip = ""
-			}
+			ip := route.IP
 			if ip != "" && ip != "10.244.240.12" {
 				t.Fatalf("unexpected remote IP: %s", ip)
 			}
 			rt := false
-			for _, attr := range path.PathAttributes {
-				if communities, ok := attr.(*bgp.PathAttributeExtendedCommunities); ok {
-					for _, community := range communities.Value {
-						if community.String() == "64512:1000" {
-							rt = true
-						}
-					}
+			for _, community := range path.PathAttributes.ExtendedCommunities {
+				if community.Kind == Type2RouteTargetCommunity && community.Value == "64512:1000" {
+					rt = true
 				}
 			}
 			if !rt {

@@ -1,6 +1,7 @@
 package evpn
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/netip"
@@ -33,16 +34,99 @@ type LocalEndpoint struct {
 	LocalVTEP          string
 	NodeName           string
 	Chassis            string
-	Advertise          bool
-	MACOnly            bool
+	// Advertise is set only after platform-specific identity, readiness, and
+	// authorization checks succeed. False candidates are never advertised.
+	Advertise bool
+	MACOnly   bool
 }
 
-// Type2Route is the route payload that should be sent to the GoBGP gRPC API.
+// Type2NLRI is the package-owned value representation of an EVPN Type-2 NLRI.
+type Type2NLRI struct {
+	RD          string
+	ESI         string
+	EthernetTag uint32
+	MAC         string
+	IP          string
+	Labels      []uint32
+}
+
+// Key is the Type-2 route prefix identity; labels are replacement attributes, not key fields.
+func (n Type2NLRI) Key() string {
+	return fmt.Sprintf("%q|%q|%d|%q|%q", n.RD, n.ESI, n.EthernetTag, n.MAC, n.IP)
+}
+
+// Equal compares the route prefix identity and intentionally ignores labels.
+func (n Type2NLRI) Equal(other Type2NLRI) bool {
+	return n.RD == other.RD && n.ESI == other.ESI && n.EthernetTag == other.EthernetTag &&
+		n.MAC == other.MAC && n.IP == other.IP
+}
+
+func sameType2NLRIValue(lhs, rhs Type2NLRI) bool {
+	if !lhs.Equal(rhs) || len(lhs.Labels) != len(rhs.Labels) {
+		return false
+	}
+	for i := range lhs.Labels {
+		if lhs.Labels[i] != rhs.Labels[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func (n Type2NLRI) Validate() error {
+	if _, err := bgp.ParseRouteDistinguisher(n.RD); err != nil {
+		return fmt.Errorf("invalid Type-2 RD: %w", err)
+	}
+	esi, err := hex.DecodeString(n.ESI)
+	if err != nil || len(esi) != 10 {
+		return fmt.Errorf("invalid Type-2 ESI")
+	}
+	mac, err := net.ParseMAC(n.MAC)
+	if err != nil || len(mac) != 6 {
+		return fmt.Errorf("invalid Type-2 MAC")
+	}
+	if n.IP != "" {
+		if _, err := netip.ParseAddr(n.IP); err != nil {
+			return fmt.Errorf("invalid Type-2 IP: %w", err)
+		}
+	}
+	if len(n.Labels) == 0 {
+		return fmt.Errorf("Type-2 labels required")
+	}
+	return nil
+}
+
+type Type2ExtendedCommunityKind string
+
+const (
+	Type2RouteTargetCommunity   Type2ExtendedCommunityKind = "route-target"
+	Type2EncapsulationCommunity Type2ExtendedCommunityKind = "encapsulation"
+	Type2MACMobilityCommunity   Type2ExtendedCommunityKind = "mac-mobility"
+	Type2OpaqueCommunity        Type2ExtendedCommunityKind = "opaque"
+	Type2OriginIGP                                         = "igp"
+)
+
+// Type2ExtendedCommunity preserves the semantics relevant to Type-2 routes.
+// Opaque values are retained by the GoBGP observer as serialized bytes in hex.
+type Type2ExtendedCommunity struct {
+	Kind     Type2ExtendedCommunityKind
+	Value    string
+	Sequence uint32
+	Sticky   bool
+}
+
+type Type2PathAttributes struct {
+	Origin              string
+	NextHop             string
+	ExtendedCommunities []Type2ExtendedCommunity
+}
+
+// Type2Route is a package-owned route value consumed by reconciliation.
 type Type2Route struct {
 	Endpoint       LocalEndpoint
 	Action         RouteAction
-	NLRI           *bgp.EVPNNLRI
-	PathAttributes []bgp.PathAttributeInterface
+	NLRI           Type2NLRI
+	PathAttributes Type2PathAttributes
 	operation      *routeOperation
 }
 
@@ -191,44 +275,30 @@ func BuildType2Route(ep LocalEndpoint) (Type2Route, error) {
 	if err != nil {
 		return Type2Route{}, err
 	}
-
-	var nlri *bgp.EVPNNLRI
-	if ep.MACOnly {
-		mac, _ := net.ParseMAC(ep.MACAddress)
-		nlri = bgp.NewEVPNNLRI(bgp.EVPN_ROUTE_TYPE_MAC_IP_ADVERTISEMENT, &bgp.EVPNMacIPAdvertisementRoute{
-			RD: rd, MacAddressLength: 48, MacAddress: mac, Labels: []uint32{ep.VNI},
-		})
-	} else {
-		nlri, err = bgp.NewEVPNMacIPAdvertisementRoute(rd, bgp.EthernetSegmentIdentifier{}, 0, ep.MACAddress, ipAddr, []uint32{ep.VNI})
-		if err != nil {
-			return Type2Route{}, err
-		}
-	}
-
-	routeTargets := make([]bgp.ExtendedCommunityInterface, 0, len(ep.RouteTargets)+1)
+	routeTargets := make([]Type2ExtendedCommunity, 0, len(ep.RouteTargets)+1)
 	for _, rt := range ep.RouteTargets {
 		parsed, err := bgp.ParseRouteTarget(rt)
 		if err != nil {
 			return Type2Route{}, err
 		}
-		routeTargets = append(routeTargets, parsed)
+		routeTargets = append(routeTargets, Type2ExtendedCommunity{Kind: Type2RouteTargetCommunity, Value: parsed.String()})
 	}
-	routeTargets = append(routeTargets, &bgp.EncapExtended{TunnelType: bgp.TUNNEL_TYPE_VXLAN})
-	nextHop, err := bgp.NewPathAttributeNextHop(vtep)
+	routeTargets = append(routeTargets, Type2ExtendedCommunity{Kind: Type2EncapsulationCommunity, Value: "vxlan"})
+
+	mac, err := net.ParseMAC(ep.MACAddress)
 	if err != nil {
 		return Type2Route{}, err
 	}
-	attrs := []bgp.PathAttributeInterface{
-		bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP),
-		nextHop,
-		bgp.NewPathAttributeExtendedCommunities(routeTargets),
+	nlri := Type2NLRI{RD: rd.String(), ESI: strings.Repeat("0", 20), MAC: mac.String(), Labels: []uint32{ep.VNI}}
+	if !ep.MACOnly {
+		nlri.IP = ipAddr.String()
 	}
 
 	return Type2Route{
 		Endpoint:       ep,
 		Action:         RouteAdvertise,
 		NLRI:           nlri,
-		PathAttributes: attrs,
+		PathAttributes: Type2PathAttributes{Origin: Type2OriginIGP, NextHop: vtep.String(), ExtendedCommunities: routeTargets},
 	}, nil
 }
 
@@ -245,7 +315,7 @@ func (r *RouteReconciler) Reconcile(desired []LocalEndpoint) ([]Type2Route, erro
 		if err != nil {
 			return nil, err
 		}
-		key := route.NLRI.String()
+		key := route.NLRI.Key()
 		if other, ok := desiredMap[key]; ok && !other.Equivalent(endpoint) {
 			return nil, fmt.Errorf("%w: conflicting desired owners or attributes for %s", ErrRouteOwnership, key)
 		}

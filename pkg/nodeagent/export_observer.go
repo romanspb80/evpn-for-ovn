@@ -11,6 +11,7 @@ import (
 	"github.com/romanspb80/evpn-for-ovn/pkg/attachment"
 	"github.com/romanspb80/evpn-for-ovn/pkg/endpoint"
 	"github.com/romanspb80/evpn-for-ovn/pkg/evpn"
+	"github.com/romanspb80/evpn-for-ovn/pkg/nodeagent/ovnexport"
 	nbdb "github.com/romanspb80/evpn-for-ovn/services/ovsdb_mgmt/ovnnb"
 
 	"github.com/cenkalti/backoff/v4"
@@ -104,26 +105,44 @@ func (s liveExportState) Snapshot(ctx context.Context) (exportSnapshot, error) {
 
 type liveOVNExportState struct{ nb, sb client.Client }
 
-func (s liveOVNExportState) ListLogicalSwitchPorts(ctx context.Context) ([]evpn.OVNLogicalSwitchPort, error) {
+func (s liveOVNExportState) ListLogicalSwitchPorts(ctx context.Context) ([]ovnexport.OVNLogicalSwitchPort, error) {
 	var ports []*nbdb.LogicalSwitchPort
 	if err := selectExportRows(ctx, s.nb, "Logical_Switch_Port",
 		[]string{"_uuid", "name", "addresses", "external_ids"}, &ports); err != nil {
 		return nil, err
 	}
-	out := make([]evpn.OVNLogicalSwitchPort, 0, len(ports))
+	var switches []*nbdb.LogicalSwitch
+	if err := selectExportRows(ctx, s.nb, "Logical_Switch", []string{"_uuid", "name", "ports"}, &switches); err != nil {
+		return nil, err
+	}
+	switchByPort := make(map[string]string)
+	for _, sw := range switches {
+		for _, portUUID := range sw.Ports {
+			if previous, exists := switchByPort[portUUID]; exists {
+				return nil, fmt.Errorf("OVN LSP UUID %q belongs to multiple logical switches %q and %q", portUUID, previous, sw.Name)
+			}
+			switchByPort[portUUID] = sw.Name
+		}
+	}
+	out := make([]ovnexport.OVNLogicalSwitchPort, 0, len(ports))
 	for _, port := range ports {
-		out = append(out, evpn.OVNLogicalSwitchPort{
-			Name: port.Name, Addresses: append([]string(nil), port.Addresses...),
+		logicalSwitch, exists := switchByPort[port.UUID]
+		if port.UUID == "" || !exists {
+			return nil, fmt.Errorf("OVN LSP %q has no authoritative logical-switch membership", port.Name)
+		}
+		out = append(out, ovnexport.OVNLogicalSwitchPort{
+			UUID: port.UUID, Name: port.Name, LogicalSwitch: logicalSwitch,
+			Addresses:   append([]string(nil), port.Addresses...),
 			ExternalIDs: copyExportIDs(port.ExternalIDs),
 		})
 	}
 	return out, nil
 }
 
-func (s liveOVNExportState) ListPortBindings(ctx context.Context) ([]evpn.OVNPortBinding, error) {
+func (s liveOVNExportState) ListPortBindings(ctx context.Context) ([]ovnexport.OVNPortBinding, error) {
 	var bindings []*exportPortBinding
 	if err := selectExportRows(ctx, s.sb, "Port_Binding",
-		[]string{"_uuid", "logical_port", "chassis"}, &bindings); err != nil {
+		[]string{"_uuid", "logical_port", "chassis", "up"}, &bindings); err != nil {
 		return nil, err
 	}
 	var chassis []*exportChassis
@@ -134,7 +153,7 @@ func (s liveOVNExportState) ListPortBindings(ctx context.Context) ([]evpn.OVNPor
 	for _, row := range chassis {
 		chassisNames[row.UUID] = row.Name
 	}
-	out := make([]evpn.OVNPortBinding, 0, len(bindings))
+	out := make([]ovnexport.OVNPortBinding, 0, len(bindings))
 	for _, binding := range bindings {
 		name := ""
 		if binding.Chassis != nil {
@@ -144,9 +163,32 @@ func (s liveOVNExportState) ListPortBindings(ctx context.Context) ([]evpn.OVNPor
 				return nil, fmt.Errorf("Port_Binding %q references unknown chassis %q", binding.LogicalPort, *binding.Chassis)
 			}
 		}
-		out = append(out, evpn.OVNPortBinding{LogicalPort: binding.LogicalPort, Chassis: name})
+		var up *bool
+		if binding.Up != nil {
+			value := *binding.Up
+			up = &value
+		}
+		out = append(out, ovnexport.OVNPortBinding{
+			UUID: binding.UUID, LogicalPort: binding.LogicalPort, Chassis: name, Up: up,
+		})
 	}
 	return out, nil
+}
+
+func (s liveOVNExportState) AuthorizationSnapshot(ctx context.Context) (ovnexport.OVNEndpointSnapshot, error) {
+	ports, err := s.ListLogicalSwitchPorts(ctx)
+	if err != nil {
+		return ovnexport.OVNEndpointSnapshot{NBError: err}, fmt.Errorf("read authoritative OVN NB endpoint state: %w", err)
+	}
+	bindings, err := s.ListPortBindings(ctx)
+	if err != nil {
+		return ovnexport.OVNEndpointSnapshot{
+			NBComplete: true, LSPs: ports, SBError: err,
+		}, fmt.Errorf("read authoritative OVN SB endpoint state: %w", err)
+	}
+	return ovnexport.OVNEndpointSnapshot{
+		NBComplete: true, SBComplete: true, LSPs: ports, Bindings: bindings,
+	}, nil
 }
 
 func copyExportIDs(ids map[string]string) map[string]string {
@@ -221,7 +263,12 @@ func (o *CNIEndpointObserver) DesiredLocalEndpoints(ctx context.Context) ([]evpn
 		cfg, ok := configs[spec.NetworkID]
 		reason := "network not allowlisted"
 		if ok && cfg.Enabled && cfg.ExportSource() == "cni" {
-			reason = exportDataplaneReason(spec, rec, cfg, o.config.LocalChassis, data)
+			reason, err = exportDataplaneReason(spec, rec, cfg, o.config.LocalChassis, data)
+			if err != nil {
+				obs.State, obs.Reason = "observation-error", err.Error()
+				o.Observations = append(o.Observations, obs)
+				return nil, fmt.Errorf("%s: %w", spec.ID, err)
+			}
 		} else if ok && cfg.ExportSource() != "cni" {
 			reason = "network authority is " + cfg.ExportSource()
 		}
@@ -235,6 +282,8 @@ func (o *CNIEndpointObserver) DesiredLocalEndpoints(ctx context.Context) ([]evpn
 			if err != nil {
 				return nil, fmt.Errorf("invalid managed endpoint address: %w", err)
 			}
+			// This candidate is authorized only after CNI identity, OVN/OVS/SB
+			// ownership, readiness, and the Linux attachment have all verified.
 			ep := evpn.LocalEndpoint{
 				NetworkID: spec.NetworkID, EndpointID: string(spec.ID), Incarnation: spec.Incarnation,
 				MACAddress: spec.MACAddress, IPAddresses: []string{ip.Addr().String()},
@@ -251,23 +300,23 @@ func (o *CNIEndpointObserver) DesiredLocalEndpoints(ctx context.Context) ([]evpn
 	return desired, nil
 }
 
-func exportDataplaneReason(spec endpoint.EndpointSpec, rec *endpointRecord, cfg evpn.EVPNNetworkConfig, chassis string, data exportSnapshot) string {
+func exportDataplaneReason(spec endpoint.EndpointSpec, rec *endpointRecord, cfg evpn.EVPNNetworkConfig, chassis string, data exportSnapshot) (string, error) {
 	id := rec.identity
 	if spec.Workload.Kind != "pod" || spec.Workload.UID == "" || string(spec.ID) != spec.NetworkID+"|"+spec.AttachmentID+"|"+spec.Workload.UID ||
 		id.GetEndpointId() != string(spec.ID) || id.GetNetworkId() != spec.NetworkID || id.GetAttachmentId() != spec.AttachmentID ||
 		id.GetWorkloadUid() != spec.Workload.UID || id.GetIncarnation() != spec.Incarnation || spec.Incarnation == "" ||
 		rec.runtime.GetContainerId() != spec.Incarnation {
-		return "CNI identity/incarnation mismatch"
+		return "CNI identity/incarnation mismatch", nil
 	}
 	if spec.LogicalSwitch != cfg.LogicalSwitch {
-		return "logical switch differs from allowlist"
+		return "logical switch differs from allowlist", nil
 	}
 	if len(spec.IPAddresses) != 1 {
-		return "exactly one managed IPv4 prefix required"
+		return "exactly one managed IPv4 prefix required", nil
 	}
 	ip, err := netip.ParsePrefix(spec.IPAddresses[0])
 	if err != nil || !ip.Addr().Is4() {
-		return "managed endpoint is not a single IPv4 prefix"
+		return "managed endpoint is not a single IPv4 prefix", nil
 	}
 	want := attachment.ExternalIDsForIdentity(attachment.Identity{
 		EndpointID: string(spec.ID), NetworkID: spec.NetworkID, AttachmentID: spec.AttachmentID, WorkloadUID: spec.Workload.UID, Incarnation: spec.Incarnation,
@@ -284,95 +333,101 @@ func exportDataplaneReason(spec endpoint.EndpointSpec, rec *endpointRecord, cfg 
 	for i := range data.LSPs {
 		if data.LSPs[i].Name == spec.LogicalSwitchPort {
 			if lsp != nil {
-				return "duplicate LSP"
+				return "duplicate LSP", nil
 			}
 			lsp = data.LSPs[i]
 		}
 	}
 	if lsp == nil {
-		return "NB LSP absent"
+		return "NB LSP absent", nil
 	}
 	if !owned(lsp.ExternalIDs) {
-		return "NB LSP ownership mismatch"
+		return "NB LSP ownership mismatch", nil
 	}
 	memberships := 0
 	for _, sw := range data.Switches {
 		for _, port := range sw.Ports {
 			if port == lsp.UUID {
 				if sw.Name != cfg.LogicalSwitch {
-					return "LSP in unexpected switch"
+					return "LSP in unexpected switch", nil
 				}
 				memberships++
 			}
 		}
 	}
 	if memberships != 1 {
-		return "LSP switch membership not unique"
+		return "LSP switch membership not unique", nil
 	}
 	if len(lsp.Addresses) != 1 {
-		return "LSP address set differs from CNI attachment"
+		return "LSP address set differs from CNI attachment", nil
 	}
 	fields := strings.Fields(lsp.Addresses[0])
 	if len(fields) != 2 || !strings.EqualFold(fields[0], spec.MACAddress) || (fields[1] != spec.IPAddresses[0] && fields[1] != ip.Addr().String()) {
-		return "LSP MAC/IP differs from CNI attachment"
+		return "LSP MAC/IP differs from CNI attachment", nil
 	}
 	var iface *vswitch.Interface
 	for i := range data.Interfaces {
 		if data.Interfaces[i].Name == spec.OVSInterfaceName {
 			if iface != nil {
-				return "duplicate OVS Interface"
+				return "duplicate OVS Interface", nil
 			}
 			iface = data.Interfaces[i]
 		}
 	}
 	if iface == nil || !owned(iface.ExternalIDs) {
-		return "OVS Interface absent or wrong owner/iface-id"
+		return "OVS Interface absent or wrong owner/iface-id", nil
 	}
 	if iface.Ofport == nil || *iface.Ofport <= 0 || (iface.Error != nil && *iface.Error != "") {
-		return "OVS Interface ofport/error unready"
+		return "OVS Interface ofport/error unready", nil
 	}
 	var port *vswitch.Port
 	for i := range data.Ports {
 		if data.Ports[i].Name == spec.OVSInterfaceName {
 			if port != nil {
-				return "duplicate OVS Port"
+				return "duplicate OVS Port", nil
 			}
 			port = data.Ports[i]
 		}
 	}
 	if port == nil || len(port.Interfaces) != 1 || port.Interfaces[0] != iface.UUID {
-		return "OVS Port/Interface relationship unready"
+		return "OVS Port/Interface relationship unready", nil
 	}
 	bridges := 0
 	for _, bridge := range data.Bridges {
 		for _, id := range bridge.Ports {
 			if id == port.UUID {
 				if bridge.Name != "br-int" {
-					return "OVS Port attached outside br-int"
+					return "OVS Port attached outside br-int", nil
 				}
 				bridges++
 			}
 		}
 	}
 	if bridges != 1 {
-		return "OVS Port not uniquely attached to br-int"
+		return "OVS Port not uniquely attached to br-int", nil
 	}
 	var binding *exportPortBinding
 	for i := range data.Bindings {
 		if data.Bindings[i].LogicalPort == lsp.Name {
 			if binding != nil {
-				return "duplicate Port_Binding"
+				return "duplicate Port_Binding", nil
 			}
 			binding = data.Bindings[i]
 		}
 	}
-	if binding == nil || binding.Chassis == nil || binding.Up == nil || !*binding.Up {
-		return "SB Port_Binding absent/down/unbound"
+	if binding == nil || binding.Chassis == nil {
+		return "SB Port_Binding absent/unbound", nil
+	}
+	if binding.Up == nil {
+		return "", fmt.Errorf("SB Port_Binding %q readiness is uncertain", lsp.Name)
+	}
+	if !*binding.Up {
+		return "SB Port_Binding down", nil
 	}
 	for _, c := range data.Chassis {
 		if c.UUID == *binding.Chassis && c.Name == chassis {
-			return ""
+			return "", nil
 		}
 	}
-	return "SB Port_Binding is not on configured local chassis"
+	return "SB Port_Binding is not on configured local chassis", nil
 }

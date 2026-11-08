@@ -3,9 +3,9 @@
 
 operator_install_cni() {
   local multus_sha=88346aaec1049ec669e11157771b498e056a44073cbf93975361d52e2e338f9e
-  curl -fsSL --retry 2 https://github.com/k8snetworkplumbingwg/multus-cni/releases/download/v4.3.1/multus-cni_4.3.1_linux_amd64.tar.gz \
-    -o "${EVIDENCE_DIR}/multus.tar.gz"
-  echo "${multus_sha}  ${EVIDENCE_DIR}/multus.tar.gz" | sha256sum -c -
+  e2e_fetch_pinned_artifact \
+    https://github.com/k8snetworkplumbingwg/multus-cni/releases/download/v4.3.1/multus-cni_4.3.1_linux_amd64.tar.gz \
+    "${multus_sha}" multus-cni_4.3.1_linux_amd64.tar.gz "${EVIDENCE_DIR}/multus.tar.gz"
   tar -xzf "${EVIDENCE_DIR}/multus.tar.gz" -C "${EVIDENCE_DIR}" multus-cni_4.3.1_linux_amd64/multus
   k apply -f "${ROOT}/deploy/kind/cni-multus-test/rbac.yaml"
   k wait --for=condition=Established crd/network-attachment-definitions.k8s.cni.cncf.io --timeout=60s

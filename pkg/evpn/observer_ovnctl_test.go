@@ -4,26 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 )
 
-type CommandRunner interface {
-	Run(ctx context.Context, name string, args ...string) (string, error)
+type OVNLogicalSwitchPort struct {
+	Name        string
+	Addresses   []string
+	ExternalIDs map[string]string
 }
 
-type ExecRunner struct{}
-
-func (ExecRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("%s %s failed: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return string(out), nil
+type OVNPortBinding struct {
+	LogicalPort string
+	Chassis     string
 }
 
-// OVNCtlSource reads OVN state through kubectl exec and ovn-nbctl/sbctl JSON output.
+// OVNCtlSource reads OVN state through kubectl exec for package integration tests.
 type OVNCtlSource struct {
 	Runner      CommandRunner
 	KubeContext string

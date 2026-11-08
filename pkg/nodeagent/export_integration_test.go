@@ -1,7 +1,6 @@
 package nodeagent
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -13,7 +12,6 @@ import (
 	"github.com/romanspb80/evpn-for-ovn/pkg/evpn"
 
 	"github.com/osrg/gobgp/v4/api"
-	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -127,8 +125,8 @@ func TestCNIExporterRIB_Live(t *testing.T) {
 			t.Fatal(err)
 		}
 		wire, err := json.Marshal(struct {
-			NLRI       interface{}
-			Attributes []bgp.PathAttributeInterface
+			NLRI       evpn.Type2NLRI
+			Attributes evpn.Type2PathAttributes
 		}{route.NLRI, route.PathAttributes})
 		if err != nil {
 			t.Fatal(err)
@@ -162,17 +160,20 @@ func TestCNIExporterRIB_Live(t *testing.T) {
 	}
 	ownCount, foreignCount := 0, 0
 	for _, path := range paths {
-		nlri := path.NLRI.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute)
-		if nlri.RD.String() == "64512:32999" {
+		nlri := path.NLRI
+		if nlri == nil {
+			t.Fatal("nil Type-2 NLRI in RIB snapshot")
+		}
+		if nlri.RD == "64512:32999" {
 			foreignCount++
 			continue
 		}
-		if nlri.RD.String() != "64512:100" {
+		if nlri.RD != "64512:100" {
 			t.Fatalf("unexpected RIB prefix: %v", path.NLRI)
 		}
 		ownCount++
 		if os.Getenv("EVPN_EXPORT_UNCLAIMED") == "yes" {
-			t.Logf("unclaimed namespace path preserved, NOT adopted: NLRI=%s attributes=%v", path.NLRI, path.PathAttributes)
+			t.Logf("unclaimed namespace path preserved, NOT adopted: NLRI=%v attributes=%v", path.NLRI, path.PathAttributes)
 			continue
 		}
 		matched := false
@@ -181,31 +182,20 @@ func TestCNIExporterRIB_Live(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want, err := route.NLRI.Serialize()
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := path.NLRI.Serialize()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(want, got) {
+			if !nlri.Equal(route.NLRI) {
 				continue
 			}
-			nh, rt := false, false
-			for _, attr := range path.PathAttributes {
-				switch a := attr.(type) {
-				case *bgp.PathAttributeMpReachNLRI:
-					nh = a.Nexthop.String() == owned.Endpoint.LocalVTEP
-				case *bgp.PathAttributeExtendedCommunities:
-					rt = len(a.Value) == 1 && a.Value[0].String() == "64512:100"
+			nh, rt := path.PathAttributes.NextHop == owned.Endpoint.LocalVTEP, false
+			for _, community := range path.PathAttributes.ExtendedCommunities {
+				if community.Kind == evpn.Type2RouteTargetCommunity && community.Value == "64512:100" {
+					rt = true
 				}
 			}
-			if !nh || !rt || nlri.ETag != 0 || len(nlri.Labels) != 1 || nlri.Labels[0] != 100 || owned.PathUUID == "" {
+			if !nh || !rt || nlri.EthernetTag != 0 || len(nlri.Labels) != 1 || nlri.Labels[0] != 100 || owned.PathUUID == "" {
 				t.Fatal("incorrect Type-2 attributes/receipt")
 			}
 			matched = true
-			t.Logf("actual RIB UUID-receipt=%s RD=%s MAC=%s IP=%s label=%v next-hop=%s RT=64512:100 endpoint=%s incarnation=%s", owned.PathUUID, nlri.RD, nlri.MacAddress, nlri.IPAddress, nlri.Labels, owned.Endpoint.LocalVTEP, owned.Endpoint.EndpointID, owned.Endpoint.Incarnation)
+			t.Logf("actual RIB UUID-receipt=%s RD=%s MAC=%s IP=%s label=%v next-hop=%s RT=64512:100 endpoint=%s incarnation=%s", owned.PathUUID, nlri.RD, nlri.MAC, nlri.IP, nlri.Labels, owned.Endpoint.LocalVTEP, owned.Endpoint.EndpointID, owned.Endpoint.Incarnation)
 		}
 		if !matched {
 			t.Fatal("RIB path has no matching confirmed applied endpoint")

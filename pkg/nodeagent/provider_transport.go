@@ -24,11 +24,13 @@ func (g attestedReadiness) Check(ctx context.Context) error {
 	return g.continuity.Check(ctx)
 }
 
-func newProviderTransport(path, target string) (*grpc.ClientConn, *unixSpeakerContinuity, api.GoBgpServiceClient, error) {
+func newProviderTransport(path, target string, asn uint32, routerID, installationUID, nodeUID string) (*grpc.ClientConn, *unixSpeakerContinuity, api.GoBgpServiceClient, error) {
 	if path == "" || !isNodeLocalUnixEndpoint(target) {
 		return nil, nil, nil, fmt.Errorf("RECOVERY_BLOCKED: actual Unix peer provider attestation configuration required")
 	}
-	guard, err := NewAttestedSpeakerContinuity(path)
+	guard, err := newAttestedSpeakerContinuityForSpeaker(path, speakerRuntimeExpectation{
+		ASN: asn, RouterID: routerID, InstallationUID: installationUID, NodeUID: nodeUID,
+	})
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("RECOVERY_BLOCKED: provider attestation: %w", err)
 	}

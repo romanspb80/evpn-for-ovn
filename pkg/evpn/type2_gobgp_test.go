@@ -1,10 +1,13 @@
 package evpn
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -150,7 +153,7 @@ func TestType2GoBGPConfirmedLifecycle(t *testing.T) {
 	client.deleteErr = nil
 	applyType2(t, r, adapter, planType2(t, r))
 	paths, err := adapter.Snapshot(ctx)
-	if err != nil || len(paths) != 1 || paths[0].NLRI.String() != foreignRoute.NLRI.String() {
+	if err != nil || len(paths) != 1 || paths[0].NLRI == nil || !paths[0].NLRI.Equal(foreignRoute.NLRI) {
 		t.Fatalf("foreign path not preserved: paths=%v err=%v", paths, err)
 	}
 	if err := adapter.Delete(ctx, receipts[0]); err != nil {
@@ -200,6 +203,166 @@ func TestType2GoBGPOldUUIDCannotDeleteReplacement(t *testing.T) {
 	applyType2(t, r, adapter, planType2(t, r))
 }
 
+func TestType2GoBGPDomainConversionsPreserveRouteValues(t *testing.T) {
+	cases := []struct {
+		name string
+		edit func(*LocalEndpoint)
+	}{
+		{name: "ipv4"},
+		{name: "ipv6", edit: func(ep *LocalEndpoint) { ep.IPAddresses = []string{"2001:db8::10"} }},
+		{name: "mac-only", edit: func(ep *LocalEndpoint) { ep.MACOnly, ep.IPAddresses = true, nil }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ep := sampleEndpoint()
+			if tc.edit != nil {
+				tc.edit(&ep)
+			}
+			route, err := BuildType2Route(ep)
+			if err != nil {
+				t.Fatal(err)
+			}
+			route.PathAttributes.ExtendedCommunities = append(route.PathAttributes.ExtendedCommunities,
+				Type2ExtendedCommunity{Kind: Type2MACMobilityCommunity, Sequence: 7, Sticky: true})
+			nlri, attrs, err := type2RouteToGoBGP(route)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotNLRI, err := type2NLRIFromGoBGP(nlri)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotAttrs, err := type2PathAttributesFromGoBGP(attrs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(gotNLRI, route.NLRI) || !reflect.DeepEqual(gotAttrs, route.PathAttributes) {
+				t.Fatalf("GoBGP round trip changed route values: NLRI=%+v attrs=%+v", gotNLRI, gotAttrs)
+			}
+		})
+	}
+}
+
+func TestType2GoBGPConversionRejectsIncompleteObservations(t *testing.T) {
+	if _, err := type2NLRIFromGoBGP(nil); err == nil {
+		t.Fatal("nil Type-2 observation accepted")
+	}
+	route, err := BuildType2Route(sampleEndpoint())
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid, _, err := type2RouteToGoBGP(route)
+	if err != nil {
+		t.Fatal(err)
+	}
+	malformed := *valid
+	malformedData := *(valid.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute))
+	malformedData.IPAddressLength = 24
+	malformed.RouteTypeData = &malformedData
+	if _, err := type2NLRIFromGoBGP(&malformed); err == nil {
+		t.Fatal("inconsistent GoBGP IP length accepted")
+	}
+	route.NLRI.Labels = nil
+	if _, _, err := type2RouteToGoBGP(route); err == nil {
+		t.Fatal("Type-2 route without labels accepted")
+	}
+	want, err := BuildType2Route(sampleEndpoint())
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := Type2RIBPath{NLRI: &Type2NLRI{
+		RD: want.NLRI.RD, ESI: want.NLRI.ESI, EthernetTag: want.NLRI.EthernetTag,
+		MAC: want.NLRI.MAC, IP: want.NLRI.IP, Labels: []uint32{want.Endpoint.VNI + 1},
+	}, PathAttributes: want.PathAttributes}
+	if ribPathMatchesEndpoint(observed, want.Endpoint) {
+		t.Fatal("incomplete/mismatched route attributes matched an owned endpoint")
+	}
+	observed.NLRI = &want.NLRI
+	observed.PathAttributes = Type2PathAttributes{}
+	if ribPathMatchesEndpoint(observed, want.Endpoint) {
+		t.Fatal("missing required path attributes matched an owned endpoint")
+	}
+}
+
+func TestType2WirePayloadMatchesLegacyGoBGPEncoding(t *testing.T) {
+	endpoints := []LocalEndpoint{sampleEndpoint()}
+	ipv6 := sampleEndpoint()
+	ipv6.IPAddresses = []string{"2001:db8::10"}
+	endpoints = append(endpoints, ipv6)
+	macOnly := sampleEndpoint()
+	macOnly.MACOnly, macOnly.IPAddresses = true, nil
+	endpoints = append(endpoints, macOnly)
+	for _, endpoint := range endpoints {
+		gotNLRI, gotAttrs, err := type2WirePayload(endpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantNLRI, wantAttrs := legacyType2WirePayload(t, endpoint)
+		if !bytes.Equal(gotNLRI, wantNLRI) || !reflect.DeepEqual(gotAttrs, wantAttrs) {
+			t.Fatalf("durable wire payload changed for MAC-only=%t", endpoint.MACOnly)
+		}
+	}
+}
+
+func legacyType2WirePayload(t *testing.T, endpoint LocalEndpoint) ([]byte, [][]byte) {
+	t.Helper()
+	rd, err := bgp.ParseRouteDistinguisher(endpoint.RouteDistinguisher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nlri *bgp.EVPNNLRI
+	if endpoint.MACOnly {
+		mac, err := net.ParseMAC(endpoint.MACAddress)
+		if err != nil {
+			t.Fatal(err)
+		}
+		nlri = bgp.NewEVPNNLRI(bgp.EVPN_ROUTE_TYPE_MAC_IP_ADVERTISEMENT, &bgp.EVPNMacIPAdvertisementRoute{
+			RD: rd, MacAddressLength: 48, MacAddress: mac, Labels: []uint32{endpoint.VNI},
+		})
+	} else {
+		ip, err := netip.ParseAddr(primaryIP(endpoint.IPAddresses))
+		if err != nil {
+			t.Fatal(err)
+		}
+		nlri, err = bgp.NewEVPNMacIPAdvertisementRoute(rd, bgp.EthernetSegmentIdentifier{}, 0,
+			endpoint.MACAddress, ip, []uint32{endpoint.VNI})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	communities := make([]bgp.ExtendedCommunityInterface, 0, len(endpoint.RouteTargets)+1)
+	for _, value := range endpoint.RouteTargets {
+		community, err := bgp.ParseRouteTarget(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		communities = append(communities, community)
+	}
+	communities = append(communities, &bgp.EncapExtended{TunnelType: bgp.TUNNEL_TYPE_VXLAN})
+	nextHop, err := bgp.NewPathAttributeNextHop(netip.MustParseAddr(endpoint.LocalVTEP))
+	if err != nil {
+		t.Fatal(err)
+	}
+	attrs := []bgp.PathAttributeInterface{
+		bgp.NewPathAttributeOrigin(bgp.BGP_ORIGIN_ATTR_TYPE_IGP),
+		nextHop,
+		bgp.NewPathAttributeExtendedCommunities(communities),
+	}
+	wireNLRI, err := nlri.Serialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wireAttrs := make([][]byte, 0, len(attrs))
+	for _, attr := range attrs {
+		encoded, err := attr.Serialize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		wireAttrs = append(wireAttrs, encoded)
+	}
+	return wireNLRI, wireAttrs
+}
+
 func TestType2GoBGPForeignReplacementPreserved(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -219,7 +382,11 @@ func TestType2GoBGPForeignReplacementPreserved(t *testing.T) {
 	old := r.AppliedRoutes()[0]
 	route, _ := BuildType2Route(ep)
 	// Simulate a different API writer replacing this NLRI outside our adapter.
-	path, err := apiutil.NewPath(bgp.RF_EVPN, route.NLRI, false, route.PathAttributes, time.Now())
+	nlri, attrs, err := type2RouteToGoBGP(route)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := apiutil.NewPath(bgp.RF_EVPN, nlri, false, attrs, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

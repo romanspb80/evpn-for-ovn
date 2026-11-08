@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
 	"golang.org/x/sys/unix"
@@ -176,11 +175,10 @@ func TestLocalNetlinkDiscoveryAndReconciliation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		native := route.NLRI.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute)
-		if ep.MACOnly && (native.IPAddressLength != 0 || native.IPAddress.IsValid()) {
+		if ep.MACOnly && route.NLRI.IP != "" {
 			t.Fatal("MAC-only route encoded an IP")
 		}
-		if _, err := route.NLRI.Serialize(); err != nil {
+		if err := route.NLRI.Validate(); err != nil {
 			t.Fatal(err)
 		}
 	}

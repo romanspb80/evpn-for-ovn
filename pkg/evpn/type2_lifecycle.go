@@ -1,13 +1,10 @@
 package evpn
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"sort"
-
-	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
 )
 
 var (
@@ -25,8 +22,8 @@ type OwnedType2Route struct {
 type Type2RIBPath struct {
 	PathUUID       string
 	Local          bool
-	NLRI           *bgp.EVPNNLRI
-	PathAttributes []bgp.PathAttributeInterface
+	NLRI           *Type2NLRI
+	PathAttributes Type2PathAttributes
 }
 
 // Type2RIBSource must return a complete snapshot from one pinned local speaker.
@@ -169,7 +166,7 @@ func (r *RouteReconciler) Resync(ctx context.Context, source Type2RIBSource, rec
 		if !path.Local {
 			continue
 		}
-		key := path.NLRI.String()
+		key := path.NLRI.Key()
 		receipt, owned := claims[path.PathUUID]
 		if !owned {
 			foreign[key] = true
@@ -213,7 +210,7 @@ func (r *RouteReconciler) resyncDurable(ctx context.Context, source Type2RIBSour
 		if err != nil || receipt.PathUUID == "" {
 			return fmt.Errorf("%w: invalid durable receipt", ErrRouteOwnership)
 		}
-		key := route.NLRI.String()
+		key := route.NLRI.Key()
 		if _, duplicate := claims[key]; duplicate {
 			return fmt.Errorf("%w: duplicate durable wire route", ErrRouteOwnership)
 		}
@@ -227,7 +224,7 @@ func (r *RouteReconciler) resyncDurable(ctx context.Context, source Type2RIBSour
 		if !path.Local {
 			continue
 		}
-		key := path.NLRI.String()
+		key := path.NLRI.Key()
 		receipt, claimed := claims[key]
 		if !claimed {
 			foreign[key] = true
@@ -253,59 +250,23 @@ func ribPathMatchesEndpoint(path Type2RIBPath, ep LocalEndpoint) bool {
 	if err != nil || path.NLRI == nil {
 		return false
 	}
-	gotNLRI, err := path.NLRI.Serialize()
-	if err != nil {
-		return false
-	}
-	wantNLRI, err := want.NLRI.Serialize()
-	if err != nil || !bytes.Equal(gotNLRI, wantNLRI) || pathNextHop(path.PathAttributes) != pathNextHop(want.PathAttributes) {
-		return false
-	}
-	originMatches := false
-	for _, attr := range path.PathAttributes {
-		if origin, ok := attr.(*bgp.PathAttributeOrigin); ok {
-			originMatches = origin.Value == bgp.BGP_ORIGIN_ATTR_TYPE_IGP
-		}
-	}
-	if !originMatches {
-		return false
-	}
-	communities := func(attrs []bgp.PathAttributeInterface) ([]string, error) {
-		var communities []string
-		for _, attr := range attrs {
-			if ext, ok := attr.(*bgp.PathAttributeExtendedCommunities); ok {
-				for _, community := range ext.Value {
-					value, err := community.Serialize()
-					if err != nil {
-						return nil, err
-					}
-					communities = append(communities, string(value))
-				}
-			}
-		}
-		return communities, nil
-	}
-	wantRT, err := communities(want.PathAttributes)
-	if err != nil {
-		return false
-	}
-	filteredRT := make([]string, 0, len(path.PathAttributes))
-	for _, attr := range path.PathAttributes {
-		ext, ok := attr.(*bgp.PathAttributeExtendedCommunities)
-		if !ok {
-			continue
-		}
-		for _, community := range ext.Value {
-			if mobility, ok := community.(*bgp.MacMobilityExtended); ok &&
-				mobility.Sequence == 0 && !mobility.IsSticky {
+	return sameType2NLRIValue(*path.NLRI, want.NLRI) &&
+		path.PathAttributes.NextHop == want.PathAttributes.NextHop &&
+		path.PathAttributes.Origin == Type2OriginIGP &&
+		equalType2Communities(path.PathAttributes.ExtendedCommunities, want.PathAttributes.ExtendedCommunities)
+}
+
+func equalType2Communities(lhs, rhs []Type2ExtendedCommunity) bool {
+	canonical := func(values []Type2ExtendedCommunity) []string {
+		out := make([]string, 0, len(values))
+		for _, community := range values {
+			if community.Kind == Type2MACMobilityCommunity && community.Sequence == 0 && !community.Sticky {
 				continue
 			}
-			value, err := community.Serialize()
-			if err != nil {
-				return false
-			}
-			filteredRT = append(filteredRT, string(value))
+			out = append(out, fmt.Sprintf("%s|%q|%d|%t", community.Kind, community.Value, community.Sequence, community.Sticky))
 		}
+		sort.Strings(out)
+		return out
 	}
-	return equalStringSet(filteredRT, wantRT)
+	return equalStringSet(canonical(lhs), canonical(rhs))
 }

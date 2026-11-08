@@ -15,7 +15,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/romanspb80/evpn-for-ovn/pkg/endpointauth"
 	"github.com/romanspb80/evpn-for-ovn/pkg/evpn"
+	"github.com/romanspb80/evpn-for-ovn/pkg/nodeagent/ovnexport"
 	nbdb "github.com/romanspb80/evpn-for-ovn/services/ovsdb_mgmt/ovnnb"
 	"github.com/vishvananda/netns"
 
@@ -172,6 +174,18 @@ func validateLocalExportConfig(cfg evpn.ExporterConfig) error {
 // RunEndpointExporter is an optional periodic reader/application loop alongside
 // the existing CNI server. It never invokes CNI ADD/DEL or speaker session RPCs.
 func (s *CNIServer) RunEndpointExporter(ctx context.Context, runtime RuntimeOptions, opts ExportRuntimeOptions, report func(ExportStatus)) error {
+	return runEndpointExporter(ctx, runtime, opts, report, s, nil, nil)
+}
+
+func runEndpointExporter(
+	ctx context.Context,
+	runtime RuntimeOptions,
+	opts ExportRuntimeOptions,
+	report func(ExportStatus),
+	server *CNIServer,
+	standalone *StandaloneExportRuntimeConfig,
+	fencer *endpointauth.Fencer,
+) error {
 	if opts.ConfigPath == "" {
 		return nil
 	}
@@ -213,20 +227,39 @@ func (s *CNIServer) RunEndpointExporter(ctx context.Context, runtime RuntimeOpti
 	}()
 	exporter := &evpn.EndpointExporter{}
 	var observer *CNIEndpointObserver
+	var standaloneObserver *standaloneAuthorizationObserver
 	var bound *evpn.ExporterConfig
 	var last evpn.ExportResult
 	tick := func() {
 		status := ExportStatus{Time: time.Now().UTC(), Result: evpn.ExportResult{Applied: last.Applied}}
+		if standaloneObserver != nil {
+			standaloneObserver.Observations = nil
+		}
 		cfg, err := LoadExporterConfig(opts.ConfigPath)
 		stepCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 		defer cancel()
 		if err == nil && cfg.Enabled {
 			err = validateLocalExportConfig(cfg)
 		}
+		var accepted *endpointauth.AcceptedSnapshot
+		if err == nil && standalone != nil {
+			err = validateStandaloneExporterConfig(*standalone, cfg)
+			if err == nil {
+				var policy *endpointauth.Snapshot
+				policy, err = LoadEndpointAuthorization(standalone.AuthorizationPolicyPath)
+				if err == nil && (policy.InstallationUID() != standalone.InstallationUID ||
+					policy.NodeUID() != standalone.NodeUID || policy.LocalChassis() != standalone.LocalChassis) {
+					err = fmt.Errorf("authorization policy scope differs from standalone installation, node or chassis identity")
+				}
+				if err == nil {
+					accepted, err = fencer.Accept(policy)
+				}
+			}
+		}
 		if err == nil && cfg.Enabled && authority == nil {
 			authority, err = evpn.AcquireExporterAuthority()
 		}
-		if err == nil && cfg.Enabled && observer == nil {
+		if err == nil && cfg.Enabled && observer == nil && standaloneObserver == nil {
 			nb, err = newOVNNBClient(stepCtx, runtime.OVNNBEndpoint)
 			if err == nil {
 				ovs, err = newOVSClient(stepCtx, runtime.OVSDBEndpoint)
@@ -243,27 +276,42 @@ func (s *CNIServer) RunEndpointExporter(ctx context.Context, runtime RuntimeOpti
 					}
 				}
 				if err == nil {
-					observer = &CNIEndpointObserver{server: s, source: source, config: cfg}
-					selected := selectedEndpointObserver{cni: observer}
 					frameworkNetworks := make(map[string]evpn.EVPNNetworkConfig)
 					for _, network := range cfg.Networks {
 						if network.Enabled && network.ExportSource() == "framework" {
 							frameworkNetworks[network.NetworkID] = network
 						}
 					}
-					if len(frameworkNetworks) != 0 {
-						selected.framework = &evpn.OVNEndpointObserver{
-							Source:    liveOVNExportState{nb: nb, sb: sb},
-							LocalNode: cfg.NodeName, LocalChassis: cfg.LocalChassis,
+					if standalone != nil {
+						standaloneObserver = &standaloneAuthorizationObserver{
+							Source: liveOVNExportState{nb: nb, sb: sb},
+							Local: ovnexport.TrustedEndpointIdentity{
+								InstallationUID: standalone.InstallationUID,
+								NodeUID:         standalone.NodeUID,
+								NodeName:        cfg.NodeName,
+								LocalChassis:    cfg.LocalChassis,
+							},
 							Networks: frameworkNetworks,
 						}
-					}
-					if native != nil {
-						selected.native = native
-					}
-					exporter.Observer = selected
-					if cfg.Recovery != nil {
-						exporter.Observer = continuityExportObserver{s, selected}
+						standaloneObserver.Accepted = accepted
+						exporter.Observer = standaloneObserver
+					} else {
+						observer = &CNIEndpointObserver{server: server, source: source, config: cfg}
+						selected := selectedEndpointObserver{cni: observer}
+						if len(frameworkNetworks) != 0 {
+							selected.framework = &ovnexport.FrameworkEndpointObserver{
+								Source:    liveOVNExportState{nb: nb, sb: sb},
+								LocalNode: cfg.NodeName, LocalChassis: cfg.LocalChassis,
+								Networks: frameworkNetworks,
+							}
+						}
+						if native != nil {
+							selected.native = native
+						}
+						exporter.Observer = selected
+						if cfg.Recovery != nil {
+							exporter.Observer = continuityExportObserver{server, selected}
+						}
 					}
 				}
 			}
@@ -293,8 +341,13 @@ func (s *CNIServer) RunEndpointExporter(ctx context.Context, runtime RuntimeOpti
 				copy := cfg
 				bound = &copy
 			}
-			observer.config = cfg
+			if observer != nil {
+				observer.config = cfg
+			}
 			exporter.DryRun = cfg.DryRun
+			if standaloneObserver != nil {
+				standaloneObserver.Accepted = accepted
+			}
 			if !cfg.DryRun && conn != nil && cfg.Recovery != nil && continuity.Check(stepCtx) != nil {
 				err = conn.Close()
 				err = errors.Join(err, continuity.Close())
@@ -304,7 +357,14 @@ func (s *CNIServer) RunEndpointExporter(ctx context.Context, runtime RuntimeOpti
 				var newConn *grpc.ClientConn
 				var newGuard *unixSpeakerContinuity
 				var apiClient api.GoBgpServiceClient
-				newConn, newGuard, apiClient, err = newProviderTransport(cfg.AttestationConfigPath, cfg.GRPCEndpoint)
+				var installationUID, nodeUID string
+				if cfg.Recovery != nil {
+					installationUID = cfg.Recovery.Domain.InstallationUID
+					nodeUID = cfg.Recovery.Domain.NodeUID
+				}
+				newConn, newGuard, apiClient, err = newProviderTransport(
+					cfg.AttestationConfigPath, cfg.GRPCEndpoint, cfg.ASN, cfg.RouterID, installationUID, nodeUID,
+				)
 				if err == nil {
 					conn, continuity = newConn, newGuard
 					gate := attestedReadiness{evpn.SpeakerReadiness{Client: apiClient, ASN: cfg.ASN, RouterID: cfg.RouterID}, continuity}
@@ -321,7 +381,10 @@ func (s *CNIServer) RunEndpointExporter(ctx context.Context, runtime RuntimeOpti
 						}
 					}
 					if cfg.Recovery != nil && err == nil {
-						applier := continuityRouteApplier{s, adapter}
+						var applier evpn.Type2RouteApplier = adapter
+						if standalone == nil {
+							applier = continuityRouteApplier{server, adapter}
+						}
 						if exporterRecovery == nil {
 							exporterRecovery, err = evpn.OpenExportRecovery(*cfg.Recovery, adapter, applier, continuity)
 						} else {
@@ -337,7 +400,12 @@ func (s *CNIServer) RunEndpointExporter(ctx context.Context, runtime RuntimeOpti
 				status.Result, err = exporter.Reconcile(stepCtx)
 				last = status.Result
 			}
-			status.Observations = append([]ExportObservation(nil), observer.Observations...)
+			if observer != nil {
+				status.Observations = append([]ExportObservation(nil), observer.Observations...)
+			}
+			if standaloneObserver != nil {
+				status.Observations = append([]ExportObservation(nil), standaloneObserver.Observations...)
+			}
 		}
 		if err != nil {
 			status.Error = err.Error()

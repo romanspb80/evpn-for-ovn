@@ -94,22 +94,12 @@ func decodeExportRecord(data []byte, target interface{}) error {
 }
 
 func durableExportRoute(endpoint LocalEndpoint, incarnation, id string) (exportReceipt, error) {
-	route, err := BuildType2Route(endpoint)
-	if err != nil {
-		return exportReceipt{}, err
-	}
-	nlri, err := route.NLRI.Serialize()
+	nlri, attributes, err := type2WirePayload(endpoint)
 	if err != nil {
 		return exportReceipt{}, err
 	}
 	receipt := exportReceipt{Owned: OwnedType2Route{Endpoint: cloneLocalEndpoint(endpoint), PathUUID: id}, NLRI: nlri, Incarnation: incarnation}
-	for _, attribute := range route.PathAttributes {
-		value, err := attribute.Serialize()
-		if err != nil {
-			return exportReceipt{}, err
-		}
-		receipt.Attributes = append(receipt.Attributes, value)
-	}
+	receipt.Attributes = attributes
 	return receipt, nil
 }
 
@@ -171,7 +161,7 @@ func (r *ExportRecovery) observation(ctx context.Context) (string, []Type2RIBPat
 		if path.NLRI == nil {
 			return "", nil, fmt.Errorf("%w: nil RIB NLRI", ownership.ErrBlocked)
 		}
-		if _, err := path.NLRI.Serialize(); err != nil {
+		if err := path.NLRI.Validate(); err != nil {
 			return "", nil, fmt.Errorf("%w: invalid RIB NLRI: %v", ownership.ErrBlocked, err)
 		}
 	}
@@ -180,9 +170,12 @@ func (r *ExportRecovery) observation(ctx context.Context) (string, []Type2RIBPat
 
 func matchingExportPaths(paths []Type2RIBPath, receipt exportReceipt) []Type2RIBPath {
 	var found []Type2RIBPath
+	want, err := BuildType2Route(receipt.Owned.Endpoint)
+	if err != nil {
+		return found
+	}
 	for _, path := range paths {
-		value, err := path.NLRI.Serialize()
-		if path.Local && err == nil && bytes.Equal(value, receipt.NLRI) {
+		if path.Local && path.NLRI != nil && sameType2NLRIValue(*path.NLRI, want.NLRI) {
 			found = append(found, path)
 		}
 	}

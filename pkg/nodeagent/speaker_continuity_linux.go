@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +25,26 @@ type SpeakerProcessEvidence struct {
 	ExecutableSHA256 string
 	PIDNamespace     string
 	Workload         SpeakerWorkloadEvidence
+	Standalone       *StandaloneSpeakerEvidence `json:"standalone,omitempty"`
+}
+
+type speakerRootIdentity struct {
+	MountNamespace string
+	Device         uint64
+	Inode          uint64
+}
+
+func readSpeakerRootIdentity(pid int32) (speakerRootIdentity, error) {
+	var identity speakerRootIdentity
+	mountNamespace, err := os.Readlink(fmt.Sprintf("/proc/%d/ns/mnt", pid))
+	if err != nil {
+		return identity, fmt.Errorf("read speaker mount namespace: %w", err)
+	}
+	var root unix.Stat_t
+	if err := unix.Stat(fmt.Sprintf("/proc/%d/root", pid), &root); err != nil {
+		return identity, fmt.Errorf("read speaker filesystem root identity: %w", err)
+	}
+	return speakerRootIdentity{MountNamespace: mountNamespace, Device: uint64(root.Dev), Inode: root.Ino}, nil
 }
 
 // unixSpeakerContinuity pins the peer of the actual gRPC transport, not a
@@ -33,7 +54,7 @@ type unixSpeakerContinuity struct {
 	fd       int
 	bound    bool
 	evidence SpeakerProcessEvidence
-	attestor *providerAttestor
+	attestor speakerAttestor
 	closed   bool
 }
 
@@ -76,22 +97,25 @@ func (s *unixSpeakerContinuity) Check(ctx context.Context) error {
 		return err
 	}
 	process.Workload = s.evidence.Workload
-	if process != s.evidence {
+	process.Standalone = s.evidence.Standalone
+	if !sameSpeakerProcessEvidence(process, s.evidence) {
 		return fmt.Errorf("speaker process identity changed")
 	}
-	workload, err := s.attestor.attest(ctx, process)
+	identity, err := s.attestor.attest(ctx, process)
 	if err != nil {
 		return err
 	}
-	if workload != s.evidence.Workload {
+	if identity.SpeakerWorkloadEvidence != s.evidence.Workload ||
+		!standaloneEvidenceEqual(identity.Standalone, s.evidence.Standalone) {
 		return fmt.Errorf("speaker workload identity changed")
 	}
 	after, err := readSpeakerProcess(s.evidence.PID, s.evidence.UID)
 	if err != nil {
 		return err
 	}
-	after.Workload = workload
-	if after != s.evidence {
+	after.Workload = identity.SpeakerWorkloadEvidence
+	after.Standalone = s.evidence.Standalone
+	if !sameSpeakerProcessEvidence(after, s.evidence) {
 		return fmt.Errorf("speaker changed during provider attestation")
 	}
 	return s.checkLocked()
@@ -107,9 +131,37 @@ func (s *unixSpeakerContinuity) Incarnation() (string, error) {
 		return "", err
 	}
 	e := s.evidence
+	if e.Standalone != nil {
+		h := sha256.Sum256([]byte(fmt.Sprintf("%s/%d/%s/%d/%s/%s/%s/%s/%s/%s/%s/%d/%d/%s/%d/%s",
+			e.BootID, e.PID, e.StartTicks, e.UID, e.ExecutableSHA256, e.Standalone.ArgumentsSHA256,
+			e.Standalone.InstallationUID, e.Standalone.NodeUID, e.Standalone.CgroupPath, e.Standalone.ServiceUID,
+			e.Standalone.RootMountNamespace, e.Standalone.RootDevice, e.Standalone.RootInode,
+			e.Standalone.GoBGPConfigSHA256, e.Standalone.ASN, e.Standalone.RouterID)))
+		return hex.EncodeToString(h[:]), nil
+	}
 	h := sha256.Sum256([]byte(fmt.Sprintf("%s/%d/%s/%d/%s/%s/%s/%s/%s/%s/%s", e.BootID, e.PID, e.StartTicks,
 		e.UID, e.ExecutableSHA256, e.Workload.NodeUID, e.Workload.DaemonSetUID, e.Workload.PodUID, e.Workload.ContainerID, e.Workload.ConfigUID, e.Workload.ConfigDigest)))
 	return hex.EncodeToString(h[:]), nil
+}
+
+func standaloneEvidenceEqual(a StandaloneSpeakerEvidence, b *StandaloneSpeakerEvidence) bool {
+	if a.ServiceUID == "" {
+		return b == nil
+	}
+	return b != nil && a == *b
+}
+
+func sameStandaloneSpeakerEvidence(a, b *StandaloneSpeakerEvidence) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func sameSpeakerProcessEvidence(a, b SpeakerProcessEvidence) bool {
+	aStandalone, bStandalone := a.Standalone, b.Standalone
+	a.Standalone, b.Standalone = nil, nil
+	return a == b && sameStandaloneSpeakerEvidence(aStandalone, bStandalone)
 }
 
 func (s *unixSpeakerContinuity) Evidence() SpeakerProcessEvidence {
@@ -164,10 +216,7 @@ func (s *unixSpeakerContinuity) bind(ctx context.Context, c *net.UnixConn) error
 	fd := -1
 	var peerErr error
 	if err := raw.Control(func(socket uintptr) {
-		cred, peerErr = unix.GetsockoptUcred(int(socket), unix.SOL_SOCKET, unix.SO_PEERCRED)
-		if peerErr == nil {
-			fd, peerErr = unix.GetsockoptInt(int(socket), unix.SOL_SOCKET, unix.SO_PEERPIDFD)
-		}
+		cred, fd, peerErr = speakerPeerCredentials(int(socket))
 	}); err != nil {
 		return err
 	}
@@ -190,17 +239,22 @@ func (s *unixSpeakerContinuity) bind(ctx context.Context, c *net.UnixConn) error
 	if err != nil {
 		return err
 	}
-	workload, err := s.attestor.attest(ctx, evidence)
+	identity, err := s.attestor.attest(ctx, evidence)
 	if err != nil {
 		return err
 	}
-	evidence.Workload = workload
+	evidence.Workload = identity.SpeakerWorkloadEvidence
+	if identity.Standalone.ServiceUID != "" {
+		standalone := identity.Standalone
+		evidence.Standalone = &standalone
+	}
 	after, err := readSpeakerProcess(cred.Pid, cred.Uid)
 	if err != nil {
 		return err
 	}
-	after.Workload = workload
-	if after != evidence {
+	after.Workload = identity.SpeakerWorkloadEvidence
+	after.Standalone = evidence.Standalone
+	if !sameSpeakerProcessEvidence(after, evidence) {
 		return fmt.Errorf("speaker changed while binding provider attestation")
 	}
 	fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
@@ -208,13 +262,38 @@ func (s *unixSpeakerContinuity) bind(ctx context.Context, c *net.UnixConn) error
 		return fmt.Errorf("speaker peer exited while binding evidence: %v", err)
 	}
 	if s.bound {
-		if evidence != s.evidence {
+		if !sameSpeakerProcessEvidence(evidence, s.evidence) {
 			return fmt.Errorf("speaker process evidence changed")
 		}
 		return s.checkLocked()
 	}
 	s.fd, s.bound, s.evidence = fd, true, evidence
 	fd = -1
+	return nil
+}
+
+func speakerPeerCredentials(socket int) (*unix.Ucred, int, error) {
+	cred, err := unix.GetsockoptUcred(socket, unix.SOL_SOCKET, unix.SO_PEERCRED)
+	if err != nil {
+		return nil, -1, fmt.Errorf("read kernel Unix peer credentials: %w", err)
+	}
+	if err := validateSpeakerPeerCredentials(cred); err != nil {
+		return nil, -1, err
+	}
+	pidfd, err := unix.GetsockoptInt(socket, unix.SOL_SOCKET, unix.SO_PEERPIDFD)
+	if err != nil {
+		return nil, -1, fmt.Errorf("kernel Unix peer pidfd required: %w", err)
+	}
+	if pidfd < 0 {
+		return nil, -1, fmt.Errorf("kernel Unix peer pidfd is invalid")
+	}
+	return cred, pidfd, nil
+}
+
+func validateSpeakerPeerCredentials(cred *unix.Ucred) error {
+	if cred == nil || cred.Pid <= 0 {
+		return fmt.Errorf("kernel Unix peer credentials are unavailable or ambiguous")
+	}
 	return nil
 }
 
@@ -299,5 +378,76 @@ func readSpeakerProcess(pid int32, uid uint32) (SpeakerProcessEvidence, error) {
 	if !found || strings.TrimSpace(string(boot)) == "" {
 		return none, fmt.Errorf("incomplete process evidence")
 	}
-	return SpeakerProcessEvidence{PID: pid, StartTicks: fields[19], BootID: strings.TrimSpace(string(boot)), Executable: exe, UID: uid, PIDNamespace: pidNamespace, ExecutableSHA256: hex.EncodeToString(h.Sum(nil))}, nil
+	return SpeakerProcessEvidence{
+		PID: pid, StartTicks: fields[19], BootID: strings.TrimSpace(string(boot)),
+		Executable: exe, UID: uid, PIDNamespace: pidNamespace,
+		ExecutableSHA256: hex.EncodeToString(h.Sum(nil)),
+	}, nil
+}
+
+func readSpeakerArguments(pid int32) ([]string, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil {
+		return nil, fmt.Errorf("read speaker process arguments: %w", err)
+	}
+	if len(data) == 0 || len(data) > 64*1024 || data[len(data)-1] != 0 {
+		return nil, fmt.Errorf("invalid or oversized speaker process arguments")
+	}
+	arguments := strings.Split(string(data[:len(data)-1]), "\x00")
+	if len(arguments) == 0 {
+		return nil, fmt.Errorf("speaker process arguments are empty")
+	}
+	return arguments, nil
+}
+
+func readSpeakerCgroupPath(pid int32) (string, error) {
+	hostNamespace, err := os.Readlink("/proc/1/ns/cgroup")
+	if err != nil {
+		return "", fmt.Errorf("read host cgroup namespace: %w", err)
+	}
+	for _, path := range []string{fmt.Sprintf("/proc/%d/ns/cgroup", pid), "/proc/self/ns/cgroup"} {
+		namespace, err := os.Readlink(path)
+		if err != nil || namespace != hostNamespace {
+			return "", fmt.Errorf("standalone speaker and attesting agent require the host cgroup namespace")
+		}
+	}
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+	if err != nil {
+		return "", fmt.Errorf("read standalone service cgroup: %w", err)
+	}
+	var path string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if !strings.HasPrefix(line, "0::") {
+			continue
+		}
+		if path != "" {
+			return "", fmt.Errorf("ambiguous standalone service cgroup evidence")
+		}
+		path = strings.TrimPrefix(line, "0::")
+	}
+	if !strings.HasPrefix(path, "/") || filepath.Clean(path) != path || path == "/" {
+		return "", fmt.Errorf("unavailable or invalid unified standalone service cgroup")
+	}
+	return path, nil
+}
+
+func equalSpeakerArguments(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func speakerArgumentsSHA256(arguments []string) string {
+	h := sha256.New()
+	for _, arg := range arguments {
+		_, _ = io.WriteString(h, arg)
+		_, _ = h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }

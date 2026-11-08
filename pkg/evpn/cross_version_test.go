@@ -30,8 +30,9 @@ func (a *crossVersionRIB) Snapshot(context.Context) ([]Type2RIBPath, error) {
 		if err != nil {
 			return nil, err
 		}
+		nlri := route.NLRI
 		paths = append(paths, Type2RIBPath{PathUUID: owned.PathUUID, Local: true,
-			NLRI: route.NLRI, PathAttributes: route.PathAttributes})
+			NLRI: &nlri, PathAttributes: route.PathAttributes})
 	}
 	return paths, nil
 }

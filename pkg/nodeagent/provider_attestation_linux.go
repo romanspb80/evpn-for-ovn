@@ -5,13 +5,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/sys/unix"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -26,28 +29,72 @@ import (
 // ProviderAttestationConfig is administrator-authored, not a claim from the
 // speaker, an agent RPC caller, or the workload being attested.
 type ProviderAttestationConfig struct {
-	NodeName         string  `json:"nodeName"`
-	NodeUID          string  `json:"nodeUID"`
-	Namespace        string  `json:"namespace"`
-	DaemonSetName    string  `json:"daemonSetName"`
-	DaemonSetUID     string  `json:"daemonSetUID"`
-	ContainerName    string  `json:"containerName"`
-	Image            string  `json:"image"`
-	ImageDigest      string  `json:"imageDigest"`
-	ExpectedUID      *uint32 `json:"expectedUID"`
-	ExecutableSHA256 string  `json:"executableSHA256"`
-	Runtime          string  `json:"runtime"`
-	RuntimeSocket    string  `json:"runtimeSocket"`
-	CTRPath          string  `json:"ctrPath"`
-	CTRSHA256        string  `json:"ctrSHA256"`
-	ConfigNamespace  string  `json:"configNamespace"`
-	ConfigName       string  `json:"configName"`
-	ConfigUID        string  `json:"configUID"`
-	ConfigDigest     string  `json:"configDigest"`
+	Mode             string                   `json:"mode,omitempty"`
+	Standalone       *StandaloneSpeakerConfig `json:"standalone,omitempty"`
+	NodeName         string                   `json:"nodeName"`
+	NodeUID          string                   `json:"nodeUID"`
+	Namespace        string                   `json:"namespace"`
+	DaemonSetName    string                   `json:"daemonSetName"`
+	DaemonSetUID     string                   `json:"daemonSetUID"`
+	ContainerName    string                   `json:"containerName"`
+	Image            string                   `json:"image"`
+	ImageDigest      string                   `json:"imageDigest"`
+	ExpectedUID      *uint32                  `json:"expectedUID"`
+	ExecutableSHA256 string                   `json:"executableSHA256"`
+	Runtime          string                   `json:"runtime"`
+	RuntimeSocket    string                   `json:"runtimeSocket"`
+	CTRPath          string                   `json:"ctrPath"`
+	CTRSHA256        string                   `json:"ctrSHA256"`
+	ConfigNamespace  string                   `json:"configNamespace"`
+	ConfigName       string                   `json:"configName"`
+	ConfigUID        string                   `json:"configUID"`
+	ConfigDigest     string                   `json:"configDigest"`
+}
+
+// StandaloneSpeakerConfig is trusted root-owned identity for one local GoBGP
+// service. Arguments bind the process to the pinned GoBGP configuration file.
+type StandaloneSpeakerConfig struct {
+	InstallationUID   string   `json:"installationUID"`
+	NodeUID           string   `json:"nodeUID"`
+	ServiceUID        string   `json:"serviceUID"`
+	ExpectedUID       *uint32  `json:"expectedUID"`
+	CgroupPath        string   `json:"cgroupPath"`
+	ExecutablePath    string   `json:"executablePath"`
+	ExecutableSHA256  string   `json:"executableSHA256"`
+	Arguments         []string `json:"arguments"`
+	GoBGPConfigPath   string   `json:"goBGPConfigPath"`
+	GoBGPConfigSHA256 string   `json:"goBGPConfigSHA256"`
+	ASN               uint32   `json:"asn"`
+	RouterID          string   `json:"routerID"`
 }
 
 type SpeakerWorkloadEvidence struct {
 	NodeUID, PodUID, DaemonSetUID, ContainerID, ImageDigest, ConfigUID, ConfigDigest string
+}
+
+type StandaloneSpeakerEvidence struct {
+	InstallationUID    string `json:"installationUID"`
+	NodeUID            string `json:"nodeUID"`
+	ServiceUID         string `json:"serviceUID"`
+	CgroupPath         string `json:"cgroupPath"`
+	RootMountNamespace string `json:"rootMountNamespace"`
+	RootDevice         uint64 `json:"rootDevice"`
+	RootInode          uint64 `json:"rootInode"`
+	ExecutablePath     string `json:"executablePath"`
+	ExecutableSHA256   string `json:"executableSHA256"`
+	ArgumentsSHA256    string `json:"argumentsSHA256"`
+	GoBGPConfigSHA256  string `json:"goBGPConfigSHA256"`
+	ASN                uint32 `json:"asn"`
+	RouterID           string `json:"routerID"`
+}
+
+type speakerAttestationEvidence struct {
+	SpeakerWorkloadEvidence
+	Standalone StandaloneSpeakerEvidence
+}
+
+type speakerAttestor interface {
+	attest(context.Context, SpeakerProcessEvidence) (speakerAttestationEvidence, error)
 }
 
 type providerRuntimeEvidence struct {
@@ -70,12 +117,33 @@ type providerAttestor struct {
 	source providerIdentitySource
 }
 
+type standaloneSpeakerAttestor struct {
+	config StandaloneSpeakerConfig
+}
+
 func validSHA256(s string) bool {
 	b, err := hex.DecodeString(s)
 	return err == nil && len(b) == sha256.Size && strings.ToLower(s) == s
 }
 
 func (c ProviderAttestationConfig) validate() error {
+	switch c.Mode {
+	case "", "kubernetes":
+		if c.Standalone != nil {
+			return fmt.Errorf("Kubernetes attestation cannot include standalone identity")
+		}
+	case "standalone":
+		if c.Standalone == nil || c.NodeName != "" || c.NodeUID != "" || c.Namespace != "" ||
+			c.DaemonSetName != "" || c.ExpectedUID != nil || c.ExecutableSHA256 != "" ||
+			c.DaemonSetUID != "" || c.ContainerName != "" || c.Image != "" || c.ImageDigest != "" ||
+			c.Runtime != "" || c.RuntimeSocket != "" || c.CTRPath != "" || c.CTRSHA256 != "" ||
+			c.ConfigNamespace != "" || c.ConfigName != "" || c.ConfigUID != "" || c.ConfigDigest != "" {
+			return fmt.Errorf("standalone mode requires only a standalone speaker identity")
+		}
+		return c.Standalone.validate()
+	default:
+		return fmt.Errorf("unsupported speaker attestation mode %q", c.Mode)
+	}
 	if c.NodeName == "" || c.NodeUID == "" || c.Namespace == "" || c.DaemonSetName == "" ||
 		c.DaemonSetUID == "" || c.ContainerName == "" || c.ExpectedUID == nil ||
 		c.ConfigNamespace == "" || c.ConfigName == "" || c.ConfigUID == "" || !validSHA256(c.ConfigDigest) {
@@ -97,17 +165,95 @@ func (c ProviderAttestationConfig) validate() error {
 	return nil
 }
 
+func (c StandaloneSpeakerConfig) validate() error {
+	for _, value := range []string{c.InstallationUID, c.NodeUID, c.ServiceUID} {
+		id, err := uuid.Parse(value)
+		if err != nil || id == uuid.Nil {
+			return fmt.Errorf("standalone speaker requires installation, node, and service UUIDs")
+		}
+	}
+	if c.ExpectedUID == nil || !filepath.IsAbs(c.CgroupPath) || filepath.Clean(c.CgroupPath) != c.CgroupPath ||
+		c.CgroupPath == "/" || !filepath.IsAbs(c.ExecutablePath) || filepath.Clean(c.ExecutablePath) != c.ExecutablePath ||
+		!validSHA256(c.ExecutableSHA256) {
+		return fmt.Errorf("standalone speaker requires a pinned UID, cgroup path, and executable path/SHA256")
+	}
+	if !filepath.IsAbs(c.GoBGPConfigPath) || filepath.Clean(c.GoBGPConfigPath) != c.GoBGPConfigPath ||
+		!validSHA256(c.GoBGPConfigSHA256) {
+		return fmt.Errorf("standalone speaker requires a pinned GoBGP configuration path/SHA256")
+	}
+	if len(c.Arguments) < 3 || c.Arguments[0] != c.ExecutablePath {
+		return fmt.Errorf("standalone speaker requires exact process arguments beginning with its executable")
+	}
+	for _, arg := range c.Arguments {
+		if arg == "" || strings.ContainsRune(arg, '\x00') {
+			return fmt.Errorf("standalone speaker arguments must be nonempty and contain no NUL")
+		}
+	}
+	configArgumentCount := 0
+	for i, arg := range c.Arguments {
+		switch {
+		case arg == "-f" || arg == "--config-file":
+			configArgumentCount++
+			if i+1 >= len(c.Arguments) || c.Arguments[i+1] != c.GoBGPConfigPath {
+				return fmt.Errorf("standalone GoBGP arguments must select the pinned configuration")
+			}
+		case arg == "-f"+c.GoBGPConfigPath || arg == "--config-file="+c.GoBGPConfigPath:
+			configArgumentCount++
+		case strings.HasPrefix(arg, "-f=") || strings.HasPrefix(arg, "--config-file="):
+			configArgumentCount++
+			if strings.SplitN(arg, "=", 2)[1] != c.GoBGPConfigPath {
+				return fmt.Errorf("standalone GoBGP arguments select an unpinned configuration")
+			}
+		}
+	}
+	if configArgumentCount != 1 {
+		return fmt.Errorf("standalone GoBGP arguments must select exactly one pinned configuration")
+	}
+	if c.ASN == 0 {
+		return fmt.Errorf("standalone speaker requires a nonzero expected ASN")
+	}
+	routerID, err := netip.ParseAddr(c.RouterID)
+	if err != nil || !routerID.Is4() || !routerID.IsGlobalUnicast() || routerID.IsLoopback() {
+		return fmt.Errorf("standalone speaker requires a unicast IPv4 router ID")
+	}
+	return nil
+}
+
 // openAdministratorFile walks without following symlinks, including parents.
 // Holding the returned fd also prevents path replacement during a read/exec.
 func openAdministratorFile(path string) (*os.File, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" {
 		return nil, fmt.Errorf("administrator file requires clean absolute path")
 	}
-	fd, err := unix.Open("/", unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	rootFD, err := unix.Open("/", unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { unix.Close(fd) }()
+	defer unix.Close(rootFD)
+	return openAdministratorFileAt(rootFD, path)
+}
+
+func openAdministratorFileForProcess(pid int32, path string) (*os.File, error) {
+	if pid <= 0 {
+		return nil, fmt.Errorf("administrator file requires a verified process PID")
+	}
+	rootFD, err := unix.Open(fmt.Sprintf("/proc/%d/root", pid), unix.O_PATH|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open speaker filesystem root: %w", err)
+	}
+	defer unix.Close(rootFD)
+	return openAdministratorFileAt(rootFD, path)
+}
+
+func openAdministratorFileAt(rootFD int, path string) (*os.File, error) {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" {
+		return nil, fmt.Errorf("administrator file requires clean absolute path")
+	}
+	fd, err := unix.Dup(rootFD)
+	if err != nil {
+		return nil, err
+	}
+	unix.CloseOnExec(fd)
 	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
 	for i, part := range parts {
 		flags := unix.O_PATH | unix.O_NOFOLLOW | unix.O_CLOEXEC
@@ -182,9 +328,37 @@ func decodeProviderAttestationConfig(r io.Reader) (ProviderAttestationConfig, er
 // transport, after closing the previous gRPC connection and guard. There is no
 // reset operation that could accidentally bless a stale transport.
 func NewAttestedSpeakerContinuity(path string) (*unixSpeakerContinuity, error) {
+	return newAttestedSpeakerContinuity(path, nil)
+}
+
+type speakerRuntimeExpectation struct {
+	ASN             uint32
+	RouterID        string
+	InstallationUID string
+	NodeUID         string
+}
+
+func newAttestedSpeakerContinuityForSpeaker(path string, expected speakerRuntimeExpectation) (*unixSpeakerContinuity, error) {
+	return newAttestedSpeakerContinuity(path, &expected)
+}
+
+func newAttestedSpeakerContinuity(path string, expected *speakerRuntimeExpectation) (*unixSpeakerContinuity, error) {
 	c, err := LoadProviderAttestationConfig(path)
 	if err != nil {
 		return nil, err
+	}
+	if c.Mode == "standalone" {
+		if expected != nil {
+			s := c.Standalone
+			if s.ASN != expected.ASN || s.RouterID != expected.RouterID {
+				return nil, fmt.Errorf("standalone speaker ASN or router ID differs from runtime configuration")
+			}
+			if (expected.InstallationUID != "" && s.InstallationUID != expected.InstallationUID) ||
+				(expected.NodeUID != "" && s.NodeUID != expected.NodeUID) {
+				return nil, fmt.Errorf("standalone speaker installation or node identity differs from recovery domain")
+			}
+		}
+		return &unixSpeakerContinuity{attestor: &standaloneSpeakerAttestor{config: *c.Standalone}}, nil
 	}
 	rc, err := rest.InClusterConfig()
 	if err != nil {
@@ -202,8 +376,8 @@ func NewAttestedSpeakerContinuity(path string) (*unixSpeakerContinuity, error) {
 	return &unixSpeakerContinuity{attestor: &providerAttestor{config: c, source: &kubernetesContainerdSource{client: client, dynamic: dynamicClient, config: c}}}, nil
 }
 
-func (a *providerAttestor) attest(ctx context.Context, process SpeakerProcessEvidence) (SpeakerWorkloadEvidence, error) {
-	var none SpeakerWorkloadEvidence
+func (a *providerAttestor) attest(ctx context.Context, process SpeakerProcessEvidence) (speakerAttestationEvidence, error) {
+	var none speakerAttestationEvidence
 	c := a.config
 	if err := c.validate(); err != nil {
 		return none, err
@@ -296,7 +470,77 @@ func (a *providerAttestor) attest(ctx context.Context, process SpeakerProcessEvi
 	if matched == nil {
 		return none, fmt.Errorf("actual Unix peer is not a verified provider container process")
 	}
-	return *matched, nil
+	return speakerAttestationEvidence{SpeakerWorkloadEvidence: *matched}, nil
+}
+
+func (a *standaloneSpeakerAttestor) attest(ctx context.Context, process SpeakerProcessEvidence) (speakerAttestationEvidence, error) {
+	var none speakerAttestationEvidence
+	if err := ctx.Err(); err != nil {
+		return none, err
+	}
+	c := a.config
+	if err := c.validate(); err != nil {
+		return none, err
+	}
+	if process.PID <= 0 || process.UID != *c.ExpectedUID || process.Executable != c.ExecutablePath ||
+		process.ExecutableSHA256 != c.ExecutableSHA256 {
+		return none, fmt.Errorf("standalone Unix peer UID or executable identity differs from administrator pins")
+	}
+	args, err := readSpeakerArguments(process.PID)
+	if err != nil {
+		return none, fmt.Errorf("read standalone GoBGP process arguments: %w", err)
+	}
+	argumentsSHA256 := speakerArgumentsSHA256(c.Arguments)
+	if !equalSpeakerArguments(args, c.Arguments) ||
+		(process.Standalone != nil && process.Standalone.ArgumentsSHA256 != argumentsSHA256) {
+		return none, fmt.Errorf("standalone GoBGP process arguments differ from administrator pins")
+	}
+	cgroupPath, err := readSpeakerCgroupPath(process.PID)
+	if err != nil {
+		return none, err
+	}
+	if cgroupPath != c.CgroupPath {
+		return none, fmt.Errorf("standalone GoBGP service cgroup differs from administrator pin")
+	}
+	rootIdentity, err := readSpeakerRootIdentity(process.PID)
+	if err != nil {
+		return none, err
+	}
+	config, err := openAdministratorFileForProcess(process.PID, c.GoBGPConfigPath)
+	if err != nil {
+		return none, fmt.Errorf("open pinned standalone GoBGP configuration: %w", err)
+	}
+	var stat unix.Stat_t
+	if err := unix.Fstat(int(config.Fd()), &stat); err != nil {
+		config.Close()
+		return none, err
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Nlink != 1 || stat.Size <= 0 || stat.Size > 4<<20 {
+		config.Close()
+		return none, fmt.Errorf("standalone GoBGP configuration must be a bounded single-link regular file")
+	}
+	digest, hashErr := fileSHA256(config)
+	closeErr := config.Close()
+	if err := errors.Join(hashErr, closeErr); err != nil {
+		return none, err
+	}
+	if digest != c.GoBGPConfigSHA256 {
+		return none, fmt.Errorf("standalone GoBGP configuration SHA256 differs from administrator pin")
+	}
+	rootIdentityAfter, err := readSpeakerRootIdentity(process.PID)
+	if err != nil || rootIdentity != rootIdentityAfter {
+		return none, fmt.Errorf("speaker filesystem root changed during standalone configuration attestation")
+	}
+	return speakerAttestationEvidence{Standalone: StandaloneSpeakerEvidence{
+		InstallationUID: c.InstallationUID, NodeUID: c.NodeUID, ServiceUID: c.ServiceUID,
+		CgroupPath:         cgroupPath,
+		RootMountNamespace: rootIdentity.MountNamespace,
+		RootDevice:         rootIdentity.Device,
+		RootInode:          rootIdentity.Inode,
+		ExecutablePath:     c.ExecutablePath, ExecutableSHA256: c.ExecutableSHA256,
+		ArgumentsSHA256: argumentsSHA256, GoBGPConfigSHA256: c.GoBGPConfigSHA256,
+		ASN: c.ASN, RouterID: c.RouterID,
+	}}, nil
 }
 
 func verifyProviderConfiguration(obj *unstructured.Unstructured, c ProviderAttestationConfig) error {

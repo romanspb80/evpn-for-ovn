@@ -1,11 +1,6 @@
 package evpn
 
-import (
-	"bytes"
-	"testing"
-
-	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
-)
+import "testing"
 
 func sampleEndpoint() LocalEndpoint {
 	return LocalEndpoint{
@@ -33,54 +28,19 @@ func TestBuildType2RouteProducesValidMACIPAdvertisement(t *testing.T) {
 	if route.Action != RouteAdvertise {
 		t.Fatalf("expected advertise action, got %s", route.Action)
 	}
-	if route.NLRI == nil {
-		t.Fatal("expected EVPN NLRI route payload")
+	if route.NLRI.RD != ep.RouteDistinguisher || route.NLRI.MAC != ep.MACAddress ||
+		route.NLRI.IP != "10.251.1.11" || len(route.NLRI.Labels) != 1 || route.NLRI.Labels[0] != ep.VNI {
+		t.Fatalf("unexpected Type-2 NLRI: %+v", route.NLRI)
 	}
-	if len(route.PathAttributes) != 3 {
-		t.Fatalf("expected 3 path attributes, got %d", len(route.PathAttributes))
+	if route.PathAttributes.Origin != Type2OriginIGP || route.PathAttributes.NextHop != ep.LocalVTEP {
+		t.Fatalf("unexpected Type-2 path attributes: %+v", route.PathAttributes)
 	}
-
-	if route.NLRI.String() == "" {
-		t.Fatal("expected serialized NLRI content")
+	wantCommunities := []Type2ExtendedCommunity{
+		{Kind: Type2RouteTargetCommunity, Value: ep.RouteTargets[0]},
+		{Kind: Type2EncapsulationCommunity, Value: "vxlan"},
 	}
-	for _, attr := range route.PathAttributes {
-		switch a := attr.(type) {
-		case *bgp.PathAttributeNextHop:
-			if got := a.Value.String(); got != "192.0.2.10" {
-				t.Fatalf("unexpected next-hop: got %s want 192.0.2.10", got)
-			}
-		case *bgp.PathAttributeExtendedCommunities:
-			if len(a.Value) != 2 {
-				t.Fatalf("expected RT and VXLAN encapsulation communities, got %d", len(a.Value))
-			}
-			wantRT, err := bgp.ParseRouteTarget(ep.RouteTargets[0])
-			if err != nil {
-				t.Fatal(err)
-			}
-			wantRTBytes, err := wantRT.Serialize()
-			if err != nil {
-				t.Fatal(err)
-			}
-			hasRT := false
-			hasVXLAN := false
-			for _, community := range a.Value {
-				if encap, ok := community.(*bgp.EncapExtended); ok &&
-					encap.TunnelType == bgp.TUNNEL_TYPE_VXLAN {
-					hasVXLAN = true
-				}
-				gotBytes, err := community.Serialize()
-				if err != nil {
-					t.Fatal(err)
-				}
-				hasRT = hasRT || bytes.Equal(gotBytes, wantRTBytes)
-			}
-			if !hasRT {
-				t.Fatal("expected configured route target community")
-			}
-			if !hasVXLAN {
-				t.Fatal("expected VXLAN encapsulation community")
-			}
-		}
+	if !equalType2Communities(route.PathAttributes.ExtendedCommunities, wantCommunities) {
+		t.Fatalf("unexpected route communities: %+v", route.PathAttributes.ExtendedCommunities)
 	}
 }
 
@@ -89,36 +49,30 @@ func TestRIBPathMatchesEndpointAllowsGoBGPMobilityCommunity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ext := route.PathAttributes[2].(*bgp.PathAttributeExtendedCommunities)
-	attrs := append([]bgp.PathAttributeInterface(nil), route.PathAttributes...)
-	attrs[2] = bgp.NewPathAttributeExtendedCommunities(append(
-		append([]bgp.ExtendedCommunityInterface(nil), ext.Value...),
-		&bgp.MacMobilityExtended{Sequence: 0},
-	))
+	attrs := route.PathAttributes
+	attrs.ExtendedCommunities = append(append([]Type2ExtendedCommunity(nil), attrs.ExtendedCommunities...),
+		Type2ExtendedCommunity{Kind: Type2MACMobilityCommunity})
 	path := Type2RIBPath{
 		Local:          true,
-		NLRI:           route.NLRI,
+		NLRI:           &route.NLRI,
 		PathAttributes: attrs,
 	}
 	if !ribPathMatchesEndpoint(path, sampleEndpoint()) {
-		t.Fatal("canonical GoBGP MAC-mobility community should not invalidate the owned route")
+		t.Fatal("canonical zero MAC-mobility community should not invalidate the owned route")
 	}
 
-	invalidMobility := append([]bgp.PathAttributeInterface(nil), attrs...)
-	invalidMobility[2] = bgp.NewPathAttributeExtendedCommunities(append(
-		append([]bgp.ExtendedCommunityInterface(nil), ext.Value...),
-		&bgp.MacMobilityExtended{Sequence: 1},
-	))
+	invalidMobility := attrs
+	invalidMobility.ExtendedCommunities = append([]Type2ExtendedCommunity(nil), attrs.ExtendedCommunities...)
+	invalidMobility.ExtendedCommunities[len(invalidMobility.ExtendedCommunities)-1].Sequence = 1
 	path.PathAttributes = invalidMobility
 	if ribPathMatchesEndpoint(path, sampleEndpoint()) {
 		t.Fatal("nonzero MAC-mobility sequence must not match the owned route")
 	}
 
-	unexpectedCommunity := append([]bgp.PathAttributeInterface(nil), attrs...)
-	unexpectedCommunity[2] = bgp.NewPathAttributeExtendedCommunities(append(
-		append([]bgp.ExtendedCommunityInterface(nil), ext.Value...),
-		&bgp.EncapExtended{TunnelType: bgp.TUNNEL_TYPE_MPLS},
-	))
+	unexpectedCommunity := attrs
+	unexpectedCommunity.ExtendedCommunities = append([]Type2ExtendedCommunity(nil), attrs.ExtendedCommunities...)
+	unexpectedCommunity.ExtendedCommunities = append(unexpectedCommunity.ExtendedCommunities,
+		Type2ExtendedCommunity{Kind: Type2EncapsulationCommunity, Value: "mpls"})
 	path.PathAttributes = unexpectedCommunity
 	if ribPathMatchesEndpoint(path, sampleEndpoint()) {
 		t.Fatal("unexpected encapsulation must not match the owned route")
@@ -159,6 +113,20 @@ func TestRouteReconcilerIsIdempotentAndWithdrawsOnDelete(t *testing.T) {
 	}
 	if changes[0].Action != RouteWithdraw {
 		t.Fatalf("expected withdraw action, got %s", changes[0].Action)
+	}
+}
+
+func TestRouteReconcilerDoesNotAdvertiseUnapprovedObservation(t *testing.T) {
+	reconciler := NewRouteReconciler()
+	endpoint := sampleEndpoint()
+	endpoint.Advertise = false
+
+	changes, err := reconciler.Reconcile([]LocalEndpoint{endpoint})
+	if err != nil {
+		t.Fatalf("reconcile unapproved observation: %v", err)
+	}
+	if len(changes) != 0 {
+		t.Fatalf("unapproved endpoint observation produced route changes: %#v", changes)
 	}
 }
 
