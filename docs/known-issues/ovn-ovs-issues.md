@@ -1,6 +1,6 @@
 # OVN/OVS issue registry
 
-**Last reviewed:** 2026-10-30
+**Last reviewed:** 2026-11-08 (documentation/source reconciliation; no new OVN reproduction)
 **Scope:** evidence for the current Framework integrations and CNI application.
 This is not an upstream issue tracker. No issue in this registry has been
 published upstream.
@@ -9,28 +9,28 @@ published upstream.
 
 1. **Confirmed upstream defect** — independent minimal reproduction plus
    sufficient root-cause evidence. No current item meets this bar.
-2. **Reproducible upstream crash, root cause unknown** — the runtime crash is
-   reproduced independently of project CNI code; source-level cause and
-   upstream status are unconfirmed.
-3. **Suspected upstream defect** — behavior is observed and plausibly belongs
-   to an upstream component, but independent reproduction or causal evidence
-   is insufficient.
-4. **Integration/configuration problem** — topology, ownership, or
-   asynchronous component behavior requires an integration constraint or
-   bounded reconciliation; this is not evidence of an upstream defect.
-5. **Test-harness problem** — the failure belongs to test setup, evidence
-   collection, or fixture construction, not the product runtime.
-6. **Resolved or superseded finding** — a later correction or evidence
-   supersedes the original observed failure; historical evidence is retained.
+2. **Reproduced issue requiring root-cause analysis** — observed crash/error,
+   but source fault, expected contract or independently minimized trigger
+   remains uncertain. This is not confirmed upstream defect attribution.
+3. **Framework limitation** — missing project integration/lifecycle behavior,
+   not an upstream defect.
+4. **Expected upstream behavior** — e.g. asynchronous controller reconciliation
+   or selected API semantics; retain conservative integration handling.
+5. **Research or enhancement proposal** — intended architecture/API improvement,
+   not an established bug.
+
+Resolved harness findings are retained separately as historical dispositions,
+not active upstream candidates. Control-plane candidates share these classes
+in the [control-plane registry](control-plane-issues.md).
 
 ## Active findings
 
 | ID | Component | Classification | Status |
 |---|---|---|---|
-| [OVN-001](ovn-northd-dynamic-routing-unknown-crash.md) | OVN northd 26.09.0 | 2 — Reproducible upstream crash, root cause unknown | Active test-configuration workaround; not fixed in OVN |
-| [OVN-002](#ovn-002-transient-sb-port_binding-reference-error) | OVN northd / SBDB | 3 — Suspected upstream defect | Transient referential-integrity error observed; later recompute converged |
-| [OVN-003](#ovn-003-asynchronous-localnet-patch-port-cleanup) | OVN controller / OVSDB | 4 — Integration/configuration problem | Expected asynchronous detach; bounded retry succeeds |
-| [OVS-001](#ovs-001-learned-fdb-state-after-partial-route-withdrawal) | OVSDB-Programmed provider-bridge path | 4 — Integration/configuration problem | Open limitation; individual learned entry is not explicitly invalidated |
+| [OVN-001](ovn-northd-dynamic-routing-unknown-crash.md) | OVN northd 26.09.0 | Reproduced issue requiring root-cause analysis | Active test-configuration workaround; not fixed in OVN |
+| [OVN-002](#ovn-002-transient-sb-port_binding-reference-error) | OVN northd / SBDB | Reproduced issue requiring root-cause analysis | Error observed, independent minimal trigger/referring row missing; later recompute converged |
+| [OVN-003](#ovn-003-asynchronous-localnet-patch-port-cleanup) | OVN controller / OVSDB | Expected upstream behavior | Asynchronous detach; bounded retry succeeds |
+| [OVS-001](#ovs-001-learned-fdb-state-after-partial-route-withdrawal) | OVSDB-Programmed provider-bridge path | Framework limitation | Individual learned entry not explicitly invalidated; live partial timing untested |
 
 ## OVN-001 — northd crash with dynamic routing and `addresses=unknown`
 
@@ -65,7 +65,7 @@ for exact configuration, versions, commands, observations, and evidence.
   VNI-enabled/dynamic-routing switch. The CNI-R runner creates a separate
   non-dynamic switch and a valid MAC-only sentinel there. This is a
   test-configuration workaround, not an OVN fix.
-- **Limitations:** no version comparison, upstream issue search result,
+- **Limitations:** no version comparison, verified upstream duplicate/fix,
   source-level fix, or complete symbolized core is available. The workaround
   is verified only for the recorded test topology/version.
 - **Regression coverage:** `test_foreign_sentinel_uses_valid_mac_on_separate_non_dynamic_switch`
@@ -76,6 +76,10 @@ for exact configuration, versions, commands, observations, and evidence.
   unpublished. The configuration is reproducible without CNI and is suitable
   for upstream triage, but exact source fault and cross-version behavior are
   missing. Do not label this a confirmed upstream defect.
+- **Duplicate review / next action:** preliminary OVN issue search in G.8 found
+  related northd reports but established no matching duplicate. Issue/PR review
+  is pending. UP-01 requires a minimized source/build reproducer, symbolized
+  core and sanitized retained evidence before submission.
 
 <a id="ovn-002-transient-sb-port_binding-reference-error"></a>
 
@@ -83,7 +87,7 @@ for exact configuration, versions, commands, observations, and evidence.
 
 - **Affected component:** northd's Southbound database transaction while
   deleting an endpoint `Port_Binding`.
-- **Classification/status:** 3 — suspected upstream defect; transient
+- **Classification/status:** reproduced issue requiring root-cause analysis; transient
   referential-integrity failure observed, but not established as a persistent
   OVN defect. The same run observed later recomputation remove the old row and
   replacement binding converge.
@@ -120,6 +124,9 @@ for exact configuration, versions, commands, observations, and evidence.
 - **Upstream readiness:** insufficient for a standalone issue. Missing
   evidence includes an independent minimal trigger and the complete
   referenced SB row/table immediately before the failed transaction.
+- **Duplicate review / next action:** pending; UP-01 must identify the reference
+  table/column and transaction sequence separately from OVN-001. No issue/PR
+  or tested fix is verified.
 
 <a id="ovn-003-asynchronous-localnet-patch-port-cleanup"></a>
 
@@ -127,7 +134,7 @@ for exact configuration, versions, commands, observations, and evidence.
 
 - **Affected component:** OVN controller localnet patch-port lifecycle and
   OVSDB-Programmed provider-bridge cleanup.
-- **Classification/status:** 4 — integration/configuration problem;
+- **Classification/status:** expected upstream behavior;
   verified expected asynchronous state transition, not classified as an
   upstream defect.
 - **First observed:** isolated final-route withdrawal, 2026-10-30.
@@ -165,7 +172,7 @@ for exact configuration, versions, commands, observations, and evidence.
 
 - **Affected component:** OVS standalone bridge MAC learning in the
   OVSDB-Programmed provider-bridge path.
-- **Classification/status:** 4 — integration/configuration problem and open
+- **Classification/status:** framework limitation and open
   project limitation, not an upstream defect finding.
 - **First observed:** identified during provider-bridge testing; the isolated run
   verified learned MAC-to-port state and final tunnel cleanup, not individual
@@ -200,13 +207,17 @@ for exact configuration, versions, commands, observations, and evidence.
 - **Upstream readiness:** not an upstream report. This is currently an
   implementation/ownership limitation, and live partial-withdrawal evidence
   is missing.
+- **Next action:** FW-05 live partial-withdrawal/survivor measurements and
+  supported ownership-safe invalidation research. No upstream issue required
+  by current evidence; duplicate review applies only if a new upstream proposal
+  becomes justified.
 
 ## Resolved or superseded findings
 
 | ID | Finding | Classification/status | Evidence and disposition |
 |---|---|---|---|
-| TEST-OVN-001 | One-shot schema preflight claimed the deployed NB schema differed from the image schema | 5 — Test-harness problem; superseded | Historical image/live NB JSON objects matched version `7.19.0` and checksum `2631744256 45474`; raw-format comparison was incorrect. No SB comparison or northd reproduction ran in that attempt. Not evidence of schema incompatibility. |
-| TEST-OVN-002 | Initial ping failed because the test-interface MAC differed from the local VIF LSP MAC | 5 — Test-harness problem; resolved for that run | Matching the test interface MAC to the LSP fixed ARP/ICMP in the historical run; bidirectional traffic passed 5/5 without static ARP. Not an OVN/OVS defect. |
+| TEST-OVN-001 | One-shot schema preflight claimed the deployed NB schema differed from the image schema | Historical harness finding; superseded | Historical image/live NB JSON objects matched version `7.19.0` and checksum `2631744256 45474`; raw-format comparison was incorrect. No SB comparison or northd reproduction ran in that attempt. Not evidence of schema incompatibility. |
+| TEST-OVN-002 | Initial ping failed because the test-interface MAC differed from the local VIF LSP MAC | Historical harness finding; resolved for that run | Matching the test interface MAC to the LSP fixed ARP/ICMP in the historical run; bidirectional traffic passed 5/5 without static ARP. Not an OVN/OVS defect. |
 
 ## Related failures excluded from this OVN/OVS registry
 

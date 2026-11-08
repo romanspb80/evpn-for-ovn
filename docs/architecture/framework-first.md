@@ -2,8 +2,9 @@
 
 EVPN-for-OVN is a modular SDN framework for developing and testing EVPN over
 OVN across platform integrations. Kubernetes / Multus is implemented;
-OpenStack / Neutron and standalone OVN adapters are planned. The framework
-is not primarily a CNI and is not a production-ready cross-platform installer.
+OpenStack / Neutron and OVN-Kubernetes adapters are planned; explicit standalone
+OVN import and authorized-export runtimes now exist with bounded smoke coverage.
+The framework is not primarily a CNI or a production-ready cross-platform installer.
 
 Start with the [platform overview](../uml/evpn-overview.svg) and
 [modular architecture](../uml/evpn-modular-architecture.svg). Blue identifies
@@ -12,8 +13,10 @@ slate third-party solutions. Dashed arrows and PLANNED labels mark targets;
 blue route-control arrows are distinct from green VXLAN packet paths.
 The boxes are logical responsibilities, not newly introduced runtime services.
 In particular, **EVPN Core is not an independent standalone runtime**;
-platform-independent orchestration remains a design target. The project-owned
-EVPN CNI Adapter is distinct from external Multus, which invokes it in
+Node-Agent embeds the reusable Type-2 core and now offers explicit standalone
+runtime entry points. Complete platform lifecycle adapters/installers remain
+design targets. The project-owned EVPN CNI Adapter is distinct from external
+Multus, which invokes it in
 Kubernetes and is not developed or maintained by EVPN-for-OVN.
 
 ## Verified component ownership matrix
@@ -39,7 +42,7 @@ package split.
 | Kubernetes / Multus / containerd | Third-party platform/runtime | API workload lifecycle, CNI invocation and independently queried sandbox/process identity in the current recovery path. Not mandatory for all Go domain operations. |
 | FRR and remote VTEPs | Third-party external peers | EVPN announcements and peer-side VXLAN forwarding in acceptance. FRR is not the framework's control-plane engine. |
 | Containerlab / kind | Third-party test infrastructure | Disposable lab provisioning, not framework runtime components; see [deployment](deployment.md). |
-| Neutron / standalone OVN adapters | Planned project integrations | No implemented platform adapter or supported installer; reuse existing logic only after defining platform identity, ownership and recovery contracts. |
+| Standalone OVN runtime / future adapters | Project runtime plus planned platform integration | Protected authorization/fencing and authoritative OVN export, standalone importer and GoBGP attestation are implemented in Node-Agent; [contract](standalone-endpoint-authorization.md). Neutron adapter and supported installer remain planned. |
 
 ## Framework core and existing interfaces
 
@@ -79,11 +82,12 @@ the actual managed speaker and its incarnation; attestation is runtime
 integration, not a new BGP engine. Legacy `evpn-mgmt` configuration RPCs exist,
 but must not race BGPConfiguration ownership.
 
-The future **standalone BGP provider** means an alternative deployment and
-configuration owner for GoBGP, retaining route programming and attestation
-boundaries. It is not implemented and `provider: standalone` is rejected.
-This is different from the planned **standalone OVN platform adapter**, which
-would supply network/endpoint lifecycle without Kubernetes.
+The future **EvpnCore standalone BGP provider deployment** means an alternative
+installation/configuration owner for GoBGP. That selector remains unimplemented
+and `provider: standalone` is rejected. In contrast, G.6 standalone process
+attestation and G.7 Node-Agent import/export runtime already consume an
+administrator-provisioned speaker. Trusted endpoint policy and OVN intersection
+are implemented; generalized platform lifecycle production/installation is not.
 See [provider configuration ownership](runtime-dependencies.md#bgpconfiguration-versus-direct-grpc)
 and [operator provider selection](evpn-core-operator.md).
 
@@ -111,10 +115,11 @@ ADD/CHECK/DEL and CNI result semantics; node-agent orchestration resolves
 Kubernetes identity and coordinates namespace/interface lifecycle with shared
 Framework services. The whole node-agent is not CNI-only.
 
-OpenStack Neutron and standalone OVN are future platform consumers, not
-implemented adapters. The existing standalone OVSDB importer and direct
-Framework fixtures are real implementations, but not an end-to-end standalone
-platform lifecycle. See the [CNI application guide](../applications/cni/README.md)
+OpenStack Neutron remains a future platform consumer. Standalone OVN has
+explicit import and authorized-export runtime support; G.7b.5a verifies one
+chassis with revocation/restart, not a complete multi-chassis platform lifecycle.
+The standalone OVSDB importer and direct Framework fixtures retain their
+separate scope. See the [CNI application guide](../applications/cni/README.md)
 for its responsibilities and tested lifecycle.
 
 CNI endpoint creation and Type-2 route exchange are separate operations:
@@ -151,11 +156,11 @@ See [operator lifecycle](evpn-core-operator.md).
 | Boundary | Implemented now | Remaining design target / limit |
 |---|---|---|
 | EVPN logic versus platform adapters | Route processing under `pkg/evpn`; direct endpoint/attachment managers can be exercised without CNI. | Complete platform-neutral orchestration/identity API; Node-Agent CNI recovery still depends on Kubernetes/containerd. |
-| BGP management versus route programming | Independent k8gobgp/BGPConfiguration owner; Framework owned Type-2 RPCs and separate attestation. | Standalone provider management, deployment and independently verifiable identity contract. |
-| CNI endpoints versus route exchange | CNI Unix RPC and asynchronous Type-2 loops with separate activation evidence. | Neutron and standalone endpoint adapters; not a translation of Kubernetes identity assumptions. |
+| BGP management versus route programming | Independent k8gobgp/BGPConfiguration owner; Framework owned Type-2 RPCs; G.6 standalone process/socket attestation. | EvpnCore standalone provider installation/configuration, not a replacement BGP engine. |
+| CNI endpoints versus route exchange | CNI Unix RPC/asynchronous loops; G.7 trusted standalone authorization and authoritative OVN intersection without CNI startup. | Neutron adapter, trusted platform policy producer and multi-chassis lifecycle acceptance. |
 | Kubernetes orchestration versus networking | EvpnCore YAML workload lifecycle separated from domain managers and route reconciliation. | Supported multi-platform installers and general multi-node lifecycle. Current operator is single designated dataplane-node MVP. |
 | Route control versus packet forwarding | Framework integration-state mutations; GoBGP route exchange; OVN/OVS/Linux forwarding. | Broader topology and feature acceptance, not a project-owned packet engine. |
-| Core versus runtime ownership/recovery | Durable generic journal and resource-specific receipts; Node-Agent process/provider/runtime verification. | A reusable platform-neutral authority layer is a design target, not a separate implemented module. |
+| Core versus runtime ownership/recovery | Durable generic journal and exact receipts; Node-Agent managed/standalone attestation; G.7 authorization revision/generation fence and lifecycle tombstones. | General recovery/migration acceptance, not a new independent authority daemon. |
 | Project code versus dependencies | Project owns its logic/adapters; reuses GoBGP, k8gobgp, OVN/OVS and platform APIs. | No fork-independent compatibility guarantee or universal supported runtime installation. |
 
 The [platform roadmap](../roadmap/integrations/README.md) distinguishes

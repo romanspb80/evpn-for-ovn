@@ -1,7 +1,7 @@
 # OVN northd SIGSEGV with dynamic routing and `addresses=unknown`
 
 - **Local issue:** `OVN-001`
-- **Classification:** reproducible upstream crash, root cause unknown
+- **Classification:** reproduced issue requiring root-cause analysis
 - **Status:** active test-configuration workaround; not fixed in OVN
 - **Upstream:** draft only; no issue has been published
 

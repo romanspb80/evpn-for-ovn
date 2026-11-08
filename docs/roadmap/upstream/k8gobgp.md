@@ -21,10 +21,14 @@ generally unsupported.
 | Declarative EVPN endpoint intent | Proposed API improvement, not a confirmed missing GoBGP capability. Decide whether endpoints belong in k8gobgp at all; avoid duplicate Framework ownership and require withdrawal/recovery tests. |
 | EVPN-aware Netlink reconciliation | Research question for k8gobgp versus purelb/gobgp-netlink. Audit exact selected dependency and FDB/neighbor/VNI/VTEP semantics before proposing changes. |
 | Type-5 / RR | No Framework acceptance. A provider schema field or daemon route-family capability does not establish this integration's routed dataplane or RR behavior. |
+| Remote BGP authentication | `authPasswordSecretRef` already implemented in v0.2.8 for neighbors/peer groups; do not propose adding it. Exact-key lookup and Secret-only rotation/reconciliation gaps are source-backed; live interoperability remains [SEC-01](../backlog.md#sec-01). |
 
 EvpnCore does not manage BGPConfiguration, upstream CRDs or the DaemonSet.
 Its `gobgpImage` field is currently inert. Do not remove the accepted
 CRD-managed setup or configure peers concurrently through evpn-mgmt.
-No matching public issue/PR or submitted contribution is verified. A future
-draft must first select the responsible repository and search existing work;
-the previously mentioned proposal file has not been created.
+The [peer-security plan](bgp-peer-security.md) links immutable v0.2.8 types,
+resolver and watcher/comparison behavior, plus MD5/AO/GTSM/ACL/policy acceptance.
+The [unsubmitted rotation/documentation proposal](../../issues/k8gobgp-peer-auth-rotation-proposal.md)
+requests investigation of a source-supported gap, not duplicate Secret support.
+No matching public issue/PR is verified; rotation duplicate review and live
+reproduction remain pending. No contribution was submitted.

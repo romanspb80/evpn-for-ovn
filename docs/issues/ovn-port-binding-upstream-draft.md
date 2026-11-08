@@ -2,6 +2,14 @@
 
 **Publication status: draft only. No upstream issue has been filed.**
 
+**Proposed title:** OVN northd SIGSEGV with dynamic-routing switch and `addresses=unknown`.
+**Upstream repository:** [ovn-org/ovn](https://github.com/ovn-org/ovn).
+**Classification:** reproduced issue requiring root-cause analysis, not a
+confirmed source-level upstream defect.
+**Canonical task:** [UP-01](../roadmap/backlog.md#up-01).
+The historical `ovn-port-binding-*` filename is preserved for existing links;
+this draft concerns the northd crash, not the separate transient reference error.
+
 Local evidence classification: [OVN-001 in the known-issues registry](../known-issues/ovn-ovs-issues.md).
 
 ## Summary
@@ -88,3 +96,21 @@ The observations are sufficient to request upstream triage, but no matching
 issue, release fix, or version comparison has been verified. This draft must
 be updated with a minimized standalone OVN-only reproducer and a core/symbol
 trace before publication if those become available.
+
+## Evidence and duplicate-check status
+
+The [historical reproduction record](ovn-port-binding-reproducer.md) and
+[dedicated configuration record](../known-issues/ovn-northd-dynamic-routing-unknown-crash.md)
+contain the exact tested configuration/version, CLI sequence and log excerpts.
+Retained stack symbolization mentions `advertised_mac_binding_entry_find` /
+`advertised_mac_binding_add_with_mac`; no core proves a faulting value.
+Raw local runtime logs are not a distributed public evidence bundle.
+
+G.8 performed a preliminary OVN issue search; related northd reports were
+returned but no exact duplicate was established. Full issue/PR review and
+cross-version checks remain **pending**; no verified issue number or fix is
+assigned. Before submission, retain sanitized logs/core and exact source/build
+provenance, minimize setup interfaces and confirm reproducibility independently.
+The existing recipe supports triage, not a root-cause-confirmed bug claim.
+OVN-002 requires its own independent trigger/referring-row capture before a
+separate issue draft; do not combine it into the crash's causal explanation.

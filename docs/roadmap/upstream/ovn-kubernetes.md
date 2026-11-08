@@ -1,6 +1,6 @@
 # OVN-Kubernetes: GoBGP integration investigation
 
-**Classification:** research question / proposed upstream improvement,
+**Classification:** research or enhancement proposal,
 tracked once as [INT-03](../backlog.md#p2-planned-capabilities-and-integrations).
 No implemented adapter, compatible plugin contract or upstream issue/PR is
 claimed.
@@ -30,3 +30,8 @@ OVSDB path are not equivalent to upstream SVD/VLAN topology. Coordinate
 [FW-10/FW-11](../backlog.md#p2-planned-capabilities-and-integrations) before
 claiming compatibility. Keep FRR as the Framework's external validation peer;
 do not reinterpret the upstream use of FRR as this project's chosen runtime.
+
+The [unsubmitted architecture proposal](../../issues/ovn-kubernetes-gobgp-provider-proposal.md)
+records current FRR coupling, an external-integration-first approach, ownership
+limits and missing source pin/runtime/duplicate checks. It is not a bug report
+or a supported provider replacement. No issue or PR was published.

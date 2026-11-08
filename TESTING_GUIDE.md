@@ -10,6 +10,61 @@ Live suites also require the [explicit runtime-image inputs](docs/architecture/r
 historical local image IDs are not a promise that those images can be pulled
 from a public registry or rebuilt byte-for-byte from a mutable Dockerfile.
 
+## Standalone export smoke (G.7b.5a)
+
+G.8 checked the accessible retained evidence below, not a fresh live run.
+G.7b.5a-Fix previously reported Go build/unit/race/vet, privileged authorization
+and route-journal recovery, shell and diff checks PASS; those commands were not
+rerun for documentation consolidation.
+
+```bash
+EVPN_STANDALONE_EXPORT_SMOKE=1 \
+EVPN_E2E_ARTIFACT_CACHE_DIR=/home/roman/.cache/evpn-for-ovn/e2e-artifacts \
+EVPN_E2E_ALLOW_DOWNLOAD=0 \
+tools/run-operator-type2-e2e.sh
+```
+
+Use the existing operator-managed topology and run-owned Containerlab cleanup,
+never the host OpenStack OVN/OVS. The fixture creates an endpoint through
+Multus/CNI, then runs the same Node-Agent binary and pinned speaker inside the
+existing `ovn-ovs` Pod container without a standalone CNI server. This is
+standalone **runtime** acceptance in reused Kubernetes infrastructure, not
+Kubernetes-free lab provisioning. No new chassis or topology was introduced.
+
+| Retained bundle | Independently checked scope |
+|---|---|
+| `/tmp/evpn-operator-type2-e2e/attempt-20261108T144038Z-de1aa488` | `result.json` PASS; `standalone-exec-results.tsv`, speaker/API/neighbor/startup logs; authorized and revoked/recovered GoBGP/FRR RIBs, route journals, authorization fences and CNI absence status. |
+| `/tmp/evpn-operator-type2-e2e/attempt-20261108T144438Z-b8fb1770` | Operator regression `result.json` PASS, all 18 cases PASS, cleanup PASS. |
+
+The advertised endpoint was `0a:58:f0:00:00:0a` / `10.244.240.10`, actual
+LSP UUID `2ffcc336-fe74-4995-bfdb-a4199852b8c4`, RD `198.18.0.2:1000`,
+RT `64512:1000`, VNI 1000 and next hop `198.18.0.2`.
+`standalone-export-journal-advertised.json` records the actual owned PathUUID
+`a7496c61-c044-49ac-9bbb-533e59e1376b`; its mutation/receipt and visible peer
+route are not synthetic ownership evidence.
+`authorization-fence-1.json` and `authorization-fence-2.json` have accepted
+revisions 1 and 2 with no pending operation. After revocation and restart,
+`standalone-export-journal-{revoked,recovered}.json` has no owned receipts,
+and the local NLRI is absent from both RIBs. The foreign Type-2 route
+`0a:58:f0:01:00:0c` / `10.244.240.12`, next hop `198.18.0.4`, survives.
+`standalone-cni-socket-absent-{startup,restart}.exit-code` is 0. Speaker startup,
+Unix API access, FRR Established and attestation are corroborated by retained
+logs, not inferred from unit tests.
+
+Protected identity/network mapping, policy publication, cache filenames and
+SHA-256 pins, diagnostics, restoration and cleanup are specified once in the
+[standalone runtime guide](docs/architecture/standalone-endpoint-authorization.md#g7b5a-offline-capable-standalone-export-smoke).
+The cache covers pinned release assets, not every required container image or
+toolchain input. Evidence under `/tmp` is ephemeral and not a public artifact;
+retain a sanitized bundle before release/upstream use.
+
+**Not validated here:** two standalone OVN chassis, standalone bidirectional
+forwarding, live deletion/replacement/migration tombstones, generalized
+crash/power-loss recovery, authenticated remote BGP peering or production
+readiness. These remain
+[G.7b.5b / FW-04 / SEC-01](docs/roadmap/backlog.md).
+Historical results elsewhere in this guide retain their original scope.
+
 ## Offline fixture provenance
 
 The Python unit suites run without private archive evidence:

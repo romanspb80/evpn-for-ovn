@@ -364,7 +364,7 @@ OVN/OVS chassis, GoBGP/FRR peering, VXLAN forwarding and recovery topology. It i
 now also hosts the opt-in G.7b.5a standalone-runtime smoke described below.
 Authorization, fencing, revocation, restart and startup without CNI passed;
 live deletion/replacement/migration tombstones and multi-chassis forwarding
-remain outside the validated smoke scope.
+remain [G.7b.5b](../roadmap/backlog.md#g7b5b).
 The existing `tools/e2e/evpn-type2-fixture.py` exercises isolated GoBGP/FRR
 routes, not the live OVN/OVS Node-Agent runtime.
 
@@ -456,3 +456,9 @@ smoke PASS should be inferred from unit tests or setup completion. A failed
 speaker attestation, missing cached dependency, unavailable image, OVN
 observation, or route check remains a failed/blocked live scenario with its
 failure evidence retained for diagnosis.
+
+The 2026-11-08 smoke and operator regression bundles were accessible and
+independently checked during G.8; both are PASS. See the
+[evidence manifest](../../TESTING_GUIDE.md#standalone-export-smoke-g7b5a).
+This does not certify remote peer authentication, multi-chassis forwarding,
+live tombstone migration/deletion, generalized recovery or production use.

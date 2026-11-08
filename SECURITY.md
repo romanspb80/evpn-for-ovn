@@ -44,6 +44,24 @@ production controls. No runtime hardening was performed in preparation.
 Network authentication, authorization and narrower deployment privileges remain
 [API-02 / K8S-01 roadmap work](docs/roadmap/backlog.md).
 
+## Three independent EVPN security boundaries
+
+| Boundary | Implemented scope / remaining acceptance |
+|---|---|
+| Remote BGP peer transport | TCP MD5 is configurable through existing k8gobgp v0.2.8 `authPasswordSecretRef`; G.7b.5a did not validate authenticated peering. TCP-AO interoperability, GTSM, ACLs, route policy and coordinated rotation remain [SEC-01](docs/roadmap/backlog.md#sec-01). |
+| Local Node-Agent-to-GoBGP speaker | G.6 attests the process/executable/protected configuration and Unix API peer identity, with ownership/incarnation fences. This does not authenticate a remote BGP neighbor or encrypt BGP traffic. |
+| Endpoint advertisement authorization | G.7b requires protected administrator policy, accepted revision/generation fence and authoritative OVN identity intersection. OVN external IDs alone are not permission to advertise. |
+
+MD5 and TCP-AO provide transport authentication/integrity, **not encryption**.
+GTSM, restricted TCP/179 reachability and scoped EVPN import/export policies
+remain independent controls. Protect management APIs and journals separately.
+Kubernetes peer/Secret configuration belongs to k8gobgp; the framework must not
+introduce a second neighbor writer. For existing Secret-reference semantics,
+rotation limitations and source/version evidence, see the
+[peer-security plan](docs/roadmap/upstream/bgp-peer-security.md).
+The successful standalone smoke establishes neither MD5/AO interoperability
+nor production peer security.
+
 ## Credentials and generated material
 
 Generate fresh lab certificates locally with

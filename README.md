@@ -6,10 +6,12 @@ endpoint reconciliation and ownership-aware recovery with the reused GoBGP
 BGP engine and OVN/OVS data plane.
 
 Kubernetes / Multus is the implemented platform integration, **not the
-framework's primary purpose**. OpenStack / Neutron and standalone OVN platform
-adapters are design targets, not implemented integrations. Direct Go services,
-standalone fixtures and an opt-in OVSDB importer already support independent
-experimentation; they are not a supported cross-platform installation.
+framework's primary purpose**. OpenStack / Neutron and OVN-Kubernetes platform
+adapters remain design targets. Opt-in standalone Node-Agent Type-2 import and
+authorized export now run without CNI/Kubernetes startup; the export smoke has
+bounded single-chassis acceptance. Direct Go services and an opt-in OVSDB
+importer also support independent experimentation. None is a supported
+cross-platform installer.
 
 [![EVPN Framework architecture](docs/uml/evpn-overview.svg)](docs/uml/evpn-overview.svg)
 
@@ -40,6 +42,11 @@ verified component ownership matrix, existing interfaces and design targets.
 - Operator-managed Type-2 acceptance: normal and forced-SIGKILL runs passed
   18/18 each, including authenticated CNI creation, Node-Agent/speaker recovery,
   post-replacement forwarding, UUID-scoped withdrawal and cleanup.
+- G.7b.5a standalone export smoke: real GoBGP Unix API and FRR Established,
+  local speaker attestation, authorized Type-2 advertisement, durable policy
+  revocation, exact UUID withdrawal, Node-Agent restart without resurrection,
+  foreign-route preservation and no CNI socket. Retained 2026-11-08 standalone
+  and 18/18 operator regression evidence was independently checked.
 
 These results do not establish shared-VTEP lifecycle, two-chassis
 GoBGP-to-GoBGP operation, multi-VTEP lifecycle, EVPN Type-5, dynamic IPAM, or
@@ -49,8 +56,11 @@ production readiness. The complete acceptance scope and evidence are in the
 Recovery is bounded: ambiguous AddPath outcomes without a durable UUID remain
 **BLOCKED**, not adopted by matching route attributes. See the
 [operator acceptance record](docs/architecture/operator-type2-acceptance.md).
-The reported live results are historical, scoped private-source acceptance.
-They are not fresh validation of a future public snapshot.
+The reported live results are scoped acceptance records, including locally
+verified G.7b.5a evidence; G.7b implementation is committed locally at `750c478`.
+They are not clean
+release-snapshot validation. Standalone multi-chassis forwarding and live
+tombstone migration/deletion remain open under G.7b.5b.
 
 ## Experimental use and security
 
@@ -71,8 +81,11 @@ The opt-in `evpn-node-agent --standalone-evpn-import` mode (with
 `--mode=real-ovn-ovs --network-backend=linux-veth`) runs only the existing
 Type-2 importer, without starting the CNI service or requiring Kubernetes/CRI.
 It requires a root-owned remote-import configuration and standalone GoBGP
-attestation. Standalone local endpoint export is not enabled: it still needs a
-trusted endpoint/attachment authorization source.
+attestation. The separate opt-in `--standalone-evpn-export-config` mode requires
+protected trusted network/endpoint authorization, authoritative OVN NB/SB
+intersection, durable revision/generation fencing and exact route journals.
+Importer/exporter co-hosting is explicit, not automatic. See the
+[standalone runtime contract](docs/architecture/standalone-endpoint-authorization.md).
 CMS is only a test/demo emulator,
 not a mandatory Framework service; no CMS runtime is required by the maintained
 Framework or CNI acceptance runners.
@@ -88,6 +101,7 @@ are in the [Testing Guide](TESTING_GUIDE.md).
 
 ## Documentation
 
+- [Implementation status](IMPLEMENTATION_README.md)
 - [Framework boundaries and ownership matrix](docs/architecture/framework-first.md)
 - [Control / data plane and integration modes](docs/architecture/integrations.md)
 - [GoBGP provider management and dependencies](docs/architecture/runtime-dependencies.md)
@@ -96,12 +110,36 @@ are in the [Testing Guide](TESTING_GUIDE.md).
 - [Ownership and recovery](docs/architecture/type2-restart-ownership.md)
 - [Testing and acceptance](TESTING_GUIDE.md)
 - [Current roadmap and task register](docs/roadmap/README.md)
+- [Roadmap overview dashboard](docs/roadmap/overview.md) and [canonical backlog](docs/roadmap/backlog.md)
 - [Framework priorities](docs/roadmap/framework.md) and [upstream plan](docs/roadmap/upstream/README.md)
 - [Platform integration targets](docs/roadmap/integrations/README.md)
 - [Framework and application API reference](docs/api/README.md)
-- [First public release gates](docs/roadmap/release.md)
-- [Known OVN/OVS issues](docs/known-issues/README.md)
+- [Experimental release gates](docs/roadmap/release.md)
+- [Known issues and upstream candidates](docs/known-issues/README.md)
 - [Architecture diagrams](docs/uml/README.md)
+
+## Project History and Evolution
+
+EVPN-for-OVN originated in **2018** as an experimental EVPN-over-OVN/OVS
+networking project. Historical Git records confirm activity in December 2018,
+including the [Ryu application commit](https://github.com/romanspb80/evpn-for-ovn/commit/113bcc3bf332b802fa84509223348798d60c34a5);
+they do not establish an exact earliest start date. The original Python
+prototype used Ryu for EVPN/VXLAN and evolved with ovsdbapp plus
+RabbitMQ/oslo.messaging and related service components.
+
+The modern implementation is a substantially redesigned **Go-based framework**
+using GoBGP and libovsdb. Its reusable EVPN logic is intended for multiple
+networking platforms, with Kubernetes/CNI an optional integration rather than
+the framework's identity. Current standalone support is bounded; future
+Neutron and OVN-Kubernetes adapters are not claimed as implemented.
+
+The historical [`master` branch](https://github.com/romanspb80/evpn-for-ovn/tree/master)
+preserves the Python prototype; default `main` contains the modern framework.
+These branches deliberately have independent implementation histories. The
+historical branch is retained to document technical origins and evolution,
+not replaced or rewritten. Historical documentation, immutable source
+references and evidence provenance are indexed under
+[`docs/archive/`](docs/archive/README.md).
 
 ## License
 

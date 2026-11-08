@@ -30,3 +30,12 @@ Upstream project references:
 [osrg/gobgp](https://github.com/osrg/gobgp),
 [purelb/gobgp-netlink](https://github.com/purelb/gobgp-netlink).
 No existing project contribution or matching public issue/PR was verified.
+
+Canonical compatibility triage is [UP-02](../backlog.md#up-02); the
+[registry](../../known-issues/control-plane-issues.md) separates expected
+selected-API UUID omission from absent-IP encoding investigation.
+The [unsubmitted proposal](../../issues/gobgp-type2-api-proposal.md) specifies
+stock/fork comparisons, evidence and pending duplicate review. Preliminary
+issue searches did not establish a matching defect or fix.
+Remote peer security, including current-source TCP-AO versus pinned-runtime
+support, is separate [SEC-01 work](bgp-peer-security.md), not local attestation.

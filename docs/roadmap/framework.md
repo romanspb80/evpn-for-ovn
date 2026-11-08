@@ -1,8 +1,9 @@
 # Framework capabilities and evolution
 
 The Framework's Go route and endpoint services can be exercised independently
-of Kubernetes, CNI and Multus; current Node-Agent authority/recovery and
-EvpnCore orchestration remain Kubernetes/runtime integrations. GoBGP provides
+of Kubernetes, CNI and Multus. Node-Agent has explicit standalone-attested
+import and authorized-export modes; CNI authority/recovery and EvpnCore
+orchestration remain Kubernetes/runtime integrations. GoBGP provides
 EVPN control-plane services; OVN/OVS owns workload forwarding in **both**
 integration modes. This page describes capabilities, not a second task list.
 All priorities and acceptance criteria are in the [backlog](backlog.md).
@@ -19,6 +20,8 @@ All priorities and acceptance criteria are in the [backlog](backlog.md).
 | CNI application | Separate `evpn-cni`/NodeAgentCNI ADD/CHECK/DEL; static addressing, replacement, idempotency, negative CHECK, pre-LSP failure rollback, survivor and cleanup acceptance. |
 | Standalone fixtures | `tools/e2e/netlink/`: isolated Type-2 route/withdrawal fixtures; these bypass the k8gobgp manager and do not prove managed Kubernetes acceptance. |
 | Operator-managed recovery | [Phase D record](../architecture/operator-type2-acceptance.md): normal and forced-SIGKILL 18/18 runs, including CNI authority, agent/speaker recovery, post-replacement packets, UUID withdrawal and cleanup. Bounded Netlink path, not generalized recovery or OVSDB-mode acceptance. |
+| G.6/G.7 standalone runtime | [Milestones](backlog.md#completed-g6g7-milestones): speaker attestation/exact receipts, CNI-free importer, protected endpoint authorization, authoritative OVN intersection, durable fences, explicit exporter and version-2 lifecycle tombstones. |
+| G.7b.5a live smoke | [Verified evidence](../../TESTING_GUIDE.md#standalone-export-smoke-g7b5a): one reused OVN chassis, real advertisement/revocation/exact withdrawal/restart, foreign preservation, no CNI socket and 18/18 operator regression. Not standalone forwarding/migration acceptance. |
 
 C4.4f.2q.2 ran each independent Framework integration and the single-chassis
 CNI lifecycle twice. This is historical private-source acceptance, not a fresh
@@ -55,9 +58,11 @@ unification are completed historical q1/q2 work, not pending roadmap tasks.
 Shared-VTEP, two-chassis, multi-VTEP, RR, Type-5/IP-VRF, Single VXLAN
 Device/VLAN segmentation and dynamic IPAM are **planned, not accepted**
 (FW-06 through FW-12). DCI and Neutron are future
-[integrations](integrations/README.md). A standalone OVN platform adapter remains
-planned despite existing direct fixtures/importer code; it is distinct from a
-standalone GoBGP provider (currently rejected by EvpnCore). See the
+[integrations](integrations/README.md). Standalone authorized OVN export and
+import runtimes exist; supported lifecycle integration/installer and
+[G.7b.5b](backlog.md#g7b5b) multi-chassis/tombstone migration remain open.
+EvpnCore still rejects a standalone provider deployment selector; this is
+distinct from Node-Agent's implemented attestation/runtime. See the
 [implemented-versus-target boundary matrix](../architecture/framework-first.md#implemented-boundaries-versus-design-targets).
 Multihoming and quantitative
 convergence/performance are research-only (RS-01/RS-02).
