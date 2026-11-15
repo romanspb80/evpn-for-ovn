@@ -8,10 +8,12 @@ remote peer transport, local speaker attestation and endpoint authorization.
 
 ## Pinned capabilities and interoperability
 
-Reviewed 2026-11-08. The framework client is osrg/gobgp v4.5.0; the managed
+Reviewed 2026-11-08 with framework client osrg/gobgp v4.5.0; the managed
 daemon is `PureLB-fork:01.03.08`, commit `6b99046`, from the pinned k8gobgp
 v0.2.8 image. Its controller selects `purelb/gobgp-netlink/v4 v4.900.8`.
 These versions must not be collapsed into one GoBGP version.
+Final source hardening selects client v4.7.0. This does not change the pinned
+speaker or establish fresh authenticated-peer interoperability.
 
 | Control | Source evidence | Acceptance / limitation |
 |---|---|---|

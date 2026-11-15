@@ -4,6 +4,9 @@ Reviewed 2026-11-08. This evidence index is not a task register or an upstream
 bug tracker. The five classifications are shared with the
 [OVN/OVS registry](ovn-ovs-issues.md#classification). No item below is a
 confirmed upstream defect.
+The table's v4.5.0 client scope is historical. Final source hardening selects
+v4.7.0 and passes offline regressions; live stock/fork comparison remains
+pending. See the [current dependency inventory](../architecture/runtime-dependencies.md).
 
 | Local ID | Upstream / tested scope | Classification | Expected vs actual / evidence | Workaround | Next action / readiness |
 |---|---|---|---|---|---|

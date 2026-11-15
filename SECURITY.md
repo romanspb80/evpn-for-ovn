@@ -40,9 +40,18 @@ this experimental source release **only under this dedicated-lab containment**.
 The MEDIUM broad Operator RBAC risk includes cluster-wide Secret read/write/delete
 permission: never install this Operator in a cluster holding unrelated secrets.
 These are documented residual risks, not remediated findings or validated
-production controls. No runtime hardening was performed in preparation.
+production controls. Dependency security updates do not add management
+authentication or reduce deployment privileges.
 Network authentication, authorization and narrower deployment privileges remain
 [API-02 / K8S-01 roadmap work](docs/roadmap/backlog.md).
+
+The pre-release source uses gRPC 1.83.2, which includes the HTTP/2 receive-buffer
+compaction and Rapid Reset fixes, and GoBGP 4.7.0, which includes the identified
+BGP parser fixes. Keep gRPC's receive-buffer compaction enabled; do not set
+`GRPC_GO_EXPERIMENTAL_ENABLE_RECEIVE_BUFFER_COMPACTION=false`.
+The independently deployed k8gobgp image must be verified separately: changing
+the framework's client dependencies does not update that speaker or establish
+container OS-package security or live interoperability.
 
 ## Three independent EVPN security boundaries
 

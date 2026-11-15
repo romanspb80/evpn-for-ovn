@@ -23,8 +23,9 @@ Before public push, clean-candidate reproduction must establish publicly
 obtainable, licensed runtime inputs with verified provenance and either the
 accepted immutable identities or explicitly approved new acceptance. That gate
 is [REL-04](../roadmap/backlog.md), not a claim completed by private-source tests.
-No image build/pull, dependency upgrade or live provisioning was performed
-during source preparation.
+No image build/pull or live provisioning was performed during the final
+source hardening review. The framework client dependencies were upgraded;
+this does not refresh the historical live acceptance evidence.
 
 ## Inventory and immutable identities
 
@@ -33,7 +34,7 @@ during source preparation.
 | FRR | Shared Containerlab topology used mutable `frrouting/frr:latest`; isolated suites pinned the Docker Hub 8.4 image and actually reported `8.4_git`. | Official Quay 10.7.1 image; executable reports `10.7.1_git`. | External Containerlab peer and all three isolated Framework/CNI suites. |
 | k8gobgp | Shared bootstrap installed `releases/latest`; optional operator scaffolding named 0.2.5. Isolated suites already pinned the v0.2.8 release manifest and image. | Every active installation/example uses v0.2.8 and the verified digest below. | Kubernetes manager plus GoBGP speaker, including all three isolated suites. |
 | GoBGP runtime | k8gobgp's PureLB fork, not a separately installed stock daemon. | `PureLB-fork:01.03.08`, commit `6b99046`, base `gobgp-4.9.0`. | Managed speaker's gRPC RIB and BGP sessions. |
-| Framework GoBGP client | `github.com/osrg/gobgp/v4 v4.5.0`. | Unchanged; module/API client version is not the daemon version. | Framework Type-2 import/export and management APIs. |
+| Framework GoBGP client | `github.com/osrg/gobgp/v4 v4.5.0`. | `v4.7.0`; module/API client version is not the daemon version. | Framework Type-2 import/export and management APIs. |
 | OVN/OVS | `evpn4ovn/ovn-ovs:kind-26.09`: OVN 26.09.0, OVS 4.0.0. | Unchanged; NB schema 7.19.0, SB schema 21.13.0. | Workload forwarding and database ownership. |
 
 FRR image:
@@ -55,7 +56,7 @@ k8gobgp image and installation:
 
 ```text
 ghcr.io/purelb/k8gobgp@sha256:55da7e8c3d09fef10fc819203904acb84e43bce1011dde66031dad501e1185de
-linux/amd64 manifest: sha256:85901e9ac4ef89508f712b3aec625d13e54005f570063c76c51848d3247afe92
+Previously recorded linux/amd64 manifest: sha256:85901e9ac4ef89508f712b3aec625d13e54005f570063c76c51848d3247afe92
 linux/amd64 config:   sha256:5210e18534979372154487954bad4fc00ad14758923b4ae058e6b0a5be10a7d0
 install.yaml SHA256:  f28c6fe7e45b5e535524de09fd13986c6956e112903c960e14f5b1cdeae91008
 OCI source revision: 71b26cb8ea5d48762c00f764e0204ce03e9b6e46
@@ -64,7 +65,18 @@ OCI source revision: 71b26cb8ea5d48762c00f764e0204ce03e9b6e46
 Bootstrap downloads the [v0.2.8 release manifest](https://github.com/purelb/k8gobgp/releases/download/v0.2.8/install.yaml),
 checks its checksum, and substitutes the pinned image before applying it.
 The release tag resolves to the same revision as the image's OCI label.
-This is source/image correspondence, not a claim of signed provenance.
+The final read-only registry check verified the pinned `55da7e8c...` digest
+as a Linux/amd64 OCI image manifest, not a multi-platform index, and verified
+its `5210e185...` config digest. Its labels identify k8gobgp 0.2.8,
+source revision `71b26cb8...` and gobgpd revision `6b99046...`.
+The previously recorded `85901e9a...` manifest above is retained as historical
+inventory, not asserted to be a child of the current pin.
+This is metadata/source correspondence, not signed provenance or verification
+of the embedded binaries. No filesystem layers were downloaded.
+The selected source declares gRPC 1.83.2 and x/net 0.58.0; the separate
+gobgpd source declares `PureLB-fork:01.03.08 [base: gobgp-4.9.0]`.
+Actual binary build information, image signatures, OS-package advisories and
+live compatibility with the framework's v4.7.0 client remain acceptance gates.
 There is **one DaemonSet image containing both manager and gobgpd**, not
 separate operator and speaker images. Its entrypoint runs the manager and
 daemon using a local Unix gRPC socket. The maintained suites use that managed
@@ -114,6 +126,10 @@ single-writer boundary. No architecture redesign or API removal is implied.
 The provider does have general connected-route Netlink import and kernel
 route export; disabling those writers here is deliberate ownership isolation,
 not a claim that upstream lacks Netlink support.
+The framework's own `ovn-netlink` local Type-2 observer is separate from those
+provider writers: it reads OVN-redistributed Linux FDB/neighbor state with
+NB/SB provenance and ownership checks. See the
+[detailed Netlink import/export paths](integrations.md#netlink-programmed-type-2-internals).
 
 ## Embedded exporter composition
 

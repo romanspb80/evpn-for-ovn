@@ -263,7 +263,9 @@ dataplane. The integration boundary follows the upstream
 [OVN Dynamic Routing EVPN architecture](https://docs.ovn.org/en/latest/topics/dynamic-routing/architecture.html#evpn-ethernet-vpn-integration),
 without claiming support for every upstream feature.
 
-See [integration modes](integrations.md) for ownership, test scope, and limits.
+See [integration modes](integrations.md) for ownership, test scope, and limits,
+including the [detailed Netlink Type-2 diagram and source evidence](integrations.md#netlink-programmed-type-2-internals)
+for native Linux redistribution versus directly authorized OVN export.
 
 ## Platform solutions and shared services
 

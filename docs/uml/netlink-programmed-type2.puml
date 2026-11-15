@@ -1,0 +1,79 @@
+@startdot
+digraph NetlinkType2 {
+  graph [rankdir=TB, bgcolor="white", pad="0.2", nodesep="0.45", ranksep="0.55",
+         splines=polyline, compound=true, newrank=true, outputorder=edgesfirst,
+         fontname="DejaVu Sans", fontsize=18, fontcolor="#17263C", labelloc=t,
+         label="Netlink-Programmed: EVPN Type-2 import and local export"];
+  node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=11,
+        fontcolor="#17263C", color="#AAB8C8", fillcolor="white", margin="0.15,0.12"];
+  edge [fontname="DejaVu Sans", fontsize=10, color="#397AB5", fontcolor="#566B82",
+        arrowsize=0.7];
+
+  peer_bgp [label="External peer\nBGP endpoint", fillcolor="#F4F6F8"];
+  speaker [label="GoBGP speaker\nEVPN RIB / AddPath / DeletePath\nk8gobgp configures the managed speaker",
+           fillcolor="#F4F6F8"];
+  {rank=same; peer_bgp; speaker;}
+  peer_bgp -> speaker [dir=both, label="BGP EVPN route exchange"];
+
+  subgraph cluster_agent {
+    label="NODE-AGENT: EMBEDDED NETLINK-PROGRAMMED BACKEND (OPT-IN)";
+    fontname="DejaVu Sans"; fontsize=12; fontcolor="#35628F"; labeljust=r;
+    style="rounded,filled"; color="#A9C6E5"; fillcolor="#F3F8FF"; margin=16;
+    importer [label="ReadOnlyType2Importer\nGoBGPRemoteRIBSource\nComplete RIB / RT / VNI / VTEP validation",
+              fillcolor="#DEEDFF"];
+    writer [label="RemoteType2Importer + OVNNetlinkBackend\nNewOwnedOVNNetlinkBackend\nReceipts / device lifetime / recovery fencing",
+            fillcolor="#E9F3FF"];
+    exporter [label="EndpointExporter + RouteReconciler\nGoBGPType2Adapter\nOwned AddPath receipt / exact UUID withdrawal",
+              fillcolor="#DEEDFF"];
+    native [label="LocalOVNNetlinkObserver\nExporterSource = ovn-netlink\nComplete kernel dumps + NB/SB provenance\nTwo equal snapshots; errors retain routes",
+            fillcolor="#E9F3FF"];
+    authority [label="Local endpoint observation and authorization\ncni: CNIEndpointObserver + continuity\nframework: FrameworkEndpointObserver\nstandalone: accepted policy + NB/SB intersection",
+               fillcolor="#E9F3FF"];
+    {rank=same; importer; exporter;}
+    {rank=same; writer; native; authority;}
+    importer -> exporter [style=invis, weight=10];
+    native -> authority [style=invis, weight=10];
+    importer -> writer [label="Validated remote Type-2\nMAC-only / IPv4 MAC+IP"];
+    native -> exporter [label="Authorized native MAC/IP\nwith kernel evidence", color="#9A6B24"];
+    authority -> exporter [label="Other source selections\n(no kernel redistribution)", color="#9A6B24"];
+    authority -> native [label="Static local VIF identity\nand allowed IPs (nativeOVNPorts)",
+                         color="#9A6B24", constraint=false];
+  }
+
+  speaker -> importer [label="Read-only ListPath\nattested local speaker"];
+  exporter -> speaker [label="Type-2 AddPath / UUID DeletePath\nspeaker identity + continuity gates",
+                       color="#9A6B24"];
+
+  subgraph cluster_linux {
+    label="LINUX INTEGRATION STATE - NOT THE WORKLOAD FORWARDING PATH";
+    fontname="DejaVu Sans"; fontsize=12; fontcolor="#5F7187";
+    style="rounded,filled"; color="#DCE5EF"; fillcolor="#F8FAFD"; margin=14;
+    remote [label="Remote state on mapped Linux devices\nVXLAN FDB: MAC -> remote VTEP\nBridge ARP/ND neighbor: IP -> MAC\nOwned entries marked EXT_LEARNED"];
+    local [label="Local state written by ovn-controller\nAdvertise dummy-port FDB: local MAC\nBridge ARP/ND neighbors: local IP -> MAC\nNOARP; non-external local entries"];
+    {rank=same; remote; local;}
+    remote -> local [style=invis, weight=10];
+  }
+  writer:w -> remote:w [label="Apply / receipt-scoped withdrawal\nNetlink ACK + readback"];
+  local:e -> native:se [label="Read FDB + IPv4/IPv6 neighbors\nfilter remote/foreign entries", color="#9A6B24"];
+
+  controller [label="ovn-controller\nCreates Linux integration devices\nObserves remote Linux FDB/neighbors\nRedistributes local FDB/IP when configured\nPrograms OVS tunnels and forwarding", fillcolor="#F0F7F4"];
+  ovn_state [label="Local OVN endpoint\nNB logical switch / port\nSB Port_Binding / chassis / readiness", fillcolor="#F0F7F4"];
+  {rank=same; controller; ovn_state;}
+  remote -> controller [label="Import: remote integration state"];
+  controller -> local [label="Export: OVN Dynamic Routing\nlocal FDB/IP redistribution", color="#9A6B24"];
+  ovn_state -> authority [label="Observe + verify local ownership\nsource-specific authority", color="#9A6B24"];
+  ovn_state -> controller [label="OVN logical state", color="#7C8B9C", constraint=false];
+
+  ovs [label="OVN / OVS br-int\nActual workload forwarding\nOpenFlow + flow-based OVS VXLAN", fillcolor="#F0F7F4"];
+  peer_vtep [label="External peer\nVXLAN VTEP\n(same peer, separate packet plane)", fillcolor="#F4F6F8"];
+  {rank=same; ovs; peer_vtep;}
+  controller -> ovs [label="Reconcile OVS forwarding", color="#7C8B9C"];
+  ovn_state -> peer_vtep [style=invis, weight=1];
+  ovs -> peer_vtep [dir=both, label="VXLAN packets (VTEP <-> VTEP)", color="#34846A", penwidth=2];
+
+  legend [shape=plain, label="Blue: remote import/control   Amber: local export/control   Green: packets\nImplemented native Linux export is distinct from cni/framework/standalone OVN observers.\nHistorical bounded tests are not live acceptance of the current dependency-upgraded tree."];
+  {rank=sink; legend;}
+  ovs -> legend [style=invis];
+  peer_vtep -> legend [style=invis];
+}
+@enddot

@@ -28,6 +28,7 @@ documents local renderer versions, exact regeneration commands and limits.
 | Diagram | Purpose and documentation | Editable source | Render |
 |---|---|---|---|
 | Component overview | Product architecture: one Framework, consumers, integration backends, GoBGP and OVN/OVS; [root README](../../README.md) | [`.puml`](component-overview.puml) | [SVG](component-overview.svg) |
+| Netlink-Programmed Type-2 internals | Owned remote import, native Linux and authorized OVN local export, and separate OVS VXLAN packets; [integration modes](../architecture/integrations.md#netlink-programmed-type-2-internals) | [`.puml`](netlink-programmed-type2.puml) | [SVG](netlink-programmed-type2.svg) |
 | Modular architecture | Implemented logical responsibilities, ownership and recovery boundaries; [framework architecture](../architecture/framework-architecture.md) | [`.puml`](evpn-modular-architecture.puml) | [SVG](evpn-modular-architecture.svg) |
 | Kubernetes runtime | Operator, per-node Node-Agent, optional provider, CNI and separate datapaths; [deployment guide](../architecture/deployment.md) | [`.puml`](evpn-runtime-architecture.puml) | [SVG](evpn-runtime-architecture.svg) |
 | Integration-mode comparison | Netlink-Programmed primary target versus experimental OVSDB-Programmed backend; [integration modes](../architecture/integrations.md) | [`.puml`](evpn-dataplane-comparison.puml) | [SVG](evpn-dataplane-comparison.svg) |
@@ -49,8 +50,10 @@ plantuml -tsvg docs/uml/*.puml
 ```
 
 The `.puml` files are canonical; never edit generated SVG layout or text
-independently. The SVGs are direct PlantUML output; there is no canvas
-post-processing step. No external rendering service is required. Blue boxes
+independently. The component overview additionally requires the legend-only
+centering command documented in its source after rendering; it preserves
+Graphviz's node layout. Other SVGs are direct PlantUML output.
+No external rendering service is required. Blue boxes
 represent project core, amber project integration and slate third-party solutions.
 PLANNED labels and dashed arrows distinguish future adapters; blue EVPN-control
 arrows and green packet arrows are not interchangeable.

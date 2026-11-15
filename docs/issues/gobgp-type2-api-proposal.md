@@ -9,11 +9,14 @@ client/runtime compatibility constraints, not a root-cause-confirmed defect.
 
 ## Version and environment
 
-Framework Go client `osrg/gobgp/v4 v4.5.0`; managed daemon
+Historical evidence used Framework Go client `osrg/gobgp/v4 v4.5.0`; managed daemon
 `PureLB-fork:01.03.08`, commit `6b99046`, selected by k8gobgp v0.2.8.
 Linux single-chassis OVN/OVS/GoBGP/FRR fixture; Go 1.27.3.
 See [dependency inventory](../architecture/runtime-dependencies.md).
 No independent reproduction on current stock GoBGP is claimed.
+The current source selects client v4.7.0 and passes offline regressions;
+this does not refresh the historical live evidence or execute the comparison
+recipe below.
 
 ## Local evidence / proposed minimal comparison
 

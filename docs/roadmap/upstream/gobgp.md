@@ -1,9 +1,11 @@
 # GoBGP API and compatibility
 
 **Verified local usage:** Framework client
-`github.com/osrg/gobgp/v4 v4.5.0`; managed runtime is the separately pinned
+`github.com/osrg/gobgp/v4 v4.7.0`; managed runtime is the separately pinned
 PureLB fork, not a stock daemon with the same version. Exact identities are
 in the [dependency inventory](../../architecture/runtime-dependencies.md).
+Offline regression tests cover the upgraded client; historical live evidence
+used v4.5.0 and is not fresh v4.7.0 client/speaker acceptance.
 
 [type2_gobgp.go](../../../pkg/evpn/type2_gobgp.go) uses complete global EVPN
 ListPath snapshots, AddPath returning UUID and DeletePath with the trusted

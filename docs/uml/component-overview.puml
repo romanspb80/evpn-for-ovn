@@ -1,5 +1,11 @@
 @startdot
 digraph Architecture {
+  // Center the SVG legend after Graphviz lays out the architecture.
+  // DOT diagrams do not support PlantUML's "legend bottom center".
+  // Regenerate from the repository root:
+  // JAVA_TOOL_OPTIONS=-Djava.awt.headless=true plantuml -tsvg docs/uml/component-overview.puml
+  // python3 -c 'from pathlib import Path; import re; p = Path("docs/uml/component-overview.svg"); s = p.read_text(); s, n = re.subn(r"(<g\b[^>]*)(>\s*<title>legend</title>)", r"\1" + " transform=\"translate(-102 0)\"" + r"\2", s); assert n == 1; p.write_text(s)'
+  // Graph center: 591 pt; legend center: 693 pt; X offset: -102 pt.
   graph [rankdir=TB, bgcolor="white", pad="0.18", nodesep="0.28", ranksep="0.48",
          splines=polyline, compound=true, newrank=true, outputorder=edgesfirst,
          fontname="DejaVu Sans", labelloc=t,
@@ -58,7 +64,9 @@ digraph Architecture {
     labelloc=t; fontsize=9; fontname="DejaVu Sans"; fontcolor="#5F7187";
     style="rounded,filled"; color="#DCE5EF"; fillcolor="#F8FAFD"; margin=11;
     linux [label=<<B>Linux / Netlink</B><BR/><FONT POINT-SIZE="8">Bridge · VXLAN · FDB · neighbors</FONT>>];
-    ovn_controller [label=<<B>ovn-controller</B><BR/><FONT POINT-SIZE="8">Consumes Linux state · programs OVS</FONT>>];
+    // Preserve the published node width while accommodating the updated subtitle.
+    ovn_controller [label=<<B>ovn-controller</B><BR/><FONT POINT-SIZE="8">Reads/writes Linux state · programs OVS</FONT>>,
+                    width=2.4306, margin="0.06,0.10"];
     ovn [label=<<B>OVN / OVS</B><BR/><FONT POINT-SIZE="8">Workload forwarding dataplane</FONT>>,
          fillcolor="#F0F7F4", color="#A7C9B9"];
     {rank=same; linux; ovn_controller; ovn;}
@@ -81,7 +89,7 @@ digraph Architecture {
   {rank=same; ovsdb; netlink; gobgp; provider;}
   {rank=same; linux; ovn_controller; ovn; peer;}
   {rank=sink; legend;}
-  linux -> legend [style=invis, weight=100];
+  ovn -> legend [style=invis, weight=100];
 
   cni -> core [color="#4479B6"];
   standalone -> core [color="#4479B6"];
@@ -89,12 +97,14 @@ digraph Architecture {
   ovnk -> core [style=dashed, color="#B8873B"];
   neutron -> core [style=dashed, color="#B8873B"];
   core -> gobgp [dir=both, color="#397AB5", label="Type-2 route advertisement / withdrawal"];
-  provider -> gobgp [color="#7C8B9C", constraint=false];
+  provider:w -> gobgp:e [color="#7C8B9C", constraint=false];
   core -> netlink [color="#4479B6"];
   core -> ovsdb [color="#4479B6"];
   netlink -> linux [color="#4479B6", label="Program Linux VXLAN / FDB / neighbors"];
   ovsdb -> ovn [color="#4479B6", label="Program OVSDB resources"];
-  linux -> ovn_controller [color="#7C8B9C", label="Observe Linux integration state"];
+  // Keep the original label footprint so the surrounding nodes do not move.
+  linux -> ovn_controller [dir=both, color="#7C8B9C",
+    label=<<TABLE BORDER="0" CELLBORDER="0" CELLPADDING="0" CELLSPACING="0" WIDTH="129"><TR><TD>Read / write Linux EVPN state</TD></TR></TABLE>>];
   ovn_controller -> ovn [color="#7C8B9C", label="Reconcile OVS forwarding"];
   gobgp -> peer [dir=both, color="#397AB5", label="BGP EVPN route exchange"];
   ovn -> peer [dir=both, color="#34846A", label="EVPN VXLAN dataplane (VTEP ↔ VTEP)"];

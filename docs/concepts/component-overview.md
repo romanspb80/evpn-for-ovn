@@ -30,6 +30,13 @@ forwarding; Linux Netlink is one optional integration path, not a replacement
 dataplane. EVPN Type-2 is not required for ordinary Geneve connectivity within
 a shared OVN domain.
 
+The overview's bidirectional Linux / `ovn-controller` arrow represents upstream
+OVN Dynamic Routing's remote-state reads and local FDB/neighbor writes. The implemented
+`ovn-netlink` exporter reads it with OVN provenance checks. Other export
+sources observe authorized OVN endpoints directly. The
+[detailed Netlink paths](../architecture/integrations.md#netlink-programmed-type-2-internals)
+distinguish these mechanisms without adding a separate top-level handler.
+
 The [runtime architecture diagram](../uml/evpn-runtime-architecture.svg),
 [deployment notes](../architecture/deployment.md), and
 [integration modes](../architecture/integrations.md) explain the detailed

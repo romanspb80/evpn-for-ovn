@@ -52,11 +52,15 @@ No copied third-party `.proto` source was identified in those inputs.
 
 ## Verified Go dependency findings
 
-The module graph inventory below was made from `go.mod`, `go.sum`,
+The historical module graph inventory below was made from `go.mod`, `go.sum`,
 `go list -m all`, and license/notice files available in the local Go module
 cache. The module graph contains entries that do not provide packages to this
 project's source build or tests; its totals are not the count of dependencies
-whose code is bundled in a source-only publication:
+whose code is bundled in a source-only publication. These aggregate counts
+predate final dependency hardening and are not a current-cache inventory.
+The final graph has 92 requirements (19 direct, 73 indirect) and 275 external
+resolved modules. The current direct-version license check is recorded below;
+the historical indirect-cache inventory is preserved, not silently refreshed:
 
 | Inventory | Count |
 | --- | ---: |
@@ -96,7 +100,7 @@ available module source. A binary or other package bundling dependencies
 would need its own distribution-specific review and inclusion of the
 applicable license texts and notices.
 
-All 17 direct requirements below have a root `LICENSE` file in the local module
+All 19 current direct requirements below have a root `LICENSE` file in the local module
 cache. The license names are based on those files, not inferred from project
 names or websites.
 
@@ -106,17 +110,19 @@ names or websites.
 | `github.com/containernetworking/cni` | `v1.3.0` | Apache-2.0 (`LICENSE`) |
 | `github.com/go-logr/logr` | `v1.4.3` | Apache-2.0 (`LICENSE`) |
 | `github.com/google/uuid` | `v1.6.0` | BSD-3-Clause (`LICENSE`) |
-| `github.com/osrg/gobgp/v4` | `v4.5.0` | Apache-2.0 (`LICENSE`) |
+| `github.com/osrg/gobgp/v4` | `v4.7.0` | Apache-2.0 (`LICENSE`) |
 | `github.com/ovn-kubernetes/libovsdb` | `v0.8.2-0.20260302130604-c07ce22366ac` | Apache-2.0 (`LICENSE`); attribution in `NOTICE` |
 | `github.com/ovn-kubernetes/ovn-kubernetes/go-controller` | `v0.0.0-20260501210012-834f7acbb6e0` | Apache-2.0 (`LICENSE`) |
 | `github.com/vishvananda/netlink` | `v1.3.2-0.20260320193013-72a8cd7e0a73` | Apache-2.0 (`LICENSE`) |
 | `github.com/vishvananda/netns` | `v0.0.5` | Apache-2.0 (`LICENSE`) |
-| `golang.org/x/sys` | `v0.40.0` | BSD-3-Clause (`LICENSE`) |
-| `google.golang.org/grpc` | `v1.80.0` | Apache-2.0 (`LICENSE`); attribution in `NOTICE` |
+| `golang.org/x/sys` | `v0.47.0` | BSD-3-Clause (`LICENSE`) |
+| `google.golang.org/grpc` | `v1.83.2` | Apache-2.0 (`LICENSE`); attribution in `NOTICE` |
 | `google.golang.org/protobuf` | `v1.36.11` | BSD-3-Clause (`LICENSE`) |
 | `k8s.io/api` | `v0.35.1` | Apache-2.0 (`LICENSE`) |
+| `k8s.io/apiextensions-apiserver` | `v0.35.1` | Apache-2.0 (`LICENSE`) |
 | `k8s.io/apimachinery` | `v0.35.1` | Apache-2.0 (`LICENSE`) |
 | `k8s.io/client-go` | `v0.35.1` | Apache-2.0 (`LICENSE`) |
+| `k8s.io/cri-api` | `v0.35.1` | Apache-2.0 (`LICENSE`) |
 | `sigs.k8s.io/controller-runtime` | `v0.23.1` | Apache-2.0 (`LICENSE`) |
 | `sigs.k8s.io/yaml` | `v1.6.0` | Apache-2.0 (`LICENSE`) |
 
