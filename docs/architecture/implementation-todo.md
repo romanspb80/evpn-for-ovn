@@ -17,10 +17,10 @@ two-chassis, multi-VTEP, RR, Type-5, SVD/VLAN and IPAM are FW-06 through
 FW-12. Proposed CRDs are K8S-02; Neutron, DCI and OVN-Kubernetes are
 INT-01 through INT-03. None is made complete by a documentation change.
 
-G.6/G.7 bounded milestones and the open G.7b.5b multi-chassis/migration scope
+Bounded standalone validation and the remaining multi-chassis/migration scope
 are recorded in the same backlog. SEC-01 separates remote peer protection from
 local speaker attestation and endpoint authorization; UP-02 tracks selected
-GoBGP API compatibility. See [implementation status](../../IMPLEMENTATION_README.md).
+GoBGP API compatibility. See the [current capability matrix](../project/capability-matrix.md).
 
 Verified acceptance remains in the [Testing Guide](../../TESTING_GUIDE.md).
 Historical investigations are not distributed as public acceptance artifacts.

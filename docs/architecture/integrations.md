@@ -6,10 +6,12 @@ Its two dataplane integrations are alternatives. OVN/OVS owns workload
 forwarding in both. These are networking integration paths, not platform
 adapters: neither the opt-in standalone importer nor these test fixtures
 implements the planned standalone OVN platform lifecycle.
-See the [framework boundary matrix](framework-first.md) and
+See the [framework boundary matrix](framework-architecture.md) and
 [modular diagram](../uml/evpn-modular-architecture.svg).
 
-## Netlink-Programmed
+[![Netlink and OVSDB dataplane integrations](../uml/evpn-dataplane-comparison.svg)](../uml/evpn-dataplane-comparison.svg)
+
+## Netlink-Programmed — selected target
 
 The optional Netlink integration consumes GoBGP EVPN Type-2 route state and
 reconciles ownership-scoped Linux EVPN integration state with Netlink. Local
@@ -27,7 +29,7 @@ E2E covers one OVN chassis with an external FRR peer and verifies Type-2
 exchange, OVN/OVS workload traffic, withdrawal, survivor preservation, and
 owned cleanup.
 
-## OVSDB-Programmed
+## OVSDB-Programmed — experimental
 
 The opt-in standalone importer reads the GoBGP gRPC RIB without modifying it,
 validates Type-2 routes, and passes accepted snapshots to the OVSDB handler.
@@ -42,6 +44,9 @@ The importer is standalone and is not enabled by the standard kind deployment.
 The verified independent Framework E2E covers one network and one remote
 VTEP. It does not establish multi-VTEP lifecycle, shared-VTEP sibling
 lifecycle, or two-chassis GoBGP operation.
+This backend is retained for isolated Framework regression tests, architectural
+research, and a future comparison. It is not the selected deployment target
+and is not claimed to have feature parity or production readiness.
 
 ## Ownership and limits
 
@@ -58,12 +63,23 @@ Type-2 paths; the adapters own only their integration state. See the
 before enabling upstream Netlink writers or calling legacy management
 `StartBgp`/`AddPeer` APIs.
 
-The operator-managed Netlink path has bounded
-[Phase D recovery acceptance](operator-type2-acceptance.md), including
-agent/speaker replacement and post-recovery forwarding/withdrawal. That does
-not confer equivalent restart guarantees on the OVSDB path or authorize
-ambiguous AddPath/Netlink adoption. The integrations do not establish EVPN
-Type-5, dynamic IPAM, generalized restart/adoption guarantees, or production
-installation readiness. The current
+The one-chassis operator-managed Netlink path has bounded
+[recovery acceptance](operator-type2-acceptance.md), including
+agent/speaker replacement and post-recovery forwarding/withdrawal. The
+separate attempt-8 two-worker Type-2 scenario verifies initial forwarding, not
+recovery. The one-chassis result does not confer equivalent restart guarantees
+on the OVSDB path or authorize ambiguous AddPath/Netlink adoption. The
+integrations do not establish EVPN Type-5, dynamic IPAM, generalized
+restart/adoption guarantees, or production installation readiness. The current
 acceptance evidence and exact test commands are in the
 [Testing Guide](../../TESTING_GUIDE.md).
+
+## Planned comparative benchmark
+
+The backend comparison remains planned, not measured. It should use equivalent
+topology, route population, workload, peer behavior, and failure injection for
+both modes, and report route convergence and withdrawal convergence, route
+scale, CPU, memory, restart/recovery and reconciliation, forwarding correctness,
+and operational complexity. Results must separate GoBGP engine behavior,
+backend integration behavior, shared Framework behavior, and test-harness
+limitations; no backend is presumed faster or more reliable.

@@ -1,70 +1,86 @@
-@startuml
-top to bottom direction
-skinparam backgroundColor #FCFCFD
-skinparam defaultFontName SansSerif
-skinparam defaultFontSize 18
-skinparam defaultFontColor #172B4D
-skinparam shadowing false
-skinparam roundCorner 16
-skinparam nodesep 35
-skinparam ranksep 50
-skinparam ArrowColor #475569
-skinparam ArrowThickness 2
-skinparam rectangle {
-  BorderThickness 2
-  BackgroundColor #FFFFFF
-  BorderColor #475569
-}
-title EVPN-for-OVN | ownership and module boundaries
+@startdot
+digraph Modules {
+  graph [rankdir=TB, bgcolor="#FCFCFD", pad="0.22", nodesep="0.24", ranksep="0.38",
+         splines=ortho, compound=true, newrank=true, outputorder=edgesfirst,
+         fontname="DejaVu Sans", labelloc=t,
+         label=<<FONT POINT-SIZE="17" COLOR="#172B4D"><B>EVPN-for-OVN | implemented logical responsibilities</B></FONT><BR/><FONT POINT-SIZE="9" COLOR="#64748B">Groups describe source responsibilities, not standalone services or package boundaries</FONT>>];
+  node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=9,
+        fontcolor="#172B4D", color="#64748B", fillcolor="white", penwidth=1.1,
+        margin="0.13,0.10"];
+  edge [fontname="DejaVu Sans", fontsize=8, fontcolor="#475569",
+        color="#475569", penwidth=1.2, arrowsize=0.6];
 
-rectangle "Project integration / orchestration" as Integrations #FFFBF2 {
-  rectangle "EVPN Operator\nEvpnCore YAML lifecycle\nReadiness / finalization" as Operator #FFF4DB
-  rectangle "EVPN CNI Adapter\nADD / CHECK / DEL\nAttachment translation" as CNI #FFF4DB
-  rectangle "Node-Agent\nEndpoint services / Type-2 loops\nCNI authority / runtime verification" as Agent #FFF4DB
-  rectangle "Neutron / standalone adapters\nPLANNED platform integration" as Future #FFF4DB
-}
-rectangle "EVPN Core (logical responsibilities)" as Core #F5F9FF {
-  rectangle "EVPN Type-2 import / export\nRoute validation / reconcile\nGoBGP route adapter" as Routes #E8F1FF
-  rectangle "Endpoint reconciliation\nIdentity-owned ports\nand OVS attachments" as Endpoints #E8F1FF
-  rectangle "OVN integration\nNetlink or OVSDB state\nAlternative network paths" as Integration #E8F1FF
-  rectangle "Ownership and recovery\nFences / journals / receipts\nAmbiguous outcomes BLOCKED" as Recovery #E8F1FF
-}
-rectangle "Reused third-party solutions" as Reused #F8FAFC {
-  rectangle "Kubernetes / containerd\nWorkloads / sandbox evidence" as Kube #F1F5F9
-  rectangle "Multus\nExternal Kubernetes integration\nInvokes EVPN CNI Adapter" as Multus #F1F5F9
-  rectangle "k8gobgp | independent\nBGPConfiguration owner\nManager + gobgpd image" as Provider #F1F5F9
-  rectangle "GoBGP | reused BGP engine\nSessions, EVPN RIB, route gRPC" as GoBGP #F1F5F9
-  rectangle "Linux / Netlink state\nIntegration FDB and neighbors" as Linux #F1F5F9
-  rectangle "OVN / OVS\nNB / SB, northd, ovn-controller\nWorkload VXLAN forwarding" as OVN #F1F5F9
-}
-rectangle "External EVPN peers / VTEPs\nFRR / Linux acceptance peer" as Peers #F1F5F9
+  subgraph cluster_context {
+    label="CONSUMERS AND RUNTIME AUTHORITY";
+    labelloc=t; fontsize=9; fontcolor="#64748B";
+    style="rounded,filled"; color="#D8E2ED"; fillcolor="#F8FAFC"; margin=12;
+    cni [label=<<B>EVPN CNI</B><BR/><FONT POINT-SIZE="8">ADD / CHECK / DEL</FONT>>, fillcolor="#FFF4DB"];
+    multus [label=<<B>Multus</B><BR/><FONT POINT-SIZE="8">optional K8s caller</FONT>>, fillcolor="#F1F5F9"];
+    operator [label=<<B>EvpnCore Operator</B><BR/><FONT POINT-SIZE="8">Kubernetes lifecycle only</FONT>>, fillcolor="#FFF4DB"];
+    agent [label=<<B>Node-Agent</B><BR/><FONT POINT-SIZE="8">hosts endpoint services and Type-2 loops</FONT>>, fillcolor="#FFF4DB"];
+    authority [label=<<B>Platform authority</B><BR/><FONT POINT-SIZE="8">Kubernetes identity / accepted standalone policy</FONT>>, fillcolor="#F1F5F9"];
+    multus -> cni [color="#7C8B9C", label="invokes"];
+    cni -> agent [color="#7C8B9C", label="Unix RPC"];
+    operator -> agent [color="#7C8B9C", label="deploys"];
+    {rank=same; multus; cni;}
+    {rank=same; operator; authority;}
+    cni -> operator [style=invis, weight=15];
+  }
 
-Operator --> Agent : deploys / configures
-Kube --> Multus : CNI invocation
-CNI --> Agent : Unix endpoint RPC
-Future -[#925C00,dashed]-> Endpoints : target reuse
-Agent --> Routes : runs Type-2 loops
-Agent --> Endpoints : invokes services
-Endpoints --> Integration : OVN / OVS attachment
-Routes --> Integration : accepted route state
-Integration -[hidden]right-> Recovery
-Agent --> Kube : identity evidence
-Operator --> Kube : workload reconciliation
-Provider -[#475569]-> GoBGP : BGP identity / peers\nindependent writer
-Routes <-[#2457A7]-> GoBGP : RIB reads / AddPath\nUUID-only DeletePath
-Integration --> Linux : Netlink mode
-Linux --> OVN : observed by ovn-controller
-Integration --> OVN : alternative OVSDB mode
-GoBGP <-[#2457A7]-> Peers : MP-BGP EVPN routes
-OVN <-[#18724B]-> Peers : VXLAN packets
+  subgraph cluster_core {
+    label="EVPN CORE · LOGICAL RESPONSIBILITIES";
+    labelloc=t; fontsize=10; fontcolor="#35628F";
+    style="rounded,filled"; color="#A9C6E5"; fillcolor="#F3F8FF"; penwidth=1.4; margin=13;
+    routes [label=<<B>Type-2 route processing</B><BR/><FONT POINT-SIZE="8">eligibility · import policy · reconciliation</FONT>>, fillcolor="#DEEDFF", color="#4F86BF"];
+    endpoints [label=<<B>Network / endpoint lifecycle</B><BR/><FONT POINT-SIZE="8">identity-owned NB ports and OVS attachments</FONT>>, fillcolor="#DEEDFF", color="#4F86BF"];
+    recovery [label=<<B>Ownership / recovery</B><BR/><FONT POINT-SIZE="8">journals · fences · exact receipts · fail closed</FONT>>, fillcolor="#DEEDFF", color="#4F86BF"];
+    {rank=same; routes; endpoints; recovery;}
+    routes -> endpoints -> recovery [style=invis, weight=15];
+  }
 
-legend bottom
-  |= Color / line |= Meaning |
-  |<#E8F1FF> Blue | Project-owned core responsibilities |
-  |<#FFF4DB> Amber | Project-owned optional integration / orchestration |
-  |<#F1F5F9> Slate | Third-party implementations and infrastructure |
-  | Solid / dashed + PLANNED | Implemented / design target |
-  | Blue arrow / green arrow | Route control / packet forwarding |
-endlegend
-footer EVPN Core: logical core responsibilities - not a standalone runtime.\nRecovery spans core and runtime modules; platform independence remains a design target.
-@enduml
+  subgraph cluster_adapters {
+    label="PROVIDER AND DATAPLANE INTEGRATION BOUNDARIES";
+    labelloc=t; fontsize=9; fontcolor="#64748B";
+    style="rounded,filled"; color="#D8E2ED"; fillcolor="#F8FAFC"; margin=12;
+    bgp_adapter [label=<<B>GoBGP route adapter</B><BR/><FONT POINT-SIZE="8">RIB snapshots · AddPath UUID · exact withdrawal</FONT>>, fillcolor="#E8F1FF"];
+    netlink [label=<<B>Netlink-Programmed</B><BR/><FONT POINT-SIZE="8">primary · owned Linux integration state</FONT>>, fillcolor="#E8F1FF"];
+    ovsdb [label=<<B>OVSDB-Programmed</B><BR/><FONT POINT-SIZE="8">experimental · separate ownership path</FONT>>, fillcolor="#FFF2DE"];
+    {rank=same; bgp_adapter; netlink; ovsdb;}
+    bgp_adapter -> netlink -> ovsdb [style=invis, weight=15];
+  }
+
+  subgraph cluster_runtime {
+    label="EXTERNAL ENGINES AND FORWARDING";
+    labelloc=t; fontsize=9; fontcolor="#64748B";
+    style="rounded,filled"; color="#D8E2ED"; fillcolor="#F8FAFC"; margin=12;
+    gobgp [label=<<B>GoBGP</B><BR/><FONT POINT-SIZE="8">BGP / EVPN control plane</FONT>>];
+    provider [label=<<B>k8gobgp</B><BR/><FONT POINT-SIZE="8">optional independent K8s provider</FONT>>];
+    linux [label=<<B>Linux / Netlink state</B><BR/><FONT POINT-SIZE="8">integration FDB / neighbors</FONT>>];
+    ovn [label=<<B>OVN / OVS</B><BR/><FONT POINT-SIZE="8">workload forwarding</FONT>>];
+    cms [label=<<B>CMS</B><BR/><FONT POINT-SIZE="8">test/demo emulator only</FONT>>];
+    {rank=same; gobgp; provider;}
+    {rank=same; linux; ovn; cms;}
+    gobgp -> provider [style=invis, weight=15];
+    provider -> linux [style=invis, weight=20];
+    linux -> ovn -> cms [style=invis, weight=15];
+  }
+
+  agent -> routes [color="#4479B6", label="runs"];
+  agent -> endpoints [color="#4479B6", label="uses"];
+  authority -> endpoints [color="#7C8B9C", label="identity / authorization", constraint=false];
+  routes -> recovery [color="#4479B6", label="durable mutations"];
+  routes -> bgp_adapter [color="#397AB5", label="Type-2 operations"];
+  routes -> netlink [color="#4479B6", label="selected backend"];
+  routes -> ovsdb [color="#B8873B", label="alternative backend"];
+  endpoints -> ovn [color="#7C8B9C", label="NB / local attachment"];
+  bgp_adapter -> gobgp [color="#397AB5", label="gRPC RIB / paths"];
+  provider -> gobgp [color="#7C8B9C", label="speaker config", constraint=false];
+  netlink -> linux [color="#4479B6", label="owns"];
+  linux -> ovn [color="#7C8B9C", label="observed by ovn-controller", constraint=false];
+  ovsdb -> ovn [color="#B8873B", label="programs owned objects"];
+
+  note [shape=note, style="filled", color="#D8E2ED", fillcolor="#F8FAFC",
+        label="Netlink and OVSDB are alternatives, not separate Frameworks.\nOVN/OVS forwards workload packets; GoBGP does not.\nType-3 / Type-5 are not implied."];
+  cms -> note [style=invis];
+}
+@enddot

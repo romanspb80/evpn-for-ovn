@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: evpn-worker-reservations
+  namespace: evpn-operator-system
+  labels: {app.kubernetes.io/managed-by: evpn-core-operator}
+data:
+  reservations.json: '{"version":1,"clusterUID":"<CLUSTER_UID>","reservations":[],"heads":{}}'

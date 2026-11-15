@@ -1,19 +1,14 @@
 package evpn
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/osrg/gobgp/v4/api"
-	"github.com/osrg/gobgp/v4/pkg/apiutil"
-	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
-	"github.com/osrg/gobgp/v4/pkg/server"
 )
 
 type EVPNImportNetwork struct {
@@ -25,13 +20,29 @@ type EVPNImportNetwork struct {
 	NeighborDevice string
 }
 
-type ReceivedType2Route struct {
-	MAC     string
-	IP      string
-	RD      string
-	Labels  []uint32
-	NextHop string
-	Attrs   []bgp.PathAttributeInterface
+// Type2RouteObservation contains the provider-neutral fields used by import
+// policy and reconciliation. Provider-specific attributes must be normalized
+// by the snapshot source before they reach this contract.
+type Type2RouteObservation struct {
+	MAC          string
+	IP           string
+	RD           string
+	Labels       []uint32
+	NextHop      string
+	RouteTargets []string
+	targetMatch  func(string) (bool, error)
+}
+
+// Type2RouteSnapshot is usable only when Complete is true.
+type Type2RouteSnapshot struct {
+	Routes   []Type2RouteObservation
+	Complete bool
+}
+
+// Type2RouteSnapshotSource observes a complete, authoritative Type-2 route
+// snapshot. Errors and incomplete snapshots must not authorize withdrawal.
+type Type2RouteSnapshotSource interface {
+	SnapshotType2(context.Context) (Type2RouteSnapshot, error)
 }
 
 type ImportedType2Route struct {
@@ -50,110 +61,12 @@ type ImportedType2Route struct {
 	retiring       bool
 }
 
-type RouteSnapshotSource interface {
-	Snapshot(ctx context.Context) ([]ReceivedType2Route, error)
-}
-
-type GoBGPServerSnapshotSource struct {
-	Server *server.BgpServer
-}
-
-func (s *GoBGPServerSnapshotSource) Snapshot(_ context.Context) ([]ReceivedType2Route, error) {
-	if s == nil || s.Server == nil {
-		return nil, fmt.Errorf("gobgp snapshot source is not configured")
-	}
-
-	out := make([]ReceivedType2Route, 0, 8)
-	err := s.Server.ListPath(apiutil.ListPathRequest{
-		TableType: api.TableType_TABLE_TYPE_GLOBAL,
-		Family:    bgp.RF_EVPN,
-	}, func(prefix bgp.NLRI, paths []*apiutil.Path) {
-		if prefix == nil {
-			return
-		}
-		evpnNLRI, ok := prefix.(*bgp.EVPNNLRI)
-		if !ok || evpnNLRI.RouteType != bgp.EVPN_ROUTE_TYPE_MAC_IP_ADVERTISEMENT {
-			return
-		}
-		macRoute, ok := evpnNLRI.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute)
-		if !ok {
-			return
-		}
-		ip := strings.TrimSpace(macRoute.IPAddress.String())
-		if ip == "<nil>" {
-			ip = ""
-		}
-
-		for _, p := range paths {
-			if p.Withdrawal || p.Stale {
-				continue
-			}
-			nextHop := pathNextHop(p.Attrs)
-			remoteVTEP := strings.TrimSpace(p.PeerAddress.String())
-			if remoteVTEP == "" || remoteVTEP == "<nil>" || remoteVTEP == "invalid IP" || net.ParseIP(remoteVTEP) == nil {
-				remoteVTEP = strings.TrimSpace(nextHop)
-			}
-			out = append(out, ReceivedType2Route{
-				MAC:     strings.ToLower(strings.TrimSpace(macRoute.MacAddress.String())),
-				IP:      ip,
-				RD:      strings.TrimSpace(macRoute.RD.String()),
-				Labels:  append([]uint32(nil), macRoute.Labels...),
-				NextHop: remoteVTEP,
-				Attrs:   p.Attrs,
-			})
-		}
-	})
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func pathNextHop(attrs []bgp.PathAttributeInterface) string {
-	for _, attr := range attrs {
-		switch a := attr.(type) {
-		case *bgp.PathAttributeNextHop:
-			return a.Value.String()
-		case *bgp.PathAttributeMpReachNLRI:
-			return a.Nexthop.String()
-		}
-	}
-	return ""
-}
-
-func pathHasRouteTarget(attrs []bgp.PathAttributeInterface, wantRT string) (bool, error) {
-	want, err := bgp.ParseRouteTarget(wantRT)
-	if err != nil {
-		return false, err
-	}
-	wantBytes, err := want.Serialize()
-	if err != nil {
-		return false, err
-	}
-	for _, attr := range attrs {
-		ext, ok := attr.(*bgp.PathAttributeExtendedCommunities)
-		if !ok {
-			continue
-		}
-		for _, community := range ext.Value {
-			gotBytes, err := community.Serialize()
-			if err != nil {
-				return false, err
-			}
-			if bytes.Equal(gotBytes, wantBytes) {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
 type Type2RouteValidator struct {
 	LocalVTEP string
 	Networks  []EVPNImportNetwork
 }
 
-func (v *Type2RouteValidator) Validate(route ReceivedType2Route) (*ImportedType2Route, bool, error) {
+func (v *Type2RouteValidator) ValidateObservation(route Type2RouteObservation) (*ImportedType2Route, bool, error) {
 	if strings.TrimSpace(route.MAC) == "" {
 		return nil, false, nil
 	}
@@ -184,9 +97,20 @@ func (v *Type2RouteValidator) Validate(route ReceivedType2Route) (*ImportedType2
 		if route.Labels[0] != network.VNI {
 			continue
 		}
-		matchRT, err := pathHasRouteTarget(route.Attrs, network.RouteTarget)
-		if err != nil {
-			return nil, false, err
+		matchRT := false
+		if route.targetMatch != nil {
+			var err error
+			matchRT, err = route.targetMatch(network.RouteTarget)
+			if err != nil {
+				return nil, false, err
+			}
+		} else {
+			for _, target := range route.RouteTargets {
+				if target == network.RouteTarget {
+					matchRT = true
+					break
+				}
+			}
 		}
 		if !matchRT {
 			continue
@@ -212,12 +136,19 @@ func (v *Type2RouteValidator) Validate(route ReceivedType2Route) (*ImportedType2
 	return nil, false, nil
 }
 
+// DataplaneBackend is the per-route mutation contract used by the simple
+// Type-2 snapshot importer. Snapshot completeness is checked before invoking
+// it; backend-specific ownership and resource identity remain the backend's
+// responsibility. The verified Netlink path additionally requires validated
+// route evidence, generation, and incarnation before mutation.
 type DataplaneBackend interface {
 	Apply(ctx context.Context, route ImportedType2Route) error
 	Withdraw(ctx context.Context, route ImportedType2Route) error
 }
 
 type LinuxVXLANBackend struct{}
+
+var _ DataplaneBackend = (*LinuxVXLANBackend)(nil)
 
 func (b *LinuxVXLANBackend) Apply(_ context.Context, route ImportedType2Route) error {
 	if err := setRemoteMacFdb(route.VXLANDevice, route.MAC, route.RemoteVTEP, false); err != nil {
@@ -250,6 +181,8 @@ type OVNNetlinkBackend struct {
 	UseSudo     bool
 	owned       *ownedNetlinkState
 }
+
+var _ DataplaneBackend = (*OVNNetlinkBackend)(nil)
 
 func (b *OVNNetlinkBackend) Apply(ctx context.Context, route ImportedType2Route) error {
 	return b.ownedApply(ctx, route)
@@ -354,7 +287,7 @@ func setIPNeighbor(device, ipAddr, mac string, withdraw bool) error {
 }
 
 type RemoteType2Importer struct {
-	source       RouteSnapshotSource
+	source       Type2RouteSnapshotSource
 	validator    *Type2RouteValidator
 	backend      DataplaneBackend
 	pollInterval time.Duration
@@ -370,7 +303,14 @@ type RemoteType2Importer struct {
 	confirmedDigest     string
 }
 
+// NewRemoteType2Importer adapts a legacy provider-specific route source.
+//
+// Deprecated: use NewRemoteType2ImporterFromSnapshot.
 func NewRemoteType2Importer(source RouteSnapshotSource, validator *Type2RouteValidator, backend DataplaneBackend) *RemoteType2Importer {
+	return NewRemoteType2ImporterFromSnapshot(legacyType2RouteSnapshotSource{source: source}, validator, backend)
+}
+
+func NewRemoteType2ImporterFromSnapshot(source Type2RouteSnapshotSource, validator *Type2RouteValidator, backend DataplaneBackend) *RemoteType2Importer {
 	return &RemoteType2Importer{
 		source:       source,
 		validator:    validator,
@@ -385,13 +325,19 @@ func (i *RemoteType2Importer) ReconcileOnce(ctx context.Context) error {
 	if i.verified != nil {
 		return i.reconcileValidated(ctx)
 	}
-	received, err := i.source.Snapshot(ctx)
+	if i.source == nil || i.validator == nil || i.backend == nil {
+		return fmt.Errorf("Type-2 snapshot source, validator and dataplane backend are required")
+	}
+	snapshot, err := i.source.SnapshotType2(ctx)
 	if err != nil {
 		return err
 	}
-	desired := make(map[string]ImportedType2Route, len(received))
-	for _, route := range received {
-		parsed, ok, err := i.validator.Validate(route)
+	if !snapshot.Complete {
+		return fmt.Errorf("incomplete Type-2 route snapshot")
+	}
+	desired := make(map[string]ImportedType2Route, len(snapshot.Routes))
+	for _, route := range snapshot.Routes {
+		parsed, ok, err := i.validator.ValidateObservation(route)
 		if err != nil {
 			return err
 		}
@@ -404,7 +350,13 @@ func (i *RemoteType2Importer) ReconcileOnce(ctx context.Context) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
-	for key, current := range i.active {
+	keys := make([]string, 0, len(i.active))
+	for key := range i.active {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		current := i.active[key]
 		want, ok := desired[key]
 		if !ok {
 			if err := i.backend.Withdraw(ctx, current); err != nil {
@@ -424,7 +376,13 @@ func (i *RemoteType2Importer) ReconcileOnce(ctx context.Context) error {
 		}
 	}
 
-	for key, want := range desired {
+	keys = keys[:0]
+	for key := range desired {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		want := desired[key]
 		if _, ok := i.active[key]; ok {
 			continue
 		}

@@ -1,0 +1,113 @@
+{
+  "cases": [
+    {
+      "name": "ipv4",
+      "endpoint": {
+        "networkID": "net-a",
+        "endpointID": "endpoint-1",
+        "incarnation": "inc-1",
+        "macAddress": "aa:bb:cc:dd:ee:ff",
+        "ipAddresses": ["10.251.1.11/24", "10.251.1.11"],
+        "vni": 100,
+        "routeDistinguisher": "65000:1000",
+        "routeTargets": ["65000:100"],
+        "localVTEP": "192.0.2.10",
+        "nodeName": "kind0-control-plane",
+        "chassis": "chassis-1",
+        "advertise": true
+      },
+      "expected": {
+        "ownershipKey": "endpoint-1/inc-1",
+        "endpointRouteKey": "net-a/endpoint-1/inc-1/65000:1000/aa:bb:cc:dd:ee:ff/10.251.1.11/100/192.0.2.10",
+        "routeIdentity": "\"65000:1000\"|\"00000000000000000000\"|0|\"aa:bb:cc:dd:ee:ff\"|\"10.251.1.11\"",
+        "rd": "65000:1000",
+        "esi": "00000000000000000000",
+        "ethernetTag": 0,
+        "mac": "aa:bb:cc:dd:ee:ff",
+        "ip": "10.251.1.11",
+        "labels": [100],
+        "origin": "igp",
+        "nextHop": "192.0.2.10",
+        "communities": [
+          {"kind": "route-target", "value": "65000:100"},
+          {"kind": "encapsulation", "value": "vxlan"}
+        ],
+        "nlriHex": "02250000fde8000003e8000000000000000000000000000030aabbccddeeff200afb010b000064",
+        "attributesHex": ["40010100", "400304c000020a", "c010100002fde800000064030c000000000008"]
+      }
+    },
+    {
+      "name": "ipv6-canonical-mac",
+      "endpoint": {
+        "networkID": "net-a",
+        "endpointID": "endpoint-1",
+        "incarnation": "inc-1",
+        "macAddress": "AA-BB-CC-DD-EE-FF",
+        "ipAddresses": ["2001:0db8::10/64"],
+        "vni": 100,
+        "routeDistinguisher": "65000:1000",
+        "routeTargets": ["65000:100"],
+        "localVTEP": "192.0.2.10",
+        "nodeName": "kind0-control-plane",
+        "chassis": "chassis-1",
+        "advertise": true
+      },
+      "expected": {
+        "ownershipKey": "endpoint-1/inc-1",
+        "endpointRouteKey": "net-a/endpoint-1/inc-1/65000:1000/AA-BB-CC-DD-EE-FF/2001:db8::10/100/192.0.2.10",
+        "routeIdentity": "\"65000:1000\"|\"00000000000000000000\"|0|\"aa:bb:cc:dd:ee:ff\"|\"2001:db8::10\"",
+        "rd": "65000:1000",
+        "esi": "00000000000000000000",
+        "ethernetTag": 0,
+        "mac": "aa:bb:cc:dd:ee:ff",
+        "ip": "2001:db8::10",
+        "labels": [100],
+        "origin": "igp",
+        "nextHop": "192.0.2.10",
+        "communities": [
+          {"kind": "route-target", "value": "65000:100"},
+          {"kind": "encapsulation", "value": "vxlan"}
+        ],
+        "nlriHex": "02310000fde8000003e8000000000000000000000000000030aabbccddeeff8020010db8000000000000000000000010000064",
+        "attributesHex": ["40010100", "400304c000020a", "c010100002fde800000064030c000000000008"]
+      }
+    },
+    {
+      "name": "mac-only",
+      "endpoint": {
+        "networkID": "net-a",
+        "endpointID": "endpoint-1",
+        "incarnation": "inc-1",
+        "macAddress": "aa:bb:cc:dd:ee:ff",
+        "ipAddresses": [],
+        "vni": 100,
+        "routeDistinguisher": "65000:1000",
+        "routeTargets": ["65000:100"],
+        "localVTEP": "192.0.2.10",
+        "nodeName": "kind0-control-plane",
+        "chassis": "chassis-1",
+        "advertise": true,
+        "macOnly": true
+      },
+      "expected": {
+        "ownershipKey": "endpoint-1/inc-1",
+        "endpointRouteKey": "net-a/endpoint-1/inc-1/65000:1000/aa:bb:cc:dd:ee:ff//100/192.0.2.10",
+        "routeIdentity": "\"65000:1000\"|\"00000000000000000000\"|0|\"aa:bb:cc:dd:ee:ff\"|\"\"",
+        "rd": "65000:1000",
+        "esi": "00000000000000000000",
+        "ethernetTag": 0,
+        "mac": "aa:bb:cc:dd:ee:ff",
+        "ip": "",
+        "labels": [100],
+        "origin": "igp",
+        "nextHop": "192.0.2.10",
+        "communities": [
+          {"kind": "route-target", "value": "65000:100"},
+          {"kind": "encapsulation", "value": "vxlan"}
+        ],
+        "nlriHex": "02210000fde8000003e8000000000000000000000000000030aabbccddeeff00000064",
+        "attributesHex": ["40010100", "400304c000020a", "c010100002fde800000064030c000000000008"]
+      }
+    }
+  ]
+}

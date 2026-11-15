@@ -1,0 +1,65 @@
+@startdot
+digraph Attempt8 {
+  graph [rankdir=TB, bgcolor="#FCFCFD", pad="0.18", nodesep="0.24", ranksep="0.34",
+         splines=ortho, compound=true, newrank=true, outputorder=edgesfirst,
+         fontname="DejaVu Sans", labelloc=t,
+         label=<<FONT POINT-SIZE="16" COLOR="#172B4D"><B>Validated — scoped E2E | Attempt 8 two-worker Type-2</B></FONT><BR/><FONT POINT-SIZE="9" COLOR="#64748B">Only the exact inventory-gated shared-OVN / external-FRR scenario is claimed</FONT>>];
+  node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=9,
+        fontcolor="#172B4D", color="#64748B", fillcolor="white", penwidth=1.1,
+        margin="0.14,0.10"];
+  edge [fontname="DejaVu Sans", fontsize=8, fontcolor="#475569",
+        color="#475569", penwidth=1.2, arrowsize=0.6];
+
+  subgraph cluster_control {
+    label="KUBERNETES MANAGEMENT";
+    labelloc=t; fontsize=8; fontcolor="#64748B";
+    style="rounded,filled"; color="#D8E2ED"; fillcolor="#F8FAFC"; margin=10;
+    api [label=<<B>Kubernetes API</B><BR/><FONT POINT-SIZE="8">worker inventory</FONT>>, fillcolor="#F1F5F9"];
+    operator [label=<<B>EVPN Operator</B><BR/><FONT POINT-SIZE="8">publishes inventory</FONT>>, fillcolor="#FFF4DB"];
+    multus [label=<<B>Multus / EVPN CNI</B><BR/><FONT POINT-SIZE="8">node-local CNI RPC</FONT>>, fillcolor="#FFF4DB"];
+    {rank=same; operator; api; multus;}
+    operator -> api [label="publishes"];
+  }
+
+  subgraph cluster_shared_ovn {
+    label="SHARED OVN CONTROL PLANE";
+    labelloc=t; fontsize=8; fontcolor="#64748B";
+    style="rounded,filled"; color="#D8E2ED"; fillcolor="#F8FAFC"; margin=10;
+    nbdb [shape=cylinder, label=<<B>OVN NBDB / SBDB</B><BR/><FONT POINT-SIZE="8">one shared control plane</FONT>>,
+          fillcolor="#FFF7E7", color="#D99A22"];
+    worker_a [label=<<B>WORKER A · distinct Kubernetes node / OVN chassis</B><BR/><FONT POINT-SIZE="8">Workload 10.244.240.11 · MAC ...:11</FONT><BR/><FONT POINT-SIZE="8">Node-Agent · inventory accepted · Type-2 loops</FONT><BR/><FONT POINT-SIZE="8">GoBGP attested · router ID .2</FONT><BR/><FONT POINT-SIZE="8">Owned Netlink FDB / neighbors · OVN/OVS forwarding</FONT>>,
+              fillcolor="#DEEDFF", color="#4F86BF"];
+    worker_b [label=<<B>WORKER B · distinct Kubernetes node / OVN chassis</B><BR/><FONT POINT-SIZE="8">Workload 10.244.240.12 · MAC ...:12</FONT><BR/><FONT POINT-SIZE="8">Node-Agent · inventory accepted · Type-2 loops</FONT><BR/><FONT POINT-SIZE="8">GoBGP attested · router ID .3</FONT><BR/><FONT POINT-SIZE="8">Owned Netlink FDB / neighbors · OVN/OVS forwarding</FONT>>,
+              fillcolor="#DEEDFF", color="#4F86BF"];
+    {rank=same; worker_a; worker_b;}
+    nbdb -> worker_a [color="#64748B", label="OVN state"];
+    nbdb -> worker_b [color="#64748B"];
+  }
+
+  subgraph cluster_external {
+    label="EXTERNAL EVPN ENDPOINT";
+    labelloc=t; fontsize=8; fontcolor="#64748B";
+    style="rounded,filled"; color="#D8E2ED"; fillcolor="#F8FAFC"; margin=10;
+    frr [label=<<B>FRR speaker / VTEP</B><BR/><FONT POINT-SIZE="8">198.18.30.4 · VNI 1000</FONT>>];
+    endpoint [label=<<B>External Linux endpoint</B><BR/><FONT POINT-SIZE="8">10.244.240.30 · MAC ...:30</FONT>>];
+    {rank=same; frr; endpoint;}
+    frr -> endpoint [style=invis, weight=8];
+  }
+
+  note [shape=note, style="filled", color="#D8E2ED", fillcolor="#F8FAFC", fontsize=8,
+        label="Bidirectional workload ↔ external IPv4 forwarding asserted for each worker.\nShared OVN Geneve, worker-to-worker forwarding, restart, withdrawal and recovery were not asserted."];
+
+  multus -> nbdb [style=invis, weight=40];
+  operator -> worker_a [color="#2563EB", label="inventory assignment"];
+  operator -> worker_b [color="#2563EB"];
+  worker_a -> api [color="#2563EB", label="authenticated acceptance"];
+  worker_b -> api [color="#2563EB"];
+  multus -> worker_a [color="#2563EB", label="CNI"];
+  multus -> worker_b [color="#2563EB"];
+  worker_a -> frr [dir=both, color="#2563EB", label="EVPN Type-2"];
+  worker_b -> frr [dir=both, color="#2563EB"];
+  worker_a -> endpoint [dir=both, color="#15803D", label="bidirectional IPv4"];
+  worker_b -> endpoint [dir=both, color="#15803D"];
+  endpoint -> note [style=invis];
+}
+@enddot

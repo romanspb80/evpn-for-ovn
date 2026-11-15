@@ -1,0 +1,74 @@
+@startdot
+digraph KubernetesRuntime {
+  graph [rankdir=TB, bgcolor="white", pad="0.35", nodesep="0.35", ranksep="0.55",
+         splines=true, compound=true, newrank=true, outputorder=edgesfirst,
+         fontname="DejaVu Sans", labelloc=t, labeljust=l,
+         label=<<FONT POINT-SIZE="20" COLOR="#17263C"><B>Kubernetes CNI · Operator-managed runtime</B></FONT><BR ALIGN="LEFT"/><FONT POINT-SIZE="11" COLOR="#61738A">Separate attempt-8 two-worker Type-2 PASS · this draft is not that acceptance topology</FONT>>];
+  node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=11,
+        fontcolor="#17263C", color="#B5C5D6", fillcolor="white", penwidth=1.2,
+        margin="0.20,0.14"];
+  edge [fontname="DejaVu Sans", fontsize=9, fontcolor="#566B82",
+        color="#7290AD", penwidth=1.4, arrowsize=0.65];
+
+  subgraph cluster_platform {
+    label="KUBERNETES ENVIRONMENT";
+    labelloc=t; labeljust=l; fontsize=10; fontname="DejaVu Sans";
+    fontcolor="#5F7187"; style="rounded,filled"; color="#DCE5EF";
+    fillcolor="#F8FAFD"; margin=18;
+    config [label=<<B>EvpnCore resource</B><BR/><FONT POINT-SIZE="10">Installation configuration</FONT>>];
+    nad [label=<<B>NetworkAttachmentDefinition</B><BR/><FONT POINT-SIZE="10">Secondary network configuration</FONT>>];
+    kubelet [label=<<B>kubelet / workload Pod</B><BR/><FONT POINT-SIZE="10">Pod attachment lifecycle</FONT>>];
+    operator [label=<<B>EVPN Operator</B><BR/><FONT POINT-SIZE="10">Kubernetes workload lifecycle</FONT>>,
+              fillcolor="#F1F7FF", color="#A4C1DF"];
+    multus [label=<<B>Multus</B><BR/><FONT POINT-SIZE="10">Secondary CNI orchestration</FONT>>];
+    cni [label=<<B>EVPN CNI</B><BR/><FONT POINT-SIZE="10">ADD / CHECK / DEL</FONT>>,
+         fillcolor="#F1F7FF", color="#A4C1DF"];
+    subgraph cluster_agent {
+      label="OPERATOR-MANAGED NODE-AGENT DAEMONSET";
+      labelloc=t; labeljust=l; fontsize=10; fontname="DejaVu Sans"; fontcolor="#35628F";
+      style="rounded,filled"; color="#9AB9DC"; fillcolor="#F1F7FF"; margin=12;
+      agent [label=<<B>Node-Agent · node A</B><BR/><FONT POINT-SIZE="10">Endpoint lifecycle · identity</FONT><BR/><FONT POINT-SIZE="10" COLOR="#35628F"><B>Embedded EVPN Core</B></FONT><BR/><FONT POINT-SIZE="10">Type-2 reconciliation · recovery</FONT>>,
+             fillcolor="#DEEDFF", color="#4F86BF", penwidth=1.6, width=3.1];
+      agent2 [label=<<B>Node-Agent · node B</B><BR/><FONT POINT-SIZE="10">Node-local identity and journal</FONT><BR/><FONT POINT-SIZE="10" COLOR="#35628F"><B>Embedded EVPN Core</B></FONT>>,
+              fillcolor="#DEEDFF", color="#4F86BF", penwidth=1.6, width=3.1];
+    }
+    manager [label=<<B>k8gobgp</B><BR/><FONT POINT-SIZE="10">speaker configuration</FONT>>];
+    speaker [label=<<B>GoBGP speaker</B><BR/><FONT POINT-SIZE="10">EVPN RIB / BGP session</FONT>>];
+    netlink [label=<<B>Linux / Netlink</B><BR/><FONT POINT-SIZE="10">Owned EVPN integration state</FONT><BR/><FONT POINT-SIZE="10">Bridge · VXLAN · FDB · neighbors</FONT>>];
+    ovn [label=<<B>OVN / OVS · node A</B><BR/><FONT POINT-SIZE="10">local forwarding</FONT>>, width=2.5];
+    ovn2 [label=<<B>OVN / OVS · node B</B><BR/><FONT POINT-SIZE="10">externally prepared</FONT>>, width=2.5];
+    speaker2 [label=<<B>GoBGP · node B</B><BR/><FONT POINT-SIZE="10">independent local speaker</FONT>>];
+    {rank=same; nad; kubelet;}
+    {rank=same; config; operator; multus; manager;}
+    {rank=same; cni; agent; speaker;}
+    {rank=same; netlink; ovn;}
+    config -> operator [label="configures"];
+    nad -> multus [label="configures"];
+    kubelet -> multus [label="invokes"];
+    operator -> multus -> manager [style=invis, weight=20];
+    netlink -> ovn [style=invis, weight=20];
+    multus -> cni [headlabel="invokes", labeldistance=2.5, color="#7690AA"];
+    cni -> agent [label="requests via Unix RPC", color="#5384B4"];
+    operator -> agent [color="#8C9AAA", label="reconciles workload"];
+    operator -> agent2 [color="#8C9AAA", label="reconciles workload"];
+    manager -> speaker [color="#8C9AAA", label="configures"];
+    manager -> speaker2 [color="#8C9AAA", label="configures"];
+    agent -> speaker [dir=both, color="#397AB5", fontcolor="#397AB5",
+                      label=<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="2" BGCOLOR="#F8FAFD"><TR><TD><FONT COLOR="#397AB5">reads RIB / writes Type-2</FONT></TD></TR></TABLE>>];
+    agent -> netlink [color="#5384B4", label="reconciles owned state"];
+    agent -> ovn [color="#5384B4", label="reconciles endpoints"];
+    agent2 -> speaker2 [dir=both, color="#397AB5", label="reads / writes routes"];
+    agent2 -> ovn2 [color="#5384B4", label="reconciles endpoints"];
+    ovn -> ovn2 [dir=both, color="#34846A", label="shared-OVN Geneve"];
+    ovn -> netlink [dir=both, color="#8C9AAA", label="configured integration"];
+  }
+
+  peer [label=<<B>External EVPN peer / VTEP</B><BR/><FONT POINT-SIZE="10">e.g. FRR + Linux</FONT>>,
+        fillcolor="#F8FAFD", width=3.0];
+  speaker -> peer [dir=both, color="#397AB5", fontcolor="#397AB5", label="exchanges BGP EVPN routes"];
+  netlink -> peer [dir=both, color="#34846A", fontcolor="#34846A", label="EVPN VXLAN (supported integration)"];
+  note [shape=note, style="filled", color="#DCE5EF", fillcolor="#F8FAFD",
+        label=<<FONT POINT-SIZE="10">Shared-OVN Geneve does not establish<BR/>independent-domain EVPN Type-2.</FONT>>];
+  netlink -> note [style=invis];
+}
+@enddot

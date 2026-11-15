@@ -3,7 +3,7 @@
 This page describes the standalone endpoint authorization contract and runtime.
 Loading a policy establishes trusted management intent only. It does not prove
 that an OVN endpoint exists or is ready; standalone Type-2 export is enabled
-only by the explicitly configured G.7b.4 runtime and its full authorization,
+only by the explicitly configured standalone runtime and its full authorization,
 OVN-observation, speaker-attestation and ownership-recovery chain.
 
 ## Trust boundaries
@@ -15,7 +15,7 @@ validated immutable snapshot. The CMS emulator remains a testing/demo
 component, not an authorization authority in the framework core.
 
 Standalone advertisement intersects this snapshot with independent OVN NBDB
-and SBDB observations through the explicitly configured G.7b.4 Node-Agent
+and SBDB observations through the explicitly configured Node-Agent
 runtime. In particular, LSP external IDs are not an authorization source.
 Existing EVPN Type-2 reconciliation and UUID-owned GoBGP recovery remain the
 only route mutation and ownership mechanisms.
@@ -116,7 +116,7 @@ directory link. Other detected metadata changes and invalid or incomplete
 contents are rejected. Concurrent in-place mutation is outside the supported
 update procedure.
 
-## G.7b.3 durable revision and lifecycle fencing
+## Durable revision and lifecycle fencing
 
 `endpointauth.Fencer` accepts only a fully validated canonical snapshot whose
 serialized representation is within the 1 MiB document limit. It is scoped to
@@ -176,16 +176,16 @@ snapshot is returned from a failed write.
 `endpointauth.AcceptedSnapshot`, not a raw policy snapshot. The intersection
 returns uncertain for a missing, closed, superseded, or failed accepted
 snapshot. A valid newer policy that revokes an endpoint remains an explicit
-ineligible decision; this phase does not mutate routes. An accepted token is
+ineligible decision; the authorization intersection does not mutate routes. An accepted token is
 invalidated when a newer revision is accepted by the same open fencer.
 
 This authorization-only journal does not change UUID-scoped AddPath receipts,
 withdrawal, or ambiguous AddPath recovery blocking. The existing Kubernetes
-CNI path is unchanged. G.7b.4 now consumes the accepted fence snapshot in the
-explicit standalone exporter runtime below; G.7b.5a verifies durable revision
-acceptance and restart recovery in a bounded live smoke.
+CNI path is unchanged. The explicit standalone exporter runtime below consumes
+the accepted fence snapshot; a bounded live smoke verifies durable revision
+acceptance and restart recovery.
 
-## G.7b.2 authorization intersection
+## Authorization intersection
 
 The standalone-specific intersection in `pkg/nodeagent/ovnexport` treats the
 policy snapshot and OVN state as separate evidence. It captures one
@@ -229,14 +229,13 @@ canonical MAC/IP pair. Multiple or malformed OVN address bindings are
 uncertain, never arbitrarily selected.
 
 This intersection returns decisions and candidate `LocalEndpoint` values
-only. In G.7b.2 it was not wired to the production exporter, GoBGP, route
-ownership, or withdrawal; the G.7b.4 section below documents the later,
-explicitly configured standalone runtime integration. The existing
-Kubernetes CNI observer and its authorization semantics are unchanged.
-Durable revision/generation high-water fencing in G.7b.3 is required by that
-runtime.
+only; it does not mutate routes. The standalone runtime below supplies accepted
+policy snapshots to the existing exporter, GoBGP route ownership and withdrawal
+mechanisms. The existing Kubernetes CNI observer and its authorization
+semantics are unchanged. Durable revision/generation high-water fencing is
+required by that runtime.
 
-## G.7b.4 standalone Type-2 export runtime
+## Standalone Type-2 export runtime
 
 Standalone export has a separate opt-in entry point:
 `--standalone-evpn-export-config=/etc/evpn/standalone-export.json`. Its
@@ -285,8 +284,11 @@ shared identity, attestation, network mappings and separate recovery journals
 before opening the authorization fence. Programmatic callers cannot rely on
 prior CLI validation or enable import without supplying a valid configuration.
 Focused startup tests cover this boundary and parent cancellation on importer
-failure without live networking. Live co-hosted reconciliation and forwarding
-remain untested; the export-only smoke below does not establish that coverage.
+failure without live networking. The separate
+[live co-hosting scenario](../../TESTING_GUIDE.md#standalone-authorization-and-recovery)
+now verifies simultaneous reconciliation and owned Netlink installation.
+The separately scoped multi-chassis forwarding evidence is described
+below; the export-only smoke does not establish co-hosting coverage.
 
 Startup and each policy reload follow this order: read and validate the
 protected policy; require its installation, node and chassis to match the
@@ -306,7 +308,7 @@ exporter ownership-domain digest.
 The live adapter now reads the actual NB LSP UUID and switch membership, and
 the actual SB Port_Binding UUID, `up` value and chassis reference. It resolves
 the chassis UUID to the SB Chassis row name and passes complete NB/SB evidence
-to the existing G.7b.2 intersection. Attachment ID and the positive
+to the authorization intersection. Attachment ID and the positive
 `evpn.framework/attachment-generation` correlation must already be present on
 the observed LSP and match the accepted policy; the runtime does not synthesize
 a generation. Missing correlation, missing/unknown readiness, failed or
@@ -339,7 +341,7 @@ requires provisioned trusted identity, protected policy/config files, distinct
 durable journals, the standalone GoBGP service, and an OVN endpoint lifecycle
 that publishes generation correlation consistently.
 
-## G.7b.5 deletion and replacement evidence
+## Deletion and replacement evidence
 
 The contract uses two independent authorities: a higher, durably accepted
 version-2 policy revision states the intended lifecycle transition; complete
@@ -361,14 +363,15 @@ AddPath state or uncertain observations.
 
 The existing `tools/run-operator-type2-e2e.sh` reuses a real Kubernetes/operator
 OVN/OVS chassis, GoBGP/FRR peering, VXLAN forwarding and recovery topology. It is
-now also hosts the opt-in G.7b.5a standalone-runtime smoke described below.
+now also hosts the opt-in standalone-runtime smoke described below.
 Authorization, fencing, revocation, restart and startup without CNI passed;
-live deletion/replacement/migration tombstones and multi-chassis forwarding
-remain [G.7b.5b](../roadmap/backlog.md#g7b5b).
+live deletion/replacement/migration tombstones have a separate
+[lifecycle scenario](../../TESTING_GUIDE.md#standalone-authorization-and-recovery).
+Generalized recovery remains open under [FW-04](../roadmap/backlog.md#fw-04).
 The existing `tools/e2e/evpn-type2-fixture.py` exercises isolated GoBGP/FRR
 routes, not the live OVN/OVS Node-Agent runtime.
 
-## G.7b.5a offline-capable standalone export smoke
+## Standalone export smoke
 
 The existing operator Type-2 runner now accepts the explicit
 `EVPN_STANDALONE_EXPORT_SMOKE=1` mode. It reuses the runner's disposable Kind
@@ -450,6 +453,28 @@ agent before deleting the test pod through the ordinary CNI path. The whole
 Containerlab lab is torn down using its run-owned directory; the smoke code
 does not delete host resources outside that disposable lab.
 
+For simultaneous exporter/importer validation, also set
+`EVPN_STANDALONE_COHOST_SMOKE=1`. This requires the export-smoke opt-in and
+leaves the default operator suite and exporter-only scenario unchanged. The
+same Node-Agent receives the real protected importer path, shared installation,
+node, speaker and network identity, and a separate root-owned importer journal
+directory. No CNI server is started. Before each runtime handoff, the current
+importer withdraws its remote entries after FRR route removal; a new owner
+never adopts an old owner's kernel tuples or journal.
+
+The co-hosted scenario reannounces the distinct FRR endpoint, requires an
+authoritative importer snapshot and confirmed durable FDB/neighbor receipts,
+and checks actual kernel state on the OVN switch's configured native
+bridge/VXLAN devices. It records OVN/OVS state, both RIBs, journals, status,
+process identity and command exits. Both reconciliation loops must advance
+without changing the export UUID or importer controller/device identity.
+Policy revocation and a co-hosted agent restart must leave remote installation
+intact and the local route absent. An invalid importer interval exercises the
+real child runtime's configuration failure; bounded parent exit and successful
+reopening of both journals verify cancellation/join and recovery. The original
+operator importer is restored and must import the reannounced remote endpoint.
+This is not multi-chassis packet-forwarding acceptance.
+
 This is a live smoke test, not a second full datapath suite: bidirectional
 forwarding remains covered by the existing operator Type-2 E2E. No standalone
 smoke PASS should be inferred from unit tests or setup completion. A failed
@@ -458,7 +483,73 @@ observation, or route check remains a failed/blocked live scenario with its
 failure evidence retained for diagnosis.
 
 The 2026-11-08 smoke and operator regression bundles were accessible and
-independently checked during G.8; both are PASS. See the
-[evidence manifest](../../TESTING_GUIDE.md#standalone-export-smoke-g7b5a).
+independently reviewed; both were reported as passing. See the
+[historical validation record](../archive/validation-record.md#standalone-authorization-and-two-chassis-lifecycle).
 This does not certify remote peer authentication, multi-chassis forwarding,
 live tombstone migration/deletion, generalized recovery or production use.
+
+## Two-chassis native Type-2 acceptance
+
+`EVPN_STANDALONE_MULTICHASSIS_SMOKE=1`, together with both existing standalone
+opt-ins, adds one ownership-registered OVN/OVS container to the same runner.
+It shares the existing NB/SB databases but has an independent controller,
+OVS, endpoint namespace, attested GoBGP process and co-hosted Node-Agent.
+The existing chassis uses VTEP `198.18.0.2`; the new chassis uses
+`198.18.0.5`. Disjoint logical switches map explicitly to the common VNI1000,
+excluding an ordinary OVN same-switch forwarding shortcut.
+
+The retained [historical evidence](../archive/validation-record.md#standalone-authorization-and-two-chassis-lifecycle)
+passed real local authorization/advertisement, direct EVPN propagation,
+owned remote FDB/neighbor installation and bidirectional packet attribution
+to OVN-programmed OVS VXLAN UDP4789. Both reconciliation loops advanced with
+stable independent receipts. Stopping/restarting only Node-Agent A preserved
+both speakers, Node-Agent B, exact UUIDs and forwarding; revision-2 B revocation
+removed its route and remote entries while preserving A and the unrelated FRR
+route. The operator runtime was restored before run-owned cleanup.
+
+This closes the bounded native-Netlink two-chassis forwarding scenario, not
+the broader lifecycle/failure matrix. Exact lifecycle tombstones have
+the separate scenario below; speaker replacement, interrupted writes,
+database outage/stale observations and generalized durable recovery remain open.
+
+## Live endpoint lifecycle contract
+
+`EVPN_STANDALONE_LIFECYCLE_SMOKE=1` requires all three existing standalone
+opt-ins and extends the same two-chassis fixture. A third, non-CNI workload
+on chassis A is the lifecycle subject; the original A/B workloads survive.
+It validates real LSP deletion, new-UUID generation-2 recreation, active
+generation-3 replacement with the exact old tombstone, and migration of that
+same LSP UUID/generation to chassis B. Original A is the independent remote
+importer after migration; packet proof still crosses disjoint switches over
+VXLAN UDP4789/VNI1000.
+
+Absence without a tombstone is deliberately observed before trusted deletion:
+complete NB/SB absence alone retains owned advertisements. Exact deletion
+then removes BGP paths, importer desired endpoints, durable remote receipts
+and actual kernel entries, independently checked. Policy omission remains
+revocation, not OVN deletion. A previously deleted generation may be recreated
+only at a higher generation; active replacement additionally needs an exact
+`replaced` tombstone. Rollback, digest equivocation and retired-generation
+replay are rejection cases, not empty reconciliation.
+
+For migration the source is disabled/detached through real OVN lifecycle
+first. An authoritatively down SB binding permits exact withdrawal, and the
+destination's old remote receipt/kernel state must drain before the LSP moves
+or its local attachment is created. The source migration policy is then
+retired; its exact tombstone needs a unique ready remote SB binding before
+destination authorization. Native OVN may remove the old remote neighbor
+when that endpoint becomes local, so binding before draining correctly
+quarantines the importer; tests must not erase or bypass its receipt. This is an
+ordered, deliberately non-zero-downtime handoff, not simultaneous ownership.
+Destination export changes next hop from `.2` to `.5`; A must independently
+import it. Compact source migration evidence remains in its fence after the
+policy stops carrying the tombstone.
+
+Both Node-Agents restart after deletion, replacement and migration while
+GoBGP speakers remain alive. Tests compare durable fence state/digest and
+exact exporter/importer receipts, not mutable journal sequence counters.
+Normal operator restoration and authenticated CNI deletion are retained.
+See [scenario and evidence scope](../../TESTING_GUIDE.md#standalone-authorization-and-recovery).
+This does not certify database outage/stale snapshots, interrupted writes,
+GoBGP replacement, power loss, OVSDB adapters or production environments.
+Complete standalone lifecycle and recovery acceptance remains outstanding.

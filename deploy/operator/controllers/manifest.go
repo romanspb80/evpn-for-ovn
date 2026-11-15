@@ -28,9 +28,42 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
+func dataplaneMode(spec evpnv1.EvpnCoreSpec) string {
+	return defaultString(spec.DataplaneMode, "managed-single-node")
+}
+
 func validateSpec(spec evpnv1.EvpnCoreSpec) error {
-	if spec.Enabled && len(validation.IsDNS1123Subdomain(spec.DataplaneNode)) != 0 || spec.Enabled && spec.DataplaneNode == "" {
+	placement := dataplaneMode(spec)
+	if placement != "managed-single-node" && placement != "external-ovn" {
+		return fmt.Errorf("unsupported dataplaneMode %q", placement)
+	}
+	if spec.WorkerInventory != nil && placement != "external-ovn" {
+		return fmt.Errorf("workerInventory requires external-ovn")
+	}
+	if spec.WorkerInventory != nil {
+		n := spec.NodeAgent
+		if !n.ProviderAttestation || n.ExportConfigPath == "" || n.RemoteConfigPath == "" ||
+			n.CNIContinuityConfigPath == "" || n.Type2JournalHostPath == "" {
+			return fmt.Errorf("workerInventory requires provider attestation, export, import, CNI continuity and durable journal configuration")
+		}
+	}
+	if spec.Enabled && placement == "managed-single-node" && (spec.DataplaneNode == "" || len(validation.IsDNS1123Subdomain(spec.DataplaneNode)) != 0) {
 		return fmt.Errorf("spec.dataplaneNode must name the single designated Kubernetes Node")
+	}
+	if spec.Enabled && placement == "external-ovn" {
+		if spec.DataplaneNode != "" {
+			return fmt.Errorf("spec.dataplaneNode is not supported with external-ovn")
+		}
+		if !spec.NodeAgent.Enabled || len(spec.NodeAgent.NodeSelector) == 0 {
+			return fmt.Errorf("external-ovn requires an enabled Node-Agent and a nonempty nodeSelector")
+		}
+		if defaultString(spec.NodeAgent.Mode, "real-ovn-ovs") != "real-ovn-ovs" ||
+			defaultString(spec.NodeAgent.NetworkBackend, "linux-veth") != "linux-veth" {
+			return fmt.Errorf("external-ovn requires real-ovn-ovs/linux-veth")
+		}
+		if spec.NodeAgent.OVSDBEndpoint != "" && spec.NodeAgent.OVSDBEndpoint != "unix:/var/run/openvswitch/db.sock" {
+			return fmt.Errorf("external-ovn requires the node-local OVSDB socket")
+		}
 	}
 	provider := defaultString(spec.BGP.Provider, "k8gobgp")
 	if provider != "k8gobgp" {
@@ -79,6 +112,15 @@ func validateSpec(spec evpnv1.EvpnCoreSpec) error {
 	if n.GoBGPHostPath != "" && (!filepath.IsAbs(n.GoBGPHostPath) || filepath.Clean(n.GoBGPHostPath) != n.GoBGPHostPath || n.GoBGPHostPath == "/") {
 		return fmt.Errorf("nodeAgent.gobgpHostPath must be a clean absolute directory path other than /")
 	}
+	if n.Type2JournalHostPath != "" {
+		path := n.Type2JournalHostPath
+		if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == "/" {
+			return fmt.Errorf("nodeAgent.type2JournalHostPath must be a clean absolute directory path other than /")
+		}
+		if n.ExportConfigPath == "" && n.RemoteConfigPath == "" {
+			return fmt.Errorf("nodeAgent.type2JournalHostPath requires an export or remote config path")
+		}
+	}
 	if n.ProviderCTRHostPath != "" && (!filepath.IsAbs(n.ProviderCTRHostPath) || filepath.Clean(n.ProviderCTRHostPath) != n.ProviderCTRHostPath || n.ProviderCTRHostPath == "/") {
 		return fmt.Errorf("nodeAgent.providerCTRHostPath must be a clean absolute file path")
 	}
@@ -86,7 +128,7 @@ func validateSpec(spec evpnv1.EvpnCoreSpec) error {
 		return fmt.Errorf("CNI continuity requires administrator-enabled provider attestation runtime access")
 	}
 	for key, value := range n.NodeSelector {
-		if key != "kubernetes.io/hostname" || value != spec.DataplaneNode {
+		if placement == "managed-single-node" && (key != "kubernetes.io/hostname" || value != spec.DataplaneNode) {
 			return fmt.Errorf("multi-node/arbitrary nodeAgent.nodeSelector is unsupported; only kubernetes.io/hostname equal to dataplaneNode is allowed")
 		}
 		if errs := validation.IsQualifiedName(key); len(errs) != 0 {
@@ -130,11 +172,14 @@ func renderManifest(data []byte, spec evpnv1.EvpnCoreSpec) ([]*unstructured.Unst
 		if !cleanupAllowed(resourceRef(obj)) {
 			return nil, fmt.Errorf("unsupported managed resource %s %s/%s", obj.GetKind(), obj.GetNamespace(), obj.GetName())
 		}
+		if dataplaneMode(spec) == "external-ovn" && (obj.GetKind() != "DaemonSet" || obj.GetName() != "evpn-node-agent") {
+			continue
+		}
 		if obj.GetKind() == "DaemonSet" && obj.GetName() == "evpn-node-agent" {
 			if !spec.NodeAgent.Enabled {
 				continue
 			}
-			if err := configureNodeAgent(obj, spec.NodeAgent); err != nil {
+			if err := configureNodeAgent(obj, spec.NodeAgent, dataplaneMode(spec)); err != nil {
 				return nil, err
 			}
 		}
@@ -220,7 +265,7 @@ func applySpecOverrides(obj *unstructured.Unstructured, spec evpnv1.EvpnCoreSpec
 	return unstructured.SetNestedSlice(obj.Object, containers, "spec", "template", "spec", "containers")
 }
 
-func configureNodeAgent(obj *unstructured.Unstructured, n evpnv1.NodeAgentSpec) error {
+func configureNodeAgent(obj *unstructured.Unstructured, n evpnv1.NodeAgentSpec, placement string) error {
 	podSpec := corev1.PodSpec{}
 	raw, found, err := unstructured.NestedMap(obj.Object, "spec", "template", "spec")
 	if err != nil || !found {
@@ -240,6 +285,14 @@ func configureNodeAgent(obj *unstructured.Unstructured, n evpnv1.NodeAgentSpec) 
 		podSpec.NodeSelector = n.NodeSelector
 	}
 	podSpec.Tolerations = n.Tolerations
+	if n.Type2JournalHostPath != "" {
+		podSpec.Volumes = append(podSpec.Volumes,
+			corev1.Volume{Name: "type2-journal", VolumeSource: corev1.VolumeSource{
+				HostPath: &corev1.HostPathVolumeSource{Path: n.Type2JournalHostPath, Type: hostPathType(corev1.HostPathDirectory)},
+			}})
+		podSpec.Containers[0].VolumeMounts = append(podSpec.Containers[0].VolumeMounts,
+			corev1.VolumeMount{Name: "type2-journal", MountPath: "/var/lib/evpn-node-agent"})
+	}
 	if n.ProviderAttestation {
 		// RBAC is deliberately an administrator-installed manifest, not part of
 		// the operator's owned resource lifecycle or its write authority.
@@ -272,6 +325,9 @@ func configureNodeAgent(obj *unstructured.Unstructured, n evpnv1.NodeAgentSpec) 
 		"--evpn-remote-interval=" + defaultString(n.RemoteInterval, "2s"),
 		"--evpn-remote-timeout=" + defaultString(n.RemoteTimeout, "5s"),
 		"--cni-continuity-config=" + n.CNIContinuityConfigPath,
+	}
+	if placement == "external-ovn" && n.ExportConfigPath != "" {
+		args = append(args, "--evpn-export-verify-local-chassis")
 	}
 
 	podSpec.Containers[0].Args = args

@@ -11,7 +11,7 @@
 
 Use the shared five [evidence classifications](../../known-issues/ovn-ovs-issues.md#classification).
 An existing issue/PR is a reference only after its relevance is verified.
-No existing matching public issue/PR was verified in this milestone; no
+No existing matching public issue/PR has been verified; no
 submission, status change or upstream modification was performed.
 Source/documentation links are references, not issue evidence.
 
@@ -19,7 +19,7 @@ Before any submission, search the target project's issues and PRs, minimize
 and sanitize the reproducer, establish exact source/runtime versions and
 single-writer ownership, and separate a desired feature from an actual bug.
 No issue search performed here establishes that no related upstream issue
-exists. G.8 performed preliminary OVN/GoBGP issue searches, not complete
+exists. Preliminary OVN/GoBGP issue searches were performed, not complete
 duplicate review. All prepared drafts and readiness limits are indexed in
 [docs/issues](../../issues/README.md).
 Canonical work is [UP-01, UP-02, SEC-01, FW-02/FW-05 and INT-03](../backlog.md).

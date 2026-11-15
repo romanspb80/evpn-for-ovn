@@ -20,7 +20,7 @@ Details remain in the [diagnostic registry](../../known-issues/ovn-ovs-issues.md
 [unsubmitted draft](../../issues/ovn-port-binding-upstream-draft.md).
 Canonical work: [UP-01 and FW-05](../backlog.md#p1-reliability-and-contract-clarification).
 There is no verified public issue/PR URL or root-cause-confirmed upstream fix.
-G.8 preliminary OVN searches did not establish a duplicate; full issue/PR
+A preliminary OVN issue search did not establish a duplicate; full issue/PR
 review remains pending in the draft. No source reproduction was rerun here.
 
 Netlink mode lets `ovn-controller` observe Linux EVPN integration state.

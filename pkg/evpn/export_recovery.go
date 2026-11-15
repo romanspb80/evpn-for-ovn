@@ -35,9 +35,10 @@ type exportReceipt struct {
 }
 
 type exportRecoveryState struct {
-	Version     int
-	Incarnation string
-	Receipts    []exportReceipt
+	Version            int
+	Incarnation        string
+	Receipts           []exportReceipt
+	WithdrawalRequired bool `json:",omitempty"`
 }
 
 type exportIntent struct {
@@ -195,7 +196,7 @@ func (r *ExportRecovery) Recover(ctx context.Context) ([]OwnedType2Route, error)
 	if err != nil {
 		return nil, err
 	}
-	next := exportRecoveryState{Version: 1, Incarnation: current}
+	next := exportRecoveryState{Version: 1, Incarnation: current, WithdrawalRequired: r.state.WithdrawalRequired}
 	for _, receipt := range r.state.Receipts {
 		found := matchingExportPaths(paths, receipt)
 		if len(found) == 0 {
@@ -213,6 +214,9 @@ func (r *ExportRecovery) Recover(ctx context.Context) ([]OwnedType2Route, error)
 			if err := decodeExportRecord(pending.Payload, &checkpoint); err != nil || checkpoint.Version != 1 {
 				return nil, fmt.Errorf("%w: invalid exporter checkpoint", ownership.ErrBlocked)
 			}
+			// A pending checkpoint may be the durable intent to enter
+			// withdrawal-only mode; recovery must never roll it back.
+			next.WithdrawalRequired = next.WithdrawalRequired || checkpoint.WithdrawalRequired
 			for _, candidate := range checkpoint.Receipts {
 				known := false
 				for _, previous := range r.state.Receipts {
@@ -317,6 +321,9 @@ func (r *ExportRecovery) boundary(name string) error {
 func (r *ExportRecovery) Add(ctx context.Context, route Type2Route) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.state.WithdrawalRequired {
+		return "", fmt.Errorf("%w: exporter is permanently fenced for withdrawal", ownership.ErrBlocked)
+	}
 	current, paths, err := r.observation(ctx)
 	if err != nil {
 		return "", err
@@ -366,6 +373,33 @@ func (r *ExportRecovery) Add(ctx context.Context, route Type2Route) (string, err
 		return "", err
 	}
 	return id, nil
+}
+
+// RequireWithdrawal durably fences new advertisements before attempting
+// withdrawal. A pending mutation must be resolved through Recover first.
+func (r *ExportRecovery) RequireWithdrawal() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.state.WithdrawalRequired {
+		return nil
+	}
+	next := r.state
+	next.WithdrawalRequired = true
+	seq, err := r.journal.Begin("export-checkpoint", next)
+	if err != nil {
+		return err
+	}
+	if err := r.journal.Commit(seq, next); err != nil {
+		return err
+	}
+	r.state = next
+	return nil
+}
+
+func (r *ExportRecovery) WithdrawalRequired() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.state.WithdrawalRequired
 }
 
 func (r *ExportRecovery) Delete(ctx context.Context, owned OwnedType2Route) error {

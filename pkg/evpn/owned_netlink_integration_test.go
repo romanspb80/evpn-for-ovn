@@ -85,7 +85,7 @@ func TestOwnedNetlinkNative_Live(t *testing.T) {
 	config := importConfig()
 	config.LocalVTEP = os.Getenv("EVPN_IMPORT_LOCAL_VTEP")
 	source := &GoBGPRemoteRIBSource{Client: client, Gate: SpeakerReadiness{Client: client, ASN: 64512, RouterID: config.LocalVTEP}}
-	reader, err := NewReadOnlyType2Importer(source, config)
+	reader, err := NewReadOnlyType2ImporterFromSnapshot(source, config)
 	if err != nil {
 		t.Fatal(err)
 	}

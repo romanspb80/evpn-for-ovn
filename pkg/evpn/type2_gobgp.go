@@ -14,8 +14,61 @@ import (
 	"github.com/google/uuid"
 	"github.com/osrg/gobgp/v4/api"
 	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/config/oc"
 	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
 )
+
+// SpeakerReadiness validates the concrete GoBGP speaker against the configured
+// ASN, router ID and enabled EVPN address family.
+type SpeakerReadiness struct {
+	Client   api.GoBgpServiceClient
+	ASN      uint32
+	RouterID string
+}
+
+// GoBGPIdentityReadiness checks the configured speaker identity without
+// imposing an EVPN-family requirement on consumers that validate it separately.
+type GoBGPIdentityReadiness struct {
+	Client   api.GoBgpServiceClient
+	ASN      uint32
+	RouterID string
+}
+
+func (s GoBGPIdentityReadiness) Check(ctx context.Context) error {
+	if s.Client == nil {
+		return fmt.Errorf("GoBGP readiness client is required")
+	}
+	response, err := s.Client.GetBgp(ctx, &api.GetBgpRequest{})
+	if err != nil {
+		return fmt.Errorf("read GoBGP speaker identity: %w", err)
+	}
+	global := response.GetGlobal()
+	if global == nil || global.Asn != s.ASN || global.RouterId != s.RouterID {
+		return fmt.Errorf("GoBGP speaker identity mismatch: expected ASN=%d routerID=%s, got %v",
+			s.ASN, s.RouterID, global)
+	}
+	return nil
+}
+
+func (s SpeakerReadiness) Check(ctx context.Context) error {
+	if s.Client == nil {
+		return fmt.Errorf("speaker API is not configured")
+	}
+	res, err := s.Client.GetBgp(ctx, &api.GetBgpRequest{})
+	if err != nil {
+		return fmt.Errorf("speaker GetBgp: %w", err)
+	}
+	g := res.GetGlobal()
+	if g == nil || s.ASN == 0 || g.Asn != s.ASN || g.RouterId != s.RouterID {
+		return fmt.Errorf("speaker not ready: expected ASN=%d routerID=%s, got %v", s.ASN, s.RouterID, g)
+	}
+	for _, family := range g.Families {
+		if family == uint32(oc.AFI_SAFI_TYPE_L2VPN_EVPN.ToInt()) {
+			return nil
+		}
+	}
+	return fmt.Errorf("speaker not ready: EVPN family missing")
+}
 
 // GoBGPType2Adapter must be pinned to one speaker, not a load-balanced service.
 // GoBGP has no compare-and-swap AddPath: callers must ensure exclusive local

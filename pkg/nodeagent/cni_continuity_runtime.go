@@ -83,6 +83,9 @@ func (s *CNIServer) EnableCNIContinuity(ctx context.Context, cfg CNIContinuityCo
 		cfg.NodeName == "" || len(cfg.Networks) == 0 || !filepath.IsAbs(cfg.JournalDirectory) {
 		return nil, fmt.Errorf("%w: real OVN/OVS/Linux mode and complete continuity domain required", ownership.ErrBlocked)
 	}
+	if node := os.Getenv("NODE_NAME"); node != "" && cfg.NodeName != node {
+		return nil, fmt.Errorf("%w: CNI continuity node %q differs from NODE_NAME %q", ownership.ErrBlocked, cfg.NodeName, node)
+	}
 	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	if err != nil || strings.TrimSpace(string(boot)) != cfg.Domain.BootID {
 		return nil, fmt.Errorf("%w: boot identity mismatch", ownership.ErrBlocked)
@@ -156,7 +159,7 @@ func (s *CNIServer) EnableCNIContinuity(ctx context.Context, cfg CNIContinuityCo
 			CTRPath: cfg.CTRPath, CTRSHA256: cfg.CTRSHA256, RuntimeSocket: strings.TrimPrefix(cfg.CRIEndpoint, "unix://"),
 		}}}
 	}
-	c := &cniContinuity{nodeName: cfg.NodeName, journal: j, workload: workload, observer: observer}
+	c := &cniContinuity{nodeName: cfg.NodeName, domain: cfg.Domain, journal: j, workload: workload, observer: observer}
 	if cfg.Admission != nil {
 		if err := cfg.Admission.validate(); err != nil {
 			nb.Close()

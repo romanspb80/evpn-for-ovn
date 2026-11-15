@@ -17,7 +17,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 FRR_IMAGE = "quay.io/frrouting/frr:10.7.1@sha256:e995beaa50fdc9edb35eadcfefa29b7f062cc06f2b812613789b68fa541554d2"
 NODE_IMAGE = "kindest/node:v1.32.3@sha256:b36e76b4ad37b88539ce5e07425f77b29f73a8eaaebf3f1a8bc9c764401d118c"
-PROFILES = ("framework-netlink", "framework-ovsdb", "cni", "type2")
+PROFILES = ("framework-netlink", "framework-ovsdb", "cni", "cni-isolated",
+            "cni-inventory-frr", "type2", "geneve", "geneve-frr", "geneve-full")
 STATE_ROOT = Path.home() / ".local/state/evpn-for-ovn/containerlab"
 
 
@@ -25,10 +26,10 @@ class LabError(RuntimeError):
     pass
 
 
-def command(args, *, check=True, env=None, timeout=600):
+def command(args, *, check=True, env=None, timeout=600, umask=-1):
     result = subprocess.run(args, text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, timeout=timeout, env=env,
-                            pass_fds=lock_descriptors())
+                            pass_fds=lock_descriptors(), umask=umask)
     if check and result.returncode:
         raise LabError(f"command failed ({result.returncode}): {' '.join(map(str, args))}\n"
                        f"{result.stdout}\n{result.stderr}")
@@ -90,6 +91,9 @@ def load(directory):
         raise LabError("lab manifest repository/directory mismatch")
     if hashlib.sha256(topology.read_bytes()).hexdigest() != state["topology_sha256"]:
         raise LabError("lab topology changed since reservation; refusing lifecycle operations")
+    if state.get("kind_config_sha256") and hashlib.sha256(
+            (directory / "kind.yaml").read_bytes()).hexdigest() != state["kind_config_sha256"]:
+        raise LabError("reserved Kind configuration changed; refusing lifecycle operations")
     return state
 
 
@@ -117,7 +121,21 @@ def inventory(state):
             network.get("Internal") is not True or
             labels(network).get("evpn.e2e.owner") != state["owner"]):
         raise LabError("fixture network is not the reserved internal network")
-    return {"containers": containers, "network": network["Id"] if network else None}
+    result = {"containers": containers, "network": network["Id"] if network else None}
+    if state.get("geneve_network"):
+        bridge = inspect("network", state["geneve_network"])
+        if bridge and (labels(bridge).get("evpn.e2e.owner") != state["owner"] or
+                       bridge["IPAM"]["Config"][0]["Subnet"] != "198.18.30.0/24"):
+            raise LabError("Geneve underlay ownership/configuration changed")
+        result["geneve_network"] = bridge["Id"] if bridge else None
+    if state.get("remote2_network"):
+        bridge = inspect("network", state["remote2_network"])
+        if bridge and (labels(bridge).get("evpn.e2e.owner") != state["owner"] or
+                       bridge.get("Internal") is not True or
+                       bridge["IPAM"]["Config"][0]["Subnet"] != "198.18.20.0/24"):
+            raise LabError("Remote2 underlay ownership/configuration changed")
+        result["remote2_network"] = bridge["Id"] if bridge else None
+    return result
 
 
 def verify_owned(state):
@@ -139,6 +157,17 @@ def verify_owned(state):
     network = inspect("network", state["network"])
     if network and not set(network.get("Containers", {})).issubset(current["containers"].values()):
         raise LabError("lab network contains an unowned container; refusing teardown")
+    if state.get("geneve_network"):
+        bridge = inspect("network", state["geneve_network"])
+        if bridge and (current["geneve_network"] != recorded.get("geneve_network") or
+                       not set(bridge.get("Containers", {})).issubset(
+                           current["containers"].values())):
+            raise LabError("Geneve underlay receipt/membership changed; refusing teardown")
+    if state.get("remote2_network"):
+        bridge = inspect("network", state["remote2_network"])
+        if bridge and (current["remote2_network"] != recorded.get("remote2_network") or
+                       not set(bridge.get("Containers", {})).issubset(current["containers"].values())):
+            raise LabError("Remote2 underlay receipt/membership changed; refusing teardown")
     return current
 
 
@@ -154,6 +183,10 @@ def init(directory, profile, cluster, network, frr=None, fixture=None):
         raise LabError("invalid network/FRR identity")
     if profile.startswith("framework-") and not frr:
         raise LabError("Framework profiles require the external FRR peer")
+    if profile == "geneve" and (frr or fixture):
+        raise LabError("Geneve baseline must not provision external BGP peers")
+    if profile in ("geneve-frr", "geneve-full", "cni-inventory-frr") and (not frr or fixture):
+        raise LabError("Geneve/FRR profile requires exactly the external FRR peer")
     if profile == "type2" and not fixture:
         raise LabError("Type-2 topology must be initialized by the standalone fixture")
     if (directory / "lab.json").exists():
@@ -167,20 +200,30 @@ def init(directory, profile, cluster, network, frr=None, fixture=None):
     containers = []
     if profile != "type2":
         kind_nodes = [cluster + "-control-plane", cluster + "-worker"]
+        config = ROOT / "deploy/containerlab/topologies/kind.yaml"
+        if profile in ("cni-isolated", "cni-inventory-frr", "geneve", "geneve-frr", "geneve-full"):
+            kind_nodes.append(cluster + "-worker2")
+            config = ROOT / "deploy/containerlab/topologies/kind-two-worker.yaml"
+            (directory / "kind.yaml").write_bytes(config.read_bytes())
+            config = directory / "kind.yaml"
         nodes[cluster] = {
             "kind": "k8s-kind", "image": NODE_IMAGE,
-            "startup-config": str(ROOT / "deploy/containerlab/topologies/kind.yaml"),
+            "startup-config": str(config),
             "extras": {"k8s_kind": {"deploy": {
                 "kubeconfig": str(directory / "kubeconfig"), "wait": "180s"}}},
         }
         containers.extend(kind_nodes)
-    subnet = "198.18.0.0/24" if frr else None
+    subnet = ("198.18.30.0/24" if profile in ("cni-isolated", "cni-inventory-frr", "geneve") else
+              "198.18.10.0/24" if profile in ("geneve-frr", "geneve-full") else
+              "198.18.0.0/24" if frr else None)
     if frr:
         for source, target in (("daemons", "frr-daemons"), ("vtysh.conf", "frr-vtysh.conf")):
             (directory / target).write_bytes((ROOT / "frr" / source).read_bytes())
         (directory / "frr.conf").write_text("frr defaults traditional\nhostname frr\n")
         nodes[frr] = {
-            "kind": "linux", "image": FRR_IMAGE, "mgmt-ipv4": "198.18.0.3",
+            "kind": "linux", "image": FRR_IMAGE,
+            "mgmt-ipv4": ("198.18.30.4" if profile == "cni-inventory-frr" else
+                          "198.18.10.3" if profile in ("geneve-frr", "geneve-full") else "198.18.0.3"),
             "privileged": False,
             "certificate": {"issue": True},
             "cap-add": ["NET_ADMIN", "NET_RAW", "SYS_ADMIN"],
@@ -192,6 +235,19 @@ def init(directory, profile, cluster, network, frr=None, fixture=None):
                                              ("frr.conf", "frr.conf"))],
         }
         containers.append(frr)
+    if profile == "geneve-full":
+        remote2 = cluster + "-remote2"
+        nodes[remote2] = {
+            "kind": "linux", "image": "evpn4ovn/ovn-ovs:kind-26.09",
+            "entrypoint": "/bin/sleep", "cmd": "infinity", "mgmt-ipv4": "198.18.10.5",
+            "cgroupns-mode": "host",
+            "sysctls": {"net.ipv4.ip_forward": "0"},
+            "certificate": {"issue": True}, "privileged": False,
+            "cap-add": ["NET_ADMIN", "NET_RAW", "SYS_ADMIN"],
+            "security-opts": ["seccomp=unconfined", "apparmor=unconfined"],
+            "labels": node_labels,
+        }
+        containers.append(remote2)
     if fixture:
         subnet = fixture["subnet"]
         for service in ("gobgp", "frr"):
@@ -228,6 +284,15 @@ def init(directory, profile, cluster, network, frr=None, fixture=None):
              "containers": containers, "network": network, "subnet": management["ipv4-subnet"],
              "frr": frr, "phase": "reserved", "resources": {"containers": {}, "network": None},
              "topology_sha256": hashlib.sha256((directory / "lab.clab.yaml").read_bytes()).hexdigest()}
+    if profile in ("cni-isolated", "cni-inventory-frr", "geneve", "geneve-frr", "geneve-full"):
+        state["kind_config_sha256"] = hashlib.sha256((directory / "kind.yaml").read_bytes()).hexdigest()
+    if profile in ("geneve-frr", "geneve-full"):
+        state["geneve_network"] = network + "-geneve"
+        state["resources"]["geneve_network"] = None
+    if profile == "geneve-full":
+        state["remote2"] = remote2
+        state["remote2_network"] = network + "-remote2"
+        state["resources"]["remote2_network"] = None
     write(directory / "lab.json", state)
     return state
 
@@ -238,6 +303,23 @@ def tls_env(directory):
     env = dict(os.environ, CLAB_CA_CERT_FILE=str(tls / "ca.pem"),
                CLAB_CA_KEY_FILE=str(tls / "ca.key"))
     return env, tls
+
+
+def verify_node_certificate(key, certificate, ca, name):
+    try:
+        mode = key.stat().st_mode
+        prefix = []
+    except PermissionError:
+        prefix = ["sudo", "-n"]
+        info = command([*prefix, "stat", "--format=%F:%a", "--", str(key)]).stdout.strip()
+        if info != "regular file:600":
+            raise LabError(f"Containerlab private key is not a regular 0600 file: {key}")
+    else:
+        import stat
+        if not stat.S_ISREG(mode) or stat.S_IMODE(mode) != 0o600 or key.is_symlink():
+            raise LabError(f"Containerlab private key is not a regular 0600 file: {key}")
+    command([*prefix, "openssl", "verify", "-purpose", "sslserver", "-verify_hostname", name,
+             "-CAfile", str(ca), str(certificate)])
 
 
 def lease(directory, *, release=False):
@@ -267,12 +349,19 @@ def up(directory):
             raise LabError(f"refusing pre-existing container {name}")
     if inspect("network", state["network"]):
         raise LabError("refusing pre-existing management network")
+    if state.get("geneve_network") and inspect("network", state["geneve_network"]):
+        raise LabError("refusing pre-existing Geneve underlay")
+    if state.get("remote2_network") and inspect("network", state["remote2_network"]):
+        raise LabError("refusing pre-existing Remote2 underlay")
     for identity in command(["docker", "network", "ls", "-q"]).stdout.split():
         network = inspect("network", identity)
         for config in network.get("IPAM", {}).get("Config", []) or []:
             subnet = config.get("Subnet")
-            if subnet and ":" not in subnet and ipaddress.ip_network(subnet).overlaps(
-                    ipaddress.ip_network(state["subnet"])):
+            if subnet and ":" not in subnet and any(ipaddress.ip_network(subnet).overlaps(
+                    ipaddress.ip_network(wanted)) for wanted in (
+                        [state["subnet"], "198.18.30.0/24", "198.18.20.0/24"] if state.get("remote2_network")
+                        else [state["subnet"], "198.18.30.0/24"] if state.get("geneve_network")
+                        else [state["subnet"]])):
                 raise LabError(f"lab subnet overlaps existing network {network['Name']}")
     env, tls = tls_env(directory)
     env["KUBECONFIG"] = str(directory / "kubeconfig")
@@ -280,6 +369,12 @@ def up(directory):
     state["phase"] = "deploying"
     write(directory / "lab.json", state)
     try:
+        if state.get("geneve_network"):
+            command(["docker", "network", "create", "--internal", "--subnet", "198.18.30.0/24",
+                     "--label", f"evpn.e2e.owner={state['owner']}", state["geneve_network"]])
+        if state.get("remote2_network"):
+            command(["docker", "network", "create", "--internal", "--subnet", "198.18.20.0/24",
+                     "--label", f"evpn.e2e.owner={state['owner']}", state["remote2_network"]])
         if state["profile"] == "type2":
             # Containerlab 0.79 hardcodes Internal=false when creating a bridge.
             # Reserve an explicitly owned internal network for its Linux nodes.
@@ -287,7 +382,7 @@ def up(directory):
                      "--label", "containerlab=", "--label", f"evpn.e2e.owner={state['owner']}",
                      state["network"]])
         result = command(["containerlab", "deploy", "-t", str(directory / "lab.clab.yaml"),
-                          "--skip-labdir-acl"], check=False, env=env)
+                          "--skip-labdir-acl"], check=False, env=env, umask=0o077)
         (directory / "containerlab-deploy.log").write_text(result.stdout + result.stderr)
     finally:
         # Record partial native-kind and Linux creation even when deploy fails.
@@ -308,9 +403,20 @@ def up(directory):
         path.unlink(missing_ok=True)
         with os.fdopen(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "w") as stream:
             stream.write(kubeconfig)
-    if state["frr"]:
-        command(["docker", "network", "connect", "--ip", "198.18.0.2",
+    if state["frr"] and state["profile"] != "cni-inventory-frr":
+        command(["docker", "network", "connect", "--ip",
+                 "198.18.10.2" if state["profile"] in ("geneve-frr", "geneve-full") else "198.18.0.2",
                  state["network"], state["cluster"] + "-worker"])
+    if state["profile"] in ("cni-inventory-frr", "geneve", "geneve-frr", "geneve-full"):
+        for suffix, address in (("-worker", "198.18.30.2"), ("-worker2", "198.18.30.3")):
+            command(["docker", "network", "connect", "--ip", address,
+                     state.get("geneve_network", state["network"]), state["cluster"] + suffix])
+    if state.get("remote2_network"):
+        command(["docker", "network", "connect", "--ip", "198.18.20.2",
+                 state["remote2_network"], state["cluster"] + "-worker2"])
+        command(["docker", "network", "connect", "--ip", "198.18.20.3",
+                 state["remote2_network"], state["remote2"]])
+        command(["docker", "network", "disconnect", state["network"], state["remote2"]])
     # External CA files stay outside the lab directory. Verify the actual node
     # certificates generated by Containerlab, not a presumed copy of the CA.
     pki = directory / f"clab-{state['name']}" / ".tls"
@@ -319,9 +425,7 @@ def up(directory):
         for name in set(state["containers"]) - set(state["kind_nodes"]):
             certificate = pki / name / f"{name}.pem"
             key = pki / name / f"{name}.key"
-            key.chmod(0o600)
-            command(["openssl", "verify", "-purpose", "sslserver", "-verify_hostname", name,
-                     "-CAfile", str(ca), str(certificate)])
+            verify_node_certificate(key, certificate, ca, name)
         (directory / "containerlab-ca-verification.txt").write_text(
             "management-ca=PASS\nsha256=" + hashlib.sha256(ca.read_bytes()).hexdigest() + "\n"
             "framework-grpc-tls=NOT_ENABLED\n")
@@ -391,6 +495,19 @@ def down(directory):
             raise LabError(f"Containerlab destroy failed: {result.stderr}")
     if inventory(state)["containers"] or inventory(state)["network"]:
         raise LabError("owned resources remain after Containerlab teardown")
+    if state.get("geneve_network"):
+        remaining = inspect("network", state["geneve_network"])
+        if remaining:
+            if (remaining["Id"] != state["resources"]["geneve_network"] or
+                    remaining.get("Containers")):
+                raise LabError("Geneve underlay changed; preserving it")
+            command(["docker", "network", "rm", remaining["Id"]])
+    if state.get("remote2_network"):
+        remaining = inspect("network", state["remote2_network"])
+        if remaining:
+            if remaining["Id"] != state["resources"]["remote2_network"] or remaining.get("Containers"):
+                raise LabError("Remote2 underlay changed; preserving it")
+            command(["docker", "network", "rm", remaining["Id"]])
     state["phase"] = "down"
     write(directory / "lab.json", state)
     lease(directory, release=True)

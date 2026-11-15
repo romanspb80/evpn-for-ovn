@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
 	"github.com/romanspb80/evpn-for-ovn/pkg/ownership"
 	"github.com/vishvananda/netlink"
 	"github.com/vishvananda/netns"
@@ -78,6 +80,17 @@ func reopenMemory(t *testing.T, old *OVNNetlinkBackend, k *memoryOwnedKernel) (*
 			return fail(fmt.Errorf("device identity changed: %s", name))
 		}
 	}
+	for _, network := range cfg.Networks {
+		if err := s.scanStartupKernelState(context.Background(), network); err != nil {
+			return fail(err)
+		}
+	}
+	if s.schemaMigration {
+		if err := s.checkpoint(); err != nil {
+			return fail(err)
+		}
+		s.schemaMigration = false
+	}
 	if err := s.verifyRecovered(context.Background()); err != nil {
 		return fail(err)
 	}
@@ -105,7 +118,7 @@ func TestImporterRecoveryRepeatedRestart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		source := i.verified.source.(*importTestSource)
+		source := importTestSourceFor(t, i.verified)
 		source.snap = RemoteRIBSnapshot{Complete: true, Paths: []*api.Path{p}}
 		if err := i.ReconcileOnce(context.Background()); err == nil || k.mutations != mutations {
 			t.Fatal("recovered snapshot mutated before two fresh observations")
@@ -120,6 +133,223 @@ func TestImporterRecoveryRepeatedRestart(t *testing.T) {
 	applyOwned(t, i, ownedSnapshot(t, i))
 	if len(k.entries) != 0 || len(b.Receipts()) != 0 {
 		t.Fatal("obsolete recovered entries not withdrawn")
+	}
+}
+
+func TestImporterRecoveryPreservesForeignSlotsAndRestoresOwnedSlots(t *testing.T) {
+	i, b, k := persistentFixture(t)
+	p1 := importPath(t, nil)
+	p2 := importPath(t, func(n *bgp.EVPNMacIPAdvertisementRoute, _ *[]bgp.PathAttributeInterface) {
+		n.MacAddress = net.HardwareAddr{0x02, 0x00, 0x00, 0x00, 0x00, 0x99}
+		n.IPAddress = netip.MustParseAddr("10.251.1.12")
+	})
+	applyOwned(t, i, ownedSnapshot(t, i, p1, p2))
+	foreignFDB := netlink.Neigh{Family: unix.AF_BRIDGE, LinkIndex: 3,
+		IP: net.ParseIP("192.0.2.99"), HardwareAddr: net.HardwareAddr{0x02, 0, 0, 0, 0, 0xfa},
+		State: netlink.NUD_PERMANENT, Type: unix.RTN_UNICAST}
+	foreignNeighbor := netlink.Neigh{Family: unix.AF_INET, LinkIndex: 2,
+		IP: net.ParseIP("10.250.0.99"), HardwareAddr: net.HardwareAddr{0x02, 0, 0, 0, 0, 0xfb},
+		State: netlink.NUD_PERMANENT}
+	k.entries = append(k.entries, foreignFDB, foreignNeighbor)
+	mutations := k.mutations
+	i, b, err := reopenMemory(t, b, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.RecoveryState() != "RECOVERY_PARTIAL" || len(b.Quarantines()) != 1 || k.mutations != mutations {
+		t.Fatalf("foreign slots did not remain isolated from owned recovery: state=%s quarantine=%+v mutations=%d/%d",
+			b.RecoveryState(), b.Quarantines(), mutations, k.mutations)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		source := importTestSourceFor(t, i.verified)
+		source.snap = RemoteRIBSnapshot{Complete: true, Paths: []*api.Path{p1, p2}}
+		err := i.ReconcileOnce(context.Background())
+		if attempt == 0 && err == nil {
+			t.Fatal("recovered routes were reconciled before two fresh observations")
+		}
+		if attempt == 1 && err != nil {
+			t.Fatal(err)
+		}
+	}
+	if k.mutations != mutations || len(k.entries) != 6 {
+		t.Fatalf("independent receipts were not recovered idempotently: mutations=%d/%d entries=%+v", k.mutations, mutations, k.entries)
+	}
+	for _, want := range []netlink.Neigh{foreignFDB, foreignNeighbor} {
+		found := false
+		for _, got := range k.entries {
+			found = found || (got.Family == want.Family && got.LinkIndex == want.LinkIndex &&
+				got.IP.Equal(want.IP) && reflect.DeepEqual(got.HardwareAddr, want.HardwareAddr))
+		}
+		if !found {
+			t.Fatalf("foreign kernel state was changed or removed: %+v", want)
+		}
+	}
+	if len(b.Quarantines()) != 1 || b.Quarantines()[0].Observed[0].IP != "192.0.2.99" {
+		t.Fatalf("foreign FDB quarantine was not durably retained: %+v", b.Quarantines())
+	}
+}
+
+func TestImporterRecoveryQuarantinesConflictAndRestoresIndependentRoute(t *testing.T) {
+	i, b, k := persistentFixture(t)
+	p1 := importPath(t, nil)
+	p2 := importPath(t, func(n *bgp.EVPNMacIPAdvertisementRoute, _ *[]bgp.PathAttributeInterface) {
+		n.MacAddress = net.HardwareAddr{0x02, 0x00, 0x00, 0x00, 0x00, 0x99}
+		n.IPAddress = netip.MustParseAddr("10.251.1.12")
+	})
+	applyOwned(t, i, ownedSnapshot(t, i, p1, p2))
+	var p1MAC string
+	var p2MAC string
+	var p2IP string
+	for _, receipt := range b.Receipts() {
+		switch receipt.Endpoint.IP {
+		case "10.251.1.11":
+			p1MAC = receipt.Endpoint.MAC
+		case "10.251.1.12":
+			p2MAC, p2IP = receipt.Endpoint.MAC, receipt.Endpoint.IP
+		}
+	}
+	if p1MAC == "" || p2MAC == "" || p2IP == "" {
+		t.Fatal("test routes did not produce distinct endpoint receipts", b.Receipts())
+	}
+	var retained []netlink.Neigh
+	for _, entry := range k.entries {
+		switch {
+		case entry.Family == unix.AF_BRIDGE && entry.HardwareAddr.String() == p1MAC:
+			entry.IP = net.ParseIP("192.0.2.81")
+			retained = append(retained, entry)
+		case entry.Family == unix.AF_INET && entry.IP.String() == p2IP:
+		case entry.Family == unix.AF_BRIDGE && entry.HardwareAddr.String() == p2MAC:
+		default:
+			retained = append(retained, entry)
+		}
+	}
+	k.entries = retained
+	mutations := k.mutations
+	i, b, err := reopenMemory(t, b, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Quarantines()) != 1 || b.Quarantines()[0].Slot.Key != p1MAC || k.mutations != mutations {
+		t.Fatalf("same-MAC conflict was not isolated: quarantine=%+v mutations=%d/%d", b.Quarantines(), mutations, k.mutations)
+	}
+	snapshot := ownedSnapshot(t, i, p1, p2)
+	if err := i.applyValidatedSnapshot(context.Background(), snapshot); err == nil {
+		t.Fatal("conflicting FDB slot was treated as mutable owned state")
+	}
+	if k.mutations != mutations+2 {
+		t.Fatalf("independent missing route did not recover exactly two objects: mutations=%d/%d", k.mutations, mutations)
+	}
+	foreignPreserved, independentRestored := false, false
+	for _, entry := range k.entries {
+		foreignPreserved = foreignPreserved || (entry.Family == unix.AF_BRIDGE && entry.HardwareAddr.String() == p1MAC && entry.IP.String() == "192.0.2.81")
+		independentRestored = independentRestored || (entry.Family == unix.AF_BRIDGE && entry.HardwareAddr.String() == p2MAC && entry.IP.String() == "192.0.2.80")
+	}
+	if !foreignPreserved || !independentRestored {
+		t.Fatalf("conflicting slot or independent owned route has wrong state: %+v", k.entries)
+	}
+	mutations = k.mutations
+	if err := i.applyValidatedSnapshot(context.Background(), ownedSnapshot(t, i)); err == nil {
+		t.Fatal("withdrawal of a conflicted slot was not blocked")
+	}
+	if k.mutations != mutations+3 || len(b.Receipts()) != 1 || !b.Receipts()[0].Retiring {
+		t.Fatalf("exact withdrawal did not stop at the protected FDB slot: mutations=%d/%d receipts=%+v", k.mutations, mutations, b.Receipts())
+	}
+	foreignPreserved, independentRemains := false, false
+	for _, entry := range k.entries {
+		foreignPreserved = foreignPreserved || (entry.Family == unix.AF_BRIDGE && entry.HardwareAddr.String() == p1MAC && entry.IP.String() == "192.0.2.81")
+		independentRemains = independentRemains || entry.HardwareAddr.String() == p2MAC
+	}
+	if !foreignPreserved || independentRemains {
+		t.Fatalf("withdrawal modified a protected slot or retained independent state: %+v", k.entries)
+	}
+}
+
+func TestImporterQuarantineOrderingIsDeterministic(t *testing.T) {
+	_, b, k := persistentFixture(t)
+	one := netlink.Neigh{Family: unix.AF_BRIDGE, LinkIndex: 3, IP: net.ParseIP("192.0.2.99"),
+		HardwareAddr: net.HardwareAddr{0x02, 0, 0, 0, 0, 0xfa}, State: netlink.NUD_PERMANENT}
+	two := one
+	two.IP = net.ParseIP("192.0.2.98")
+	k.entries = []netlink.Neigh{one, two}
+	_, b, err := reopenMemory(t, b, k)
+	if err != nil || len(b.Quarantines()) != 1 {
+		t.Fatalf("initial conflict classification failed: q=%+v err=%v", b.Quarantines(), err)
+	}
+	want := b.Quarantines()[0]
+	k.entries[0], k.entries[1] = k.entries[1], k.entries[0]
+	_, b, err = reopenMemory(t, b, k)
+	if err != nil || len(b.Quarantines()) != 1 || !reflect.DeepEqual(want, b.Quarantines()[0]) {
+		t.Fatalf("dump order changed durable quarantine representation: want=%+v got=%+v err=%v", want, b.Quarantines(), err)
+	}
+}
+
+func TestImporterQuarantineRequiresExplicitResolution(t *testing.T) {
+	_, b, k := persistentFixture(t)
+	foreign := netlink.Neigh{Family: unix.AF_BRIDGE, LinkIndex: 3, IP: net.ParseIP("192.0.2.99"),
+		HardwareAddr: net.HardwareAddr{0x02, 0, 0, 0, 0, 0xfa}, State: netlink.NUD_PERMANENT}
+	k.entries = append(k.entries, foreign)
+	_, b, err := reopenMemory(t, b, k)
+	if err != nil || len(b.Quarantines()) != 1 {
+		t.Fatalf("startup quarantine failed: %+v %v", b.Quarantines(), err)
+	}
+	k.entries = nil
+	_, b, err = reopenMemory(t, b, k)
+	if err != nil || len(b.Quarantines()) != 1 || b.Quarantines()[0].Resolved {
+		t.Fatalf("an absent slot automatically cleared durable quarantine: %+v %v", b.Quarantines(), err)
+	}
+	q := b.Quarantines()[0]
+	if err := b.ResolveQuarantinedSlot(context.Background(), q.Slot, "operator verified foreign entry removal"); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Quarantines()) != 1 || !b.Quarantines()[0].Resolved {
+		t.Fatalf("evidence-backed resolution was not persisted: %+v", b.Quarantines())
+	}
+	mutations := k.mutations
+	_, b, err = reopenMemory(t, b, k)
+	if err != nil || b.RecoveryState() == "RECOVERY_BLOCKED" || !b.Quarantines()[0].Resolved || k.mutations != mutations {
+		t.Fatalf("resolved quarantine did not survive restart idempotently: state=%s q=%+v err=%v", b.RecoveryState(), b.Quarantines(), err)
+	}
+}
+
+func TestImporterRecoveryMigratesV1WithoutClearingGlobalQuarantine(t *testing.T) {
+	for _, global := range []bool{false, true} {
+		t.Run(fmt.Sprintf("global=%t", global), func(t *testing.T) {
+			_, b, k := persistentFixture(t)
+			state := b.owned.durableState()
+			state.Version = 1
+			state.Quarantines = nil
+			if global {
+				state.Quarantine = "legacy global uncertainty"
+			}
+			seq, err := b.owned.journal.Begin("legacy-v1-state", state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := b.owned.journal.Commit(seq, state); err != nil {
+				t.Fatal(err)
+			}
+			_, reopened, err := reopenMemory(t, b, k)
+			if global {
+				if err == nil {
+					t.Fatalf("legacy global quarantine was weakened: state=%s", reopened.RecoveryState())
+				}
+				return
+			}
+			if err != nil || reopened.RecoveryState() == "RECOVERY_BLOCKED" {
+				t.Fatalf("valid v1 journal did not migrate safely: state=%s err=%v", reopened.RecoveryState(), err)
+			}
+			var migrated remoteReceiptState
+			raw, pending, err := reopened.owned.journal.Snapshot()
+			if err != nil || pending != nil {
+				t.Fatalf("migrated journal is not committed: pending=%+v err=%v", pending, err)
+			}
+			if err := json.Unmarshal(raw, &migrated); err != nil {
+				t.Fatal(err)
+			}
+			if migrated.Version != 2 || migrated.Quarantines == nil || migrated.Quarantine != "" {
+				t.Fatalf("v1 migration did not produce explicit v2 state: %+v", migrated)
+			}
+		})
 	}
 }
 
@@ -170,6 +400,14 @@ func TestImporterRecoveryAbsenceForeignAndCorruption(t *testing.T) {
 			}
 			mutations := k.mutations
 			i, b, err := reopenMemory(t, b, k)
+			quarantined := mode == "foreign-matching-unattempted" ||
+				mode == "foreign-neighbor-unattempted" || mode == "foreign-changed"
+			if quarantined {
+				if err != nil || len(b.Quarantines()) == 0 || k.mutations != mutations {
+					t.Fatalf("slot conflict did not recover independently and remain untouched: quarantines=%+v err=%v", b.Quarantines(), err)
+				}
+				return
+			}
 			if mode != "missing-owned" {
 				if err == nil || k.mutations != mutations {
 					t.Fatalf("unsafe recovery accepted or mutated: %v", err)
@@ -259,7 +497,8 @@ func kernelRecoveryFixture(t *testing.T) (RemoteNetlinkConfig, netns.NsHandle, *
 	if err := h.LinkSetUp(br); err != nil {
 		t.Fatal(err)
 	}
-	vx := &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: "recover-vx", MasterIndex: br.Index}, VxlanId: 100, Port: 60100}
+	addTestLocalVTEP(t, h)
+	vx := &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: "recover-vx", MasterIndex: br.Index}, VxlanId: 100, Port: 60100, SrcAddr: net.ParseIP("192.0.2.32")}
 	if err := h.LinkAdd(vx); err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +597,7 @@ func TestImporterRecoveryKernelIdentityChange(t *testing.T) {
 					t.Fatal(err)
 				}
 				replacement := &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: "recover-vx",
-					MasterIndex: bridge.Attrs().Index}, VxlanId: 100, Port: 60100}
+					MasterIndex: bridge.Attrs().Index}, VxlanId: 100, Port: 60100, SrcAddr: net.ParseIP("192.0.2.32")}
 				if err := h.LinkAdd(replacement); err != nil {
 					t.Fatal(err)
 				}

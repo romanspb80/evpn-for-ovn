@@ -48,9 +48,9 @@ Network authentication, authorization and narrower deployment privileges remain
 
 | Boundary | Implemented scope / remaining acceptance |
 |---|---|
-| Remote BGP peer transport | TCP MD5 is configurable through existing k8gobgp v0.2.8 `authPasswordSecretRef`; G.7b.5a did not validate authenticated peering. TCP-AO interoperability, GTSM, ACLs, route policy and coordinated rotation remain [SEC-01](docs/roadmap/backlog.md#sec-01). |
-| Local Node-Agent-to-GoBGP speaker | G.6 attests the process/executable/protected configuration and Unix API peer identity, with ownership/incarnation fences. This does not authenticate a remote BGP neighbor or encrypt BGP traffic. |
-| Endpoint advertisement authorization | G.7b requires protected administrator policy, accepted revision/generation fence and authoritative OVN identity intersection. OVN external IDs alone are not permission to advertise. |
+| Remote BGP peer transport | TCP MD5 is configurable through existing k8gobgp v0.2.8 `authPasswordSecretRef`; authenticated peering has not been validated. TCP-AO interoperability, GTSM, ACLs, route policy and coordinated rotation remain [open work](docs/roadmap/backlog.md#sec-01). |
+| Local Node-Agent-to-GoBGP speaker | Speaker attestation verifies process/executable identity, protected configuration and Unix API peer identity, with ownership/incarnation fences. This does not authenticate a remote BGP neighbor or encrypt BGP traffic. |
+| Endpoint advertisement authorization | Standalone export requires protected administrator policy, an accepted revision/generation fence and authoritative OVN identity intersection. OVN external IDs alone are not permission to advertise. |
 
 MD5 and TCP-AO provide transport authentication/integrity, **not encryption**.
 GTSM, restricted TCP/179 reachability and scoped EVPN import/export policies
@@ -76,8 +76,9 @@ workload addresses, identities or credentials.
 Read the [Containerlab ownership/recovery procedure](deploy/containerlab/README.md)
 before running a live suite. Use only exact run-owned topology receipts for
 cleanup. Never use global destroy, Docker prune, wildcard resource deletion, or
-an existing cluster as a test environment. Offline checks in the
-[Quick Start](QUICK_START.md) do not require privileged live tests.
+an existing cluster as a test environment. The
+[development checks](TESTING_GUIDE.md#development-checks) do not require
+privileged live tests.
 
 ## Reporting
 

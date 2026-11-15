@@ -25,7 +25,6 @@ condition required for the earlier crash.
 - OVN: `26.09.0-21.13.0-84.16`; NB schema `7.19.0`; SB schema `21.13.0`
 - OVS: `4.0.0`; OVSDB schema `8.8.0`
 - Linux kernel: `6.8.0-147-generic`
-- Run ID: `cni-r-20261030T133010Z-1a0f5ac5`
 - Container network mode: `none`; no host mounts; not privileged. The OVN/OVS
   container had only `CAP_NET_ADMIN` and `CAP_SYS_ADMIN`; endpoint containers
   also used `network=none` and shared only the OVN container's PID namespace

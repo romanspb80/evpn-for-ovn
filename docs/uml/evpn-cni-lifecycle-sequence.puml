@@ -166,7 +166,7 @@ note over Endpoint,Attach
   creation; it does not establish general post-LSP compensation.
 end note
 note over Multus,Attach
-  This sequence covers the optional Kubernetes CNI application lifecycle.
+  This sequence covers the optional Kubernetes CNI solution lifecycle.
   The full-lifecycle E2E additionally checks repeated ADD/DEL, negative CHECK,
   injected pre-LSP ADD rollback, survivor preservation and guarded cleanup. OVN/OVS
   endpoint attachment is not the standalone OVSDB-Programmed EVPN dataplane.
@@ -174,7 +174,7 @@ end note
 note over Exporter,GoBGP
   Optional Type-2 export/import is a separate CNI integration.
   RPC success does not wait for BGP convergence.
-  This application sequence is not independent Framework
+  This solution sequence is not independent Framework
   acceptance for either integration mode.
 end note
 @enduml

@@ -102,6 +102,11 @@ class WorkerStagingTests(unittest.TestCase):
             "PATH": str(self.bin) + ":" + os.environ["PATH"],
         }
 
+    requires_root_owned_worker = unittest.skipUnless(
+        os.geteuid() == 0 and os.getegid() == 0,
+        "requires effective UID/GID 0 to model root:root worker CNI artifacts",
+    )
+
     def shell(self, body, mode="valid", **env):
         result = subprocess.run(
             ["bash", "-c", f"set -euo pipefail\nsource {shlex.quote(str(HELPER))}\n" + body],
@@ -128,6 +133,16 @@ class WorkerStagingTests(unittest.TestCase):
             f"real {self.size} {self.sha} < {shlex.quote(str(WORKER_SCRIPT))}"
         )
 
+    def assert_version_rejected(self, result, output, reason):
+        self.assert_blocked(result)
+        self.assertEqual((self.root / "cni-version.exit-code").read_text(), "0\n")
+        self.assertEqual((self.root / "cni-version.json").read_bytes(), output)
+        self.assertIn("worker CNI VERSION validation failed", result.stderr)
+        self.assertIn(reason, result.stderr)
+        calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()]
+        self.assertTrue(any(call[:5] == ["exec", "-i", "worker", "env", "-i"] for call in calls))
+
+    @requires_root_owned_worker
     def test_correct_binary_is_verified_and_published_before_pod(self):
         result = self.stage()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -149,27 +164,32 @@ class WorkerStagingTests(unittest.TestCase):
         self.assert_blocked(result)
         self.assertFalse((self.worker / "evpn-cni.real").exists())
 
+    @requires_root_owned_worker
     def test_zero_byte_copy_is_rejected(self):
         result = self.stage("zero")
         self.assert_blocked(result)
         self.assertIn("size mismatch", result.stderr)
 
+    @requires_root_owned_worker
     def test_truncated_copy_is_rejected(self):
         result = self.stage("truncated")
         self.assert_blocked(result)
         self.assertIn("size mismatch", result.stderr)
 
+    @requires_root_owned_worker
     def test_wrong_hash_is_rejected(self):
         result = self.stage("wrong-sha")
         self.assert_blocked(result)
         self.assertIn("SHA-256 mismatch", result.stderr)
 
+    @requires_root_owned_worker
     def test_symlink_copy_is_rejected_without_deleting_target(self):
         result = self.stage("symlink")
         self.assert_blocked(result)
         self.assertIn("non-symlink", result.stderr)
         self.assertEqual(self.host.read_bytes(), self.data)
 
+    @requires_root_owned_worker
     def test_wrong_architecture_even_with_matching_hash_is_rejected(self):
         data = bytearray(self.data)
         data[18:20] = b"\xb7\0"
@@ -200,9 +220,11 @@ class WorkerStagingTests(unittest.TestCase):
         self.assert_blocked(result)
         self.assertTrue(final.is_symlink())
 
+    @requires_root_owned_worker
     def test_destination_created_during_copy_is_not_overwritten(self):
         result = self.stage("raced-destination")
         self.assert_blocked(result)
+        self.assertIn("refusing existing destination of unknown ownership", result.stderr)
         self.assertEqual((self.worker / "evpn-cni.real").read_bytes(), b"foreign executable")
 
     def test_unexpected_temp_path_blocks_copy_and_cleanup(self):
@@ -211,6 +233,7 @@ class WorkerStagingTests(unittest.TestCase):
         self.assertIn("unexpected temporary path", result.stderr)
         self.assertNotIn('"cp"', (self.root / "calls").read_text())
 
+    @requires_root_owned_worker
     def test_nonexecutable_published_file_is_rejected(self):
         final = self.worker / "evpn-cni.real"
         final.write_bytes(self.data)
@@ -224,6 +247,7 @@ class WorkerStagingTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("non-symlink", result.stderr)
 
+    @requires_root_owned_worker
     def test_failed_chmod_prevents_publication(self):
         chmod = self.tools / "chmod"
         chmod.write_text("#!/bin/sh\nexit 43\n")
@@ -232,6 +256,7 @@ class WorkerStagingTests(unittest.TestCase):
         self.assert_blocked(result)
         self.assertEqual(result.returncode, 43)
 
+    @requires_root_owned_worker
     def test_published_replacement_is_rechecked(self):
         mv = self.tools / "mv"
         mv.write_text('#!/bin/sh\n/bin/mv "$@"\nfor last; do :; done\n: > "$last"\n')
@@ -240,6 +265,7 @@ class WorkerStagingTests(unittest.TestCase):
         self.assert_blocked(result)
         self.assertIn("size mismatch", result.stderr)
 
+    @requires_root_owned_worker
     def test_published_permissions_are_rechecked(self):
         mv = self.tools / "mv"
         mv.write_text('#!/bin/sh\n/bin/mv "$@"\nfor last; do :; done\n/bin/chmod 644 "$last"\n')
@@ -248,6 +274,7 @@ class WorkerStagingTests(unittest.TestCase):
         self.assert_blocked(result)
         self.assertIn("mode-0755", result.stderr)
 
+    @requires_root_owned_worker
     def test_atomic_publication_does_not_replace_a_raced_destination(self):
         mv = self.tools / "mv"
         mv.write_text('#!/bin/sh\nfor last; do :; done\nprintf foreign > "$last"\n/bin/mv "$@"\n')
@@ -257,6 +284,7 @@ class WorkerStagingTests(unittest.TestCase):
         self.assertTrue("destination appeared" in result.stderr or "publication failed" in result.stderr)
         self.assertEqual((self.worker / "evpn-cni.real").read_bytes(), b"foreign")
 
+    @requires_root_owned_worker
     def test_failed_rename_does_not_publish(self):
         mv = self.tools / "mv"
         mv.write_text("#!/bin/sh\nexit 45\n")
@@ -266,6 +294,7 @@ class WorkerStagingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 45)
         self.assertFalse((self.worker / "evpn-cni.real").exists())
 
+    @requires_root_owned_worker
     def test_cross_filesystem_publication_is_rejected(self):
         stat = self.tools / "stat"
         stat.write_text(
@@ -362,6 +391,7 @@ class WorkerStagingTests(unittest.TestCase):
             MOCK_VERSION_RC=str(rc), MOCK_VERSION_STDERR=stderr,
         )
 
+    @requires_root_owned_worker
     def test_valid_version_json_passes_through_installed_wrapper(self):
         result = self.run_version()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -370,37 +400,52 @@ class WorkerStagingTests(unittest.TestCase):
         self.assertEqual((self.root / "wrapper-stdin").read_bytes(), b"")
         self.assertTrue((self.root / "pod-created").exists())
 
+    @requires_root_owned_worker
     def test_empty_version_stdout_fails(self):
         result = self.run_version(output=b"")
         self.assert_blocked(result)
         self.assertIn("VERSION validation failed", result.stderr)
 
+    @requires_root_owned_worker
     def test_malformed_version_json_fails(self):
-        result = self.run_version(output=b"{broken")
-        self.assert_blocked(result)
+        output = b"{broken"
+        result = self.run_version(output=output)
+        self.assert_version_rejected(result, output, "Expecting property name")
 
+    @requires_root_owned_worker
     def test_missing_version_fields_fail(self):
         for output in (b"{}", b'{"cniVersion":"1.1.0"}', b'{"supportedVersions":["1.0.0"]}'):
             with self.subTest(output=output):
                 result = self.run_version(output=output)
-                self.assert_blocked(result)
+                self.assert_version_rejected(
+                    result, output, "expected VERSION object with cniVersion and supportedVersions"
+                )
 
+    @requires_root_owned_worker
     def test_wrong_supported_versions_fail(self):
-        result = self.run_version(output=b'{"cniVersion":"1.1.0","supportedVersions":["0.4.0"]}')
-        self.assert_blocked(result)
+        output = b'{"cniVersion":"1.1.0","supportedVersions":["0.4.0"]}'
+        result = self.run_version(output=output)
+        self.assert_version_rejected(result, output, "unexpected VERSION or supported versions")
 
+    @requires_root_owned_worker
     def test_stdout_contamination_fails(self):
-        result = self.run_version(output=b"log line\n" + VERSION)
-        self.assert_blocked(result)
+        output = b"log line\n" + VERSION
+        result = self.run_version(output=output)
+        self.assert_version_rejected(result, output, "Expecting value")
 
+    @requires_root_owned_worker
     def test_trailing_stdout_contamination_fails(self):
-        result = self.run_version(output=VERSION + b'{"second":"object"}')
-        self.assert_blocked(result)
+        output = VERSION + b'{"second":"object"}'
+        result = self.run_version(output=output)
+        self.assert_version_rejected(result, output, "Extra data")
 
+    @requires_root_owned_worker
     def test_wrong_version_field_types_fail(self):
-        result = self.run_version(output=b'{"cniVersion":1.1,"supportedVersions":"1.0.0"}')
-        self.assert_blocked(result)
+        output = b'{"cniVersion":1.1,"supportedVersions":"1.0.0"}'
+        result = self.run_version(output=output)
+        self.assert_version_rejected(result, output, "unexpected VERSION or supported versions")
 
+    @requires_root_owned_worker
     def test_wrapper_is_published_separately_and_real_is_preserved(self):
         result = self.stage()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -414,6 +459,7 @@ class WorkerStagingTests(unittest.TestCase):
         self.assertEqual((self.worker / "evpn-cni").read_bytes(), wrapper.read_bytes())
         self.assertEqual((self.worker / "evpn-cni.real").read_bytes(), self.data)
 
+    @requires_root_owned_worker
     def test_version_cannot_run_after_failed_final_integrity(self):
         wrapper = self.prepare_wrapper()
         (self.worker / "evpn-cni").write_bytes(wrapper.read_bytes())
@@ -422,9 +468,14 @@ class WorkerStagingTests(unittest.TestCase):
             f"verify_worker_cni_version worker {shlex.quote(str(self.root))} {self.size} {self.sha}"
         )
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not a regular non-symlink file", result.stderr)
+        self.assertIn("verified path=", (self.root / "worker-cni-wrapper-before-version.txt").read_text())
+        self.assertTrue((self.root / "worker-cni-before-version.txt").exists())
         self.assertFalse((self.root / "wrapper-stdin").exists())
-        self.assertNotIn('"env"', (self.root / "calls").read_text())
+        calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()]
+        self.assertFalse(any(call[:5] == ["exec", "-i", "worker", "env", "-i"] for call in calls))
 
+    @requires_root_owned_worker
     def test_version_cannot_run_with_replaced_wrapper(self):
         self.prepare_wrapper()
         (self.worker / "evpn-cni").write_bytes(b"wrong wrapper")
@@ -433,9 +484,14 @@ class WorkerStagingTests(unittest.TestCase):
             f"verify_worker_cni_version worker {shlex.quote(str(self.root))} {self.size} {self.sha}"
         )
         self.assertNotEqual(result.returncode, 0)
+        self.assertIn("size mismatch", result.stderr)
+        self.assertTrue((self.root / "worker-cni-wrapper-before-version.txt").exists())
+        self.assertFalse((self.root / "worker-cni-before-version.txt").exists())
         self.assertFalse((self.root / "wrapper-stdin").exists())
-        self.assertNotIn('"env"', (self.root / "calls").read_text())
+        calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()]
+        self.assertFalse(any(call[:5] == ["exec", "-i", "worker", "env", "-i"] for call in calls))
 
+    @requires_root_owned_worker
     def test_nonzero_version_exit_preserves_status_and_stderr(self):
         result = self.run_version(rc=31, stderr="mock failure\n")
         self.assert_blocked(result)
@@ -444,6 +500,7 @@ class WorkerStagingTests(unittest.TestCase):
         self.assertEqual((self.root / "cni-version.exit-code").read_text(), "31\n")
         self.assertEqual((self.root / "cni-version.stderr").read_text(), "mock failure\n")
 
+    @requires_root_owned_worker
     def test_stderr_is_retained_and_not_mixed_into_valid_json(self):
         result = self.run_version(stderr="diagnostic only\n")
         self.assertEqual(result.returncode, 0, result.stderr)

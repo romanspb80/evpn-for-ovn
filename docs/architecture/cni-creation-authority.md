@@ -118,86 +118,20 @@ acknowledged endpoint before retrying workload creation. One pending or
 quarantined endpoint currently conservatively blocks desired-export validation
 for the installation, rather than exporting a partially verified set.
 
-## Creation-task acceptance and subsequent descriptor correction
+<a id="creation-task-acceptance-and-subsequent-descriptor-correction"></a>
+## Historical recovery investigation
 
-Historical creation-task evidence: `/tmp/evpn-operator-type2-e2e/attempt-20261105T225857Z-578a9f97`
-and `/tmp/evpn-operator-type2-e2e/attempt-20261105T230718Z-2eb2c4c1`.
-The latter included a transport-retry experiment that was reverted after it
-failed to resolve speaker recovery; it is not evidence for a retained fix.
-
-| Scenario | Outcome |
-|---|---|
-| Real Pod creation and authenticated pending-to-active transition | PASS |
-| Actual exported/imported Type-2, GoBGP-FRR session and bidirectional VXLAN | PASS |
-| Live-endpoint Node-Agent restart, retained acknowledged UUIDs, no CNI replay | PASS |
-| Independent importer receipt restart and operator restart | PASS |
-| Replacement provider attestation and exporter recovery | PASS in retained-implementation attempt; four fresh UUIDs, RUNNING |
-| Importer authoritative observation after speaker replacement | Failed in these historical attempts |
-| Complete combined speaker-restart acceptance | Incomplete in these historical attempts |
-| Retained unacknowledged AddPath ownership adoption | BLOCKED by design |
-| Final withdrawal, later CNI lifecycle/outage lanes and final foreign sentinel assertions | NOT TESTED after speaker failure |
-
-The historical `GetBgp: DeadlineExceeded` was subsequently traced to CNI
-`SO_PEERPIDFD` error cleanup closing an unrelated GoBGP connection on fd zero.
-The helper now transfers ownership only after successful acquisition, retaining
-`-1` on error and accepting a successfully acquired descriptor zero. Handshake
-identity failures remain fail-closed. No provider, deadline or reconnection
-policy change was needed. See [descriptor ownership](type2-restart-ownership.md#cni-peer-descriptor-ownership)
-and the [current combined acceptance results](operator-type2-acceptance.md#current-phase-d-validation-boundary).
+An earlier combined test reached real endpoint activation, forwarding and
+agent recovery but failed to recover authoritative importer observation after
+speaker replacement; subsequent lifecycle and cleanup assertions were not
+reached. A transport-retry experiment did not resolve the problem and was
+reverted. The later investigation traced `GetBgp: DeadlineExceeded` to CNI
+`SO_PEERPIDFD` error cleanup closing an unrelated GoBGP descriptor. See
+[descriptor ownership](type2-restart-ownership.md#cni-peer-descriptor-ownership)
+and the [historical combined acceptance record](operator-type2-acceptance.md#combined-recovery-validation)
+for the correction, subsequent reported results and their limits.
 Neither replacement identity nor an unavailable RIB proves old routes absent;
-universal automatic recovery is not claimed.
+ambiguous AddPath recovery remains blocked. Historical private artifacts are
+not current-revision acceptance.
 
-Final validation commands:
-
-The CLI interop fixture creates an isolated anonymous network namespace.
-Root execution needs `CAP_SYS_ADMIN`; non-root execution needs permission for
-unprivileged user and network namespaces. Failure to create the namespace is
-an explicit test failure, not a skip. See the [testing guide](../../TESTING_GUIDE.md)
-and the [final stabilization results](operator-type2-acceptance.md#current-phase-d-validation-boundary).
-
-```text
-go test -race -count=1 ./pkg/nodeagent ./pkg/evpn ./pkg/ownership ./deploy/operator/... ./cmd/evpn-cni ./cmd/evpn-node-agent
-go vet ./pkg/nodeagent ./pkg/evpn ./pkg/ownership ./deploy/operator/... ./cmd/evpn-cni ./cmd/evpn-node-agent
-go test -race -c ./pkg/nodeagent -o /tmp/evpn-cni-creation.test
-sudo /tmp/evpn-cni-creation.test -test.run 'TestCNICaller|TestCNITwoStage|TestCNI.*Pending|TestSpeaker|TestProvider' -test.v
-bash tools/run-operator-e2e.sh
-bash tools/run-operator-type2-e2e.sh
-```
-
-The compiled test binary was installed root:root mode 0755 for authority
-tests and removed afterward. Race, vet, root identity tests and IDE build
-passed; optional live-speaker-only tests without their environment were
-explicitly skipped, not counted as passes. Logs are in
-`/tmp/evpn-cni-creation-evidence/final-{race,vet,root}.log`.
-The final operator lifecycle suite passed, including cleanup, at
-`/tmp/evpn-operator-e2e/attempt-20261105T231712Z-44d0ab3c`
-with log `/tmp/evpn-cni-creation-evidence/final-operator-lifecycle.log`.
-Type-2 logs are `operator-type2-tenth.log` and
-`operator-type2-eleventh.log` in that evidence directory.
-Evidence remains private and is not committed.
-
-## Creation-task file inventory
-
-Earlier dirty operator/Phase B/Phase C/Phase D files are preserved separately.
-This task adds or updates:
-
-```text
-cmd/evpn-cni/main.go
-cmd/evpn-cni/main_test.go
-pkg/nodeagent/cni_caller_linux.go
-pkg/nodeagent/cni_caller_linux_test.go
-pkg/nodeagent/cni_activation.go
-pkg/nodeagent/cni_activation_test.go
-pkg/nodeagent/cni_continuity.go
-pkg/nodeagent/cni_continuity_runtime.go
-pkg/nodeagent/cni_continuity_export.go
-pkg/nodeagent/server.go
-pkg/nodeagent/server_test.go
-pkg/nodeagent/export_runtime.go
-tools/lib/operator-cni-test.sh
-tools/run-operator-type2-e2e.sh
-docs/architecture/cni-creation-authority.md
-docs/architecture/cni-endpoint-continuity.md
-docs/architecture/type2-restart-ownership.md
-docs/architecture/operator-type2-acceptance.md
-```
+<a id="creation-task-file-inventory"></a>

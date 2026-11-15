@@ -5,7 +5,7 @@
 [Upstream boundaries](../roadmap/upstream/README.md)
 
 These are local, unsubmitted drafts, not a second backlog. No GitHub issue or PR
-was created by G.8. Source evidence is distinguished from live reproduction;
+has been filed for these drafts. Source evidence is distinguished from live reproduction;
 duplicate checks and sanitization are required before publication.
 
 | Draft | Type / readiness |

@@ -6,6 +6,23 @@ RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$(python3 -c 'import secrets; print(secrets.t
 KIND_CLUSTER="evpn-op-type2-${RUN_ID,,}"
 WORKER="${KIND_CLUSTER}-worker"
 EVIDENCE_DIR="${EVPN_OPERATOR_TYPE2_EVIDENCE_ROOT:-/tmp/evpn-operator-type2-e2e}/attempt-${RUN_ID}"
+if [[ "${EVPN_TWO_WORKER_GENEVE:-0}" == 1 || "${EVPN_EXTERNAL_FRR_SMOKE:-0}" == 1 ||
+      "${EVPN_EXTERNAL_GOBGP_SMOKE:-0}" == 1 || "${EVPN_EXTERNAL_RECOVERY:-0}" == 1 ]]; then
+  if [[ "${EVPN_STANDALONE_EXPORT_SMOKE:-0}" != 0 ||
+        "${EVPN_STANDALONE_COHOST_SMOKE:-0}" != 0 ||
+        "${EVPN_STANDALONE_MULTICHASSIS_SMOKE:-0}" != 0 ||
+        "${EVPN_STANDALONE_LIFECYCLE_SMOKE:-0}" != 0 ]]; then
+    echo "Geneve baseline cannot mix with standalone EVPN smoke modes" >&2
+    exit 1
+  fi
+  export ROOT KIND_CLUSTER EVIDENCE_DIR
+  exec env PYTHONDONTWRITEBYTECODE=1 python3 - "${ROOT}" "${EVIDENCE_DIR}" "${KIND_CLUSTER}" <<'PY'
+import pathlib, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / "tools/e2e"))
+import geneve_baseline
+sys.exit(geneve_baseline.run(pathlib.Path(sys.argv[2]), sys.argv[3]))
+PY
+fi
 KUBECONFIG="${EVIDENCE_DIR}/kubeconfig"
 AGENT_IMAGE="evpn4ovn/operator-type2:${RUN_ID,,}"
 OVN_IMAGE="evpn4ovn/ovn-ovs:kind-26.09"
@@ -20,6 +37,22 @@ OPERATOR_INSTALLED=0
 CNI_INSTALLED=0
 PROVIDER_PIN_CONTAINER=""
 STANDALONE_GOBGP_POD=""
+MULTICHASSIS_CONTAINER=""
+if [[ "${EVPN_STANDALONE_LIFECYCLE_SMOKE:-0}" == 1 &&
+      "${EVPN_STANDALONE_MULTICHASSIS_SMOKE:-0}" != 1 ]]; then
+  echo "lifecycle smoke requires EVPN_STANDALONE_MULTICHASSIS_SMOKE=1" >&2
+  exit 1
+fi
+if [[ "${EVPN_STANDALONE_MULTICHASSIS_SMOKE:-0}" == 1 &&
+      "${EVPN_STANDALONE_COHOST_SMOKE:-0}" != 1 ]]; then
+  echo "multi-chassis smoke requires EVPN_STANDALONE_COHOST_SMOKE=1" >&2
+  exit 1
+fi
+if [[ "${EVPN_STANDALONE_COHOST_SMOKE:-0}" == 1 &&
+      "${EVPN_STANDALONE_EXPORT_SMOKE:-0}" != 1 ]]; then
+  echo "co-hosted smoke requires EVPN_STANDALONE_EXPORT_SMOKE=1" >&2
+  exit 1
+fi
 export ROOT KIND_CLUSTER WORKER EVIDENCE_DIR KUBECONFIG EVPN_FRR_INTEROP_TEST
 source "${ROOT}/tools/lib/containerlab-e2e.sh"
 source "${ROOT}/tools/lib/e2e-artifact-cache.sh"
@@ -28,6 +61,7 @@ source "${ROOT}/tools/lib/cni-evpn-export-test.sh"
 source "${ROOT}/tools/lib/cni-evpn-frr-interop-test.sh"
 source "${ROOT}/tools/lib/operator-cni-test.sh"
 source "${ROOT}/tools/lib/standalone-export-smoke-test.sh"
+source "${ROOT}/tools/lib/standalone-multichassis-test.sh"
 e2e_lab_acquire
 [[ ! -e "${EVIDENCE_DIR}" ]]
 mkdir -p "${EVIDENCE_DIR}/build"
@@ -55,6 +89,9 @@ cleanup() {
     docker rm "${PROVIDER_PIN_CONTAINER}" >/dev/null || cleanup_rc=1
   fi
   if [[ -f "${EVIDENCE_DIR}/lab.json" ]]; then
+    if [[ -n "${MULTICHASSIS_CONTAINER}" ]]; then
+      multichassis_capture_diagnostics || cleanup_rc=1
+    fi
     if [[ -n "${STANDALONE_GOBGP_POD}" ]]; then
       standalone_smoke_capture_diagnostics || cleanup_rc=1
     fi
@@ -85,7 +122,7 @@ cleanup() {
     e2e_lab_down || cleanup_rc=1
   fi
   test_image_cleanup || cleanup_rc=1
-  python3 - "${EVIDENCE_DIR}" "${rc}" "${cleanup_rc}" "${EVPN_STANDALONE_EXPORT_SMOKE:-0}" <<'PY'
+  python3 - "${EVIDENCE_DIR}" "${rc}" "${cleanup_rc}" "${EVPN_STANDALONE_EXPORT_SMOKE:-0}" "${EVPN_STANDALONE_COHOST_SMOKE:-0}" "${EVPN_STANDALONE_MULTICHASSIS_SMOKE:-0}" "${EVPN_STANDALONE_LIFECYCLE_SMOKE:-0}" <<'PY'
 import csv, json, pathlib, sys
 p=pathlib.Path(sys.argv[1])
 names=(
@@ -97,6 +134,17 @@ names=(
 if sys.argv[4] == "1":
     names=("setup","standalone_export_advertise","standalone_export_revoke",
            "standalone_export_restart","standalone_restore","cleanup")
+    if sys.argv[5] == "1":
+        names+=("standalone_remote_import","standalone_simultaneous",
+                "standalone_cohost_recovery","standalone_failure_isolation")
+        if sys.argv[6] == "1":
+            names+=("multichassis_control_plane","multichassis_forwarding",
+                    "multichassis_stability","multichassis_agent_recovery",
+                    "multichassis_cleanup")
+            if sys.argv[7] == "1":
+                names+=("lifecycle_baseline","lifecycle_uncertain","lifecycle_delete",
+                        "lifecycle_replace","lifecycle_replay","lifecycle_migrate",
+                        "lifecycle_recovery","lifecycle_cleanup")
 cases={name:{"status":"NOT TESTED"} for name in names}
 for row in csv.reader((p/"cases.tsv").open(), delimiter="\t"):
     name,status,time,*detail=row
@@ -109,6 +157,16 @@ result={"suite":"operator-managed-type2","cases":cases,"testExit":int(sys.argv[2
 if sys.argv[4] == "1":
     result["suite"]="operator-managed-type2-standalone-export-smoke"
     result["topology"]="reused single operator OVN/OVS chassis plus existing GoBGP/FRR EVPN peer"
+    if sys.argv[5] == "1":
+        result["suite"]="operator-managed-type2-standalone-cohost-smoke"
+        result["restartRecovery"]="co-hosted Node-Agent restart retained importer ownership and remote installation; revoked local export stayed absent"
+        if sys.argv[6] == "1":
+            result["suite"]="operator-managed-type2-standalone-multichassis-smoke"
+            result["topology"]="two independent OVN/OVS namespaces with shared NB/SB, distinct switches/VTEPs and directly peered GoBGP speakers"
+            if sys.argv[7] == "1":
+                result["suite"]="operator-managed-type2-standalone-lifecycle-smoke"
+                result["lifecycle"]="additional non-CNI endpoint: complete-absence uncertainty, exact deletion, new-LSP replacement, fenced replay and ordered chassis migration; baseline CNI endpoint survives"
+                result["restartRecovery"]="both Node-Agents restarted after deletion/replacement/migration, retaining exact tombstones, revision/digest high-water and independent receipts; GoBGP speakers remain alive"
 result["status"]=("FAIL" if result["testExit"] or result["cleanupExit"] or any(c["status"]=="FAIL" for c in cases.values())
                   else "PASS" if all(c["status"]=="PASS" for c in cases.values()) else "BLOCKED")
 (p/"result.json").write_text(json.dumps(result,indent=2)+"\n")
@@ -344,32 +402,28 @@ if [[ "${EVPN_STANDALONE_EXPORT_SMOKE:-0}" == 1 ]]; then
 fi
 
 verify_operator_ownership() {
+  local i generation observed ready phase
+  for i in $(seq 1 90); do
+    read -r generation observed ready phase < <(
+      k -n cni-test get evpncore/type2 -o 'jsonpath={.metadata.generation}{" "}{.status.observedGeneration}{" "}{.status.ready}{" "}{.status.phase}{"\n"}'
+    )
+    if [[ -n "${generation}" && "${generation}" == "${observed}" &&
+          "${ready}" == true && "${phase}" == Ready ]]; then
+      break
+    fi
+    if [[ "${i}" == 90 ]]; then
+      echo "EvpnCore did not become Ready for its current generation" >&2
+      return 1
+    fi
+    sleep 1
+  done
   k -n cni-test get evpncore/type2 deployment/ovn-ovs ds/evpn-node-agent -o json |
     tee "${EVIDENCE_DIR}/operator-ownership.json" >/dev/null
   k -n evpn-operator-system get lease/evpn-core-installation -o json |
     tee "${EVIDENCE_DIR}/installation-lease.json" >/dev/null
-  python3 - "${EVIDENCE_DIR}" "${WORKER}" <<'PY'
-import json,pathlib,sys
-p=pathlib.Path(sys.argv[1])
-objects=json.loads((p/"operator-ownership.json").read_text())["items"]
-core=next(o for o in objects if o["kind"]=="EvpnCore")
-uid=core["metadata"]["uid"]
-assert core["spec"]["dataplaneNode"]==sys.argv[2]
-assert json.loads((p/"installation-lease.json").read_text())["spec"]["holderIdentity"]==uid
-for obj in objects:
-    if obj["kind"]=="EvpnCore": continue
-    assert obj["metadata"]["annotations"]["evpn.romanspb80.github.io/installation-uid"]==uid
-    pod=obj["spec"]["template"]["spec"]
-    terms=pod["affinity"]["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]["nodeSelectorTerms"]
-    assert terms==[{"matchFields":[{"key":"metadata.name","operator":"In","values":[sys.argv[2]]}]}],terms
-    if obj["kind"]=="DaemonSet":
-        assert pod["hostPID"]
-        assert obj["status"]["desiredNumberScheduled"]==1
-        args=pod["containers"][0]["args"]
-        assert "--evpn-export-config=/run/evpn-node-agent/export-config.json" in args
-        assert "--evpn-remote-config=/run/evpn-node-agent/remote-config.json" in args
-print("UID ownership, singleton Lease, exact-node placement and actual runtime arguments=PASS")
-PY
+  k -n cni-test get pod "${AGENT_POD}" -o json |
+    tee "${EVIDENCE_DIR}/agent-ownership-pod.json" >/dev/null
+  python3 "${ROOT}/tools/e2e/operator_ownership.py" "${EVIDENCE_DIR}" "${WORKER}"
 }
 
 wait_export() {
@@ -711,4 +765,12 @@ k -n cni-test wait --for=delete ds/evpn-node-agent --timeout=120s
 AGENT_POD=""
 k -n cni-test delete evpncore/type2 --wait=true --timeout=180s
 k -n k8gobgp-system get ds/k8gobgp bgpconfig/cni-export >/dev/null
+k get deployments,daemonsets,services,configmaps,serviceaccounts -A \
+  -l "evpn.romanspb80.github.io/installation-uid=${INSTALLATION_UID}" -o json |
+  tee "${EVIDENCE_DIR}/owned-after-delete.json" >/dev/null
+k -n evpn-operator-system get lease/evpn-core-installation -o json |
+  tee "${EVIDENCE_DIR}/lease-after-delete.json" >/dev/null
+k -n k8gobgp-system get bgpconfig/cni-export -o json |
+  tee "${EVIDENCE_DIR}/provider-config-after-delete.json" >/dev/null
+python3 "${ROOT}/tools/e2e/operator_ownership.py" "${EVIDENCE_DIR}" --cleanup "${INSTALLATION_UID}"
 echo "operator-managed acknowledged agent recovery and verified replacement speaker recovery=PASS; retained ambiguous AddPath recovery remains BLOCKED"

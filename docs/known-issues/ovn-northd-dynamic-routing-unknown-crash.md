@@ -21,7 +21,6 @@ The exact source-level fault and the invalid value's origin are unknown.
 - NB schema: `7.19.0`; SB schema: `21.13.0`
 - OVS: `4.0.0`; OVSDB schema: `8.8.0`
 - Linux kernel: `6.8.0-147-generic`
-- Run ID: `cni-r-20261030T133010Z-1a0f5ac5`
 - Isolated OVN/OVS container used `--network=none`, no host mounts, and
   `Privileged=false`; only `CAP_NET_ADMIN` and `CAP_SYS_ADMIN` were granted.
 
@@ -79,7 +78,7 @@ shares the dynamic-routing configuration and triggered the observed crash.
 This workaround is restricted to test setup. It changes no CNI, node-agent, or
 Framework production logic. A focused offline test protects the
 switch separation, valid address, and foreign-LSP preservation assertion.
-The complete source-built CNI-R runtime then passed replacement binding,
+The complete source-built CNI runtime then passed replacement binding,
 bidirectional traffic, Type-2 route withdrawal, capture verification, and
 owned-resource cleanup.
 

@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	"github.com/romanspb80/evpn-for-ovn/pkg/workerinventory"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -12,15 +13,23 @@ import (
 // +kubebuilder:resource:path=evpncores,scope=Namespaced,shortName=ecore,kind=EvpnCore
 
 type EvpnCoreSpec struct {
-	Enabled       bool          `json:"enabled"`
-	AppNamespace  string        `json:"appNamespace,omitempty"`
-	OvnNamespace  string        `json:"ovnNamespace,omitempty"`
-	AppImage      string        `json:"appImage,omitempty"`
-	GobgpImage    string        `json:"gobgpImage,omitempty"`
-	OvnImage      string        `json:"ovnImage,omitempty"`
-	DataplaneNode string        `json:"dataplaneNode,omitempty"`
-	NodeAgent     NodeAgentSpec `json:"nodeAgent,omitempty"`
-	BGP           BGPSpec       `json:"bgp,omitempty"`
+	Enabled         bool                 `json:"enabled"`
+	AppNamespace    string               `json:"appNamespace,omitempty"`
+	OvnNamespace    string               `json:"ovnNamespace,omitempty"`
+	AppImage        string               `json:"appImage,omitempty"`
+	GobgpImage      string               `json:"gobgpImage,omitempty"`
+	OvnImage        string               `json:"ovnImage,omitempty"`
+	DataplaneNode   string               `json:"dataplaneNode,omitempty"`
+	DataplaneMode   string               `json:"dataplaneMode,omitempty"`
+	NodeAgent       NodeAgentSpec        `json:"nodeAgent,omitempty"`
+	BGP             BGPSpec              `json:"bgp,omitempty"`
+	WorkerInventory *WorkerInventorySpec `json:"workerInventory,omitempty"`
+}
+
+type WorkerInventorySpec struct {
+	ClusterUID string                   `json:"clusterUID"`
+	Revision   uint64                   `json:"revision"`
+	Workers    []workerinventory.Worker `json:"workers"`
 }
 
 type BGPSpec struct {
@@ -50,6 +59,7 @@ type NodeAgentSpec struct {
 	RemoteInterval          string              `json:"remoteInterval,omitempty"`
 	RemoteTimeout           string              `json:"remoteTimeout,omitempty"`
 	GoBGPHostPath           string              `json:"gobgpHostPath,omitempty"`
+	Type2JournalHostPath    string              `json:"type2JournalHostPath,omitempty"`
 	CNIContinuityConfigPath string              `json:"cniContinuityConfigPath,omitempty"`
 	// ProviderAttestation enables local, read-only Kubernetes/containerd
 	// inspection. The host mounts remain an administrator privilege boundary.
@@ -73,6 +83,7 @@ type EvpnCoreStatus struct {
 	Ready              bool   `json:"ready,omitempty"`
 	Reason             string `json:"reason,omitempty"`
 	ObservedGeneration int64  `json:"observedGeneration,omitempty"`
+	DataplaneMode      string `json:"dataplaneMode,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	Conditions       []metav1.Condition `json:"conditions,omitempty"`
@@ -122,6 +133,14 @@ func (in *EvpnCore) DeepCopyInto(out *EvpnCore) {
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
 	out.Spec = in.Spec
+	if in.Spec.WorkerInventory != nil {
+		inventory := *in.Spec.WorkerInventory
+		inventory.Workers = append([]workerinventory.Worker(nil), inventory.Workers...)
+		for i := range inventory.Workers {
+			inventory.Workers[i].Networks = append([]workerinventory.Network(nil), inventory.Workers[i].Networks...)
+		}
+		out.Spec.WorkerInventory = &inventory
+	}
 	if in.Spec.NodeAgent.NodeSelector != nil {
 		out.Spec.NodeAgent.NodeSelector = make(map[string]string, len(in.Spec.NodeAgent.NodeSelector))
 		for k, v := range in.Spec.NodeAgent.NodeSelector {

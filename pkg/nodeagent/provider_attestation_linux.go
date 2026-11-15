@@ -360,6 +360,9 @@ func newAttestedSpeakerContinuity(path string, expected *speakerRuntimeExpectati
 		}
 		return &unixSpeakerContinuity{attestor: &standaloneSpeakerAttestor{config: *c.Standalone}}, nil
 	}
+	if err := validateKubernetesSpeakerNode(c, expected, os.Getenv("NODE_NAME")); err != nil {
+		return nil, err
+	}
 	rc, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, fmt.Errorf("provider attestation Kubernetes identity: %w", err)
@@ -374,6 +377,16 @@ func newAttestedSpeakerContinuity(path string, expected *speakerRuntimeExpectati
 		return nil, err
 	}
 	return &unixSpeakerContinuity{attestor: &providerAttestor{config: c, source: &kubernetesContainerdSource{client: client, dynamic: dynamicClient, config: c}}}, nil
+}
+
+func validateKubernetesSpeakerNode(c ProviderAttestationConfig, expected *speakerRuntimeExpectation, nodeName string) error {
+	if nodeName != "" && c.NodeName != nodeName {
+		return fmt.Errorf("speaker attestation node %q differs from local NODE_NAME %q", c.NodeName, nodeName)
+	}
+	if expected != nil && expected.NodeUID != "" && c.NodeUID != expected.NodeUID {
+		return fmt.Errorf("speaker attestation node UID differs from recovery domain")
+	}
+	return nil
 }
 
 func (a *providerAttestor) attest(ctx context.Context, process SpeakerProcessEvidence) (speakerAttestationEvidence, error) {

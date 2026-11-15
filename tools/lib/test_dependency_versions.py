@@ -47,6 +47,32 @@ class DependencyVersionsTest(unittest.TestCase):
         for version in ("FRRouting 8.4_git (frr)", "FRRouting 10.7.10 (frr)"):
             self.assertNotRegex(version, pattern)
 
+    def test_interop_runtime_requires_actual_provider_attestation(self):
+        helper = (ROOT / "tools/lib/cni-evpn-frr-interop-test.sh").read_text()
+        runner = (ROOT / "tools/run-cni-mvp-2.4b-multus.sh").read_text()
+        for value in (
+                'k get node "${WORKER}" -o jsonpath=',
+                'get ds/k8gobgp -o jsonpath=',
+                'local config_name="${1:-cni-export}" observer_namespace="${2:-cni-test}"',
+                'k -n k8gobgp-system get "bgpconfig/${config_name}" -o json',
+                "provider-attestation.yaml",
+                '"AttestationConfigPath":"/etc/evpn/provider-attestation/provider.json"',
+                'serviceAccountName: evpn-provider-observer',
+                'runtimeSocket":"/run/containerd/containerd.sock"',
+                'ctrPath":"/usr/local/libexec/evpn-ctr"',
+                'executableSHA256',
+                '--evpn-export-timeout=90s',
+                'name: provider-containerd',
+                'name: provider-ctr',
+                'mountPath: /etc/evpn/provider-attestation'):
+            self.assertIn(value, helper)
+        self.assertEqual(
+            helper.count('"AttestationConfigPath":"/etc/evpn/provider-attestation/provider.json"'),
+            2)
+        self.assertIn('${EXPORT_SERVICE_ACCOUNT}', runner)
+        self.assertIn('${EXPORT_MOUNTS}', runner)
+        self.assertIn('${EXPORT_VOLUMES}', runner)
+
     def evidence(self):
         return {
             "provider-pod.json": {

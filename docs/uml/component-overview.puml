@@ -1,0 +1,102 @@
+@startdot
+digraph Architecture {
+  graph [rankdir=TB, bgcolor="white", pad="0.18", nodesep="0.28", ranksep="0.48",
+         splines=polyline, compound=true, newrank=true, outputorder=edgesfirst,
+         fontname="DejaVu Sans", labelloc=t,
+         label=<<FONT POINT-SIZE="18" COLOR="#17263C"><B>EVPN-for-OVN — Framework Architecture</B></FONT>>];
+  node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=9,
+        fontcolor="#17263C", color="#AAB8C8", fillcolor="white", penwidth=1.1,
+        margin="0.14,0.10"];
+  edge [fontname="DejaVu Sans", fontsize=8, fontcolor="#566B82",
+        color="#5E7189", penwidth=1.2, arrowsize=0.6];
+
+  subgraph cluster_consumers {
+    label="CONSUMERS AND PLATFORM INTEGRATIONS";
+    labelloc=t; fontsize=9; fontname="DejaVu Sans"; fontcolor="#5F7187";
+    style="rounded,filled"; color="#DCE5EF"; fillcolor="#F8FAFD"; margin=12;
+    cni [label=<<B>Kubernetes CNI / Multus</B>>,
+         fillcolor="#F1FAF5", color="#A3CBB7"];
+    standalone [label=<<B>Standalone runtime</B>>,
+                fillcolor="#F1FAF5", color="#A3CBB7"];
+    operator [label=<<B>Operator-managed Kubernetes</B><BR/><FONT POINT-SIZE="8">Node-Agent runtime</FONT>>,
+              fillcolor="#F1F7FF", color="#A4C1DF"];
+    ovnk [label=<<B>OVN-Kubernetes</B><BR/><FONT POINT-SIZE="8">Planned</FONT>>,
+          fillcolor="#FFFAF1", color="#E5CDA5"];
+    neutron [label=<<B>Neutron / ML2-OVN</B><BR/><FONT POINT-SIZE="8">Planned</FONT>>,
+             fillcolor="#FFFAF1", color="#E5CDA5"];
+    {rank=same; cni; standalone; operator; ovnk; neutron;}
+    cni -> standalone -> operator -> ovnk -> neutron [style=invis, weight=20];
+  }
+
+  subgraph cluster_framework {
+    label="ONE REUSABLE EVPN FRAMEWORK";
+    labelloc=t; fontsize=10; fontname="DejaVu Sans"; fontcolor="#35628F";
+    style="rounded,filled"; color="#A9C6E5"; fillcolor="#F3F8FF"; penwidth=1.4; margin=13;
+    core [label=<<B>EVPN Core</B><BR/><FONT POINT-SIZE="8">Logical core · Type-2 routes · reconciliation</FONT><BR/><FONT POINT-SIZE="8">Endpoint lifecycle · ownership · fencing · recovery</FONT>>,
+          fillcolor="#DEEDFF", color="#4F86BF", penwidth=1.5, width=3.45];
+    netlink [label=<<B>Netlink-Programmed</B><BR/><FONT POINT-SIZE="8">Primary integration target</FONT>>,
+             fillcolor="#E9F3FF", color="#6E9BCB", width=2.15];
+    ovsdb [label=<<B>OVSDB-Programmed</B><BR/><FONT POINT-SIZE="8">Experimental</FONT>>,
+           fillcolor="#FFF5E6", color="#D8B47A", width=2.15];
+    {rank=same; ovsdb; netlink;}
+    ovsdb -> netlink [style=invis, weight=15];
+  }
+
+  subgraph cluster_control {
+    label="BGP / EVPN CONTROL PLANE";
+    labelloc=t; fontsize=9; fontname="DejaVu Sans"; fontcolor="#5F7187";
+    style="rounded,filled"; color="#DCE5EF"; fillcolor="#F8FAFD"; margin=11;
+    gobgp [label=<<B>GoBGP</B><BR/><FONT POINT-SIZE="8">BGP / EVPN engine</FONT>>];
+    provider [label=<<B>k8gobgp</B><BR/><FONT POINT-SIZE="8">Optional Kubernetes provider</FONT>>,
+              fillcolor="#F4F6F8", color="#B5C0CC"];
+    {rank=same; gobgp; provider;}
+    gobgp -> provider [style=invis, weight=12];
+  }
+
+  subgraph cluster_dataplane {
+    label="INTEGRATION STATE AND WORKLOAD FORWARDING";
+    labelloc=t; fontsize=9; fontname="DejaVu Sans"; fontcolor="#5F7187";
+    style="rounded,filled"; color="#DCE5EF"; fillcolor="#F8FAFD"; margin=11;
+    linux [label=<<B>Linux / Netlink</B><BR/><FONT POINT-SIZE="8">Bridge · VXLAN · FDB · neighbors</FONT>>];
+    ovn_controller [label=<<B>ovn-controller</B><BR/><FONT POINT-SIZE="8">Consumes Linux state · programs OVS</FONT>>];
+    ovn [label=<<B>OVN / OVS</B><BR/><FONT POINT-SIZE="8">Workload forwarding dataplane</FONT>>,
+         fillcolor="#F0F7F4", color="#A7C9B9"];
+    {rank=same; linux; ovn_controller; ovn;}
+    linux -> ovn_controller [style=invis, weight=12];
+    ovn_controller -> ovn [style=invis, weight=12];
+  }
+
+  peer [label=<<B>External EVPN peer / VTEP</B><BR/><FONT POINT-SIZE="8">FRR and vendor routers</FONT>>,
+        fillcolor="#F4F6F8", color="#B5C0CC"];
+  legend [shape=plain, label=<<TABLE BORDER="0" CELLBORDER="0" CELLPADDING="3" CELLSPACING="8">
+    <TR>
+      <TD BGCOLOR="#DEEDFF">Framework / integration</TD>
+      <TD BGCOLOR="#F1FAF5">Consumers / dataplane</TD>
+      <TD BGCOLOR="#FFF5E6">Experimental / planned</TD>
+      <TD BGCOLOR="#F4F6F8">Optional / external</TD>
+      <TD><FONT COLOR="#B8873B">- - -</FONT> Dashed lines — Planned integrations</TD>
+    </TR>
+  </TABLE>>];
+
+  {rank=same; ovsdb; netlink; gobgp; provider;}
+  {rank=same; linux; ovn_controller; ovn; peer;}
+  {rank=sink; legend;}
+  linux -> legend [style=invis, weight=100];
+
+  cni -> core [color="#4479B6"];
+  standalone -> core [color="#4479B6"];
+  operator -> core [color="#4479B6"];
+  ovnk -> core [style=dashed, color="#B8873B"];
+  neutron -> core [style=dashed, color="#B8873B"];
+  core -> gobgp [dir=both, color="#397AB5", label="Type-2 route advertisement / withdrawal"];
+  provider -> gobgp [color="#7C8B9C", constraint=false];
+  core -> netlink [color="#4479B6"];
+  core -> ovsdb [color="#4479B6"];
+  netlink -> linux [color="#4479B6", label="Program Linux VXLAN / FDB / neighbors"];
+  ovsdb -> ovn [color="#4479B6", label="Program OVSDB resources"];
+  linux -> ovn_controller [color="#7C8B9C", label="Observe Linux integration state"];
+  ovn_controller -> ovn [color="#7C8B9C", label="Reconcile OVS forwarding"];
+  gobgp -> peer [dir=both, color="#397AB5", label="BGP EVPN route exchange"];
+  ovn -> peer [dir=both, color="#34846A", label="EVPN VXLAN dataplane (VTEP ↔ VTEP)"];
+}
+@enddot

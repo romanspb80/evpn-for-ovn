@@ -43,7 +43,7 @@ Actual source consequence: a nonempty-to-nonempty Secret-only change has no
 guaranteed event or value-change detection for a stable neighbor. Merely
 touching an unrelated field is not a proven rotation procedure.
 
-## Proposed minimal live reproduction (not run in G.8)
+## Proposed minimal live reproduction (not yet run)
 
 1. Establish an authenticated EVPN GoBGP/FRR session using a Secret reference
    with an explicit key and record versions, non-secret config and state.

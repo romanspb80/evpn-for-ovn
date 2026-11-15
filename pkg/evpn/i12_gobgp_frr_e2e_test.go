@@ -1047,7 +1047,7 @@ func TestGoBGPFRRType2VXLANRouteImport(t *testing.T) {
 		t.Fatalf("unexpected stale host FDB entry before importer for MAC %s:\n%s", remoteEndpoint.MACAddress, beforeHostFDB)
 	}
 
-	importer := NewRemoteType2Importer(
+	importer := NewRemoteType2ImporterFromSnapshot(
 		&GoBGPServerSnapshotSource{Server: gobgp},
 		&Type2RouteValidator{
 			LocalVTEP: localIP,

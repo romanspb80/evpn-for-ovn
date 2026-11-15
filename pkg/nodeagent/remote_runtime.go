@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,10 @@ type RemoteRuntimeOptions struct {
 	StatusPath string
 	Interval   time.Duration
 	Timeout    time.Duration
+	// ExpectedConfig freezes the importer snapshot paired with an exporter.
+	ExpectedConfig       *RemoteRuntimeConfig
+	PeerExportConfigPath string
+	InventoryGate        func(context.Context, RemoteRuntimeConfig) error
 }
 
 type RemoteRuntimeConfig struct {
@@ -111,6 +116,44 @@ func (c RemoteRuntimeConfig) Validate() error {
 			id, err := uuid.Parse(value)
 			if err != nil || id == uuid.Nil {
 				return fmt.Errorf("importer recovery requires installation and Node UUIDs from trusted root configuration")
+			}
+		}
+	}
+	return nil
+}
+
+// ValidateCohostedType2Config keeps independently configured loops on the
+// same local speaker and forwarding identity. Unshared networks remain valid.
+func ValidateCohostedType2Config(exporter evpn.ExporterConfig, importer RemoteRuntimeConfig) error {
+	if !exporter.Enabled || !importer.Enabled {
+		return nil
+	}
+	if exporter.GRPCEndpoint != importer.GRPCEndpoint || exporter.ASN != importer.ASN ||
+		exporter.RouterID != importer.RouterID ||
+		exporter.AttestationConfigPath != importer.AttestationConfigPath {
+		return fmt.Errorf("co-hosted exporter and importer must use the same GoBGP endpoint, identity and attestation")
+	}
+	if exporter.Recovery != nil && importer.Netlink.Recovery != nil {
+		a, b := exporter.Recovery.Domain, importer.Netlink.Recovery.Domain
+		if a.InstallationUID != b.InstallationUID || a.NodeUID != b.NodeUID {
+			return fmt.Errorf("co-hosted exporter and importer recovery identities differ")
+		}
+		if filepath.Clean(exporter.Recovery.StateDirectory) == filepath.Clean(importer.Netlink.StateDirectory) {
+			return fmt.Errorf("co-hosted exporter and importer journals must use separate directories")
+		}
+	}
+	for _, exported := range exporter.Networks {
+		if !exported.Enabled {
+			continue
+		}
+		for _, imported := range importer.Netlink.Networks {
+			if exported.NetworkID != imported.NetworkID && exported.LogicalSwitch != imported.LogicalSwitch &&
+				exported.VNI != imported.VNI {
+				continue
+			}
+			if exported.NetworkID != imported.NetworkID || exported.VNI != imported.VNI || exported.LogicalSwitch != imported.LogicalSwitch ||
+				exported.LocalVTEP != importer.Import.LocalVTEP {
+				return fmt.Errorf("co-hosted network %s exporter and importer switch, VNI or local VTEP differ", exported.NetworkID)
 			}
 		}
 	}
@@ -209,6 +252,22 @@ func RunRemoteType2Importer(ctx context.Context, runtime RuntimeOptions, opts Re
 	if err != nil {
 		return err
 	}
+	if opts.ExpectedConfig != nil && !reflect.DeepEqual(cfg, *opts.ExpectedConfig) {
+		return fmt.Errorf("co-hosted remote importer configuration changed during startup; restart required")
+	}
+	checkPeer := func() error {
+		if opts.PeerExportConfigPath == "" {
+			return nil
+		}
+		exporter, err := LoadExporterConfig(opts.PeerExportConfigPath)
+		if err != nil {
+			return fmt.Errorf("load co-hosted exporter configuration: %w", err)
+		}
+		return ValidateCohostedType2Config(exporter, cfg)
+	}
+	if err := checkPeer(); err != nil {
+		return err
+	}
 	if err := validateRemoteRuntimeOptions(runtime, opts, cfg, report); err != nil {
 		return err
 	}
@@ -223,6 +282,14 @@ func RunRemoteType2Importer(ctx context.Context, runtime RuntimeOptions, opts Re
 		return nil
 	}
 
+	if opts.InventoryGate != nil {
+		gateCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
+		err := opts.InventoryGate(gateCtx, cfg)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("inventory gate blocked importer startup: %w", err)
+		}
+	}
 	var installationUID, nodeUID string
 	if cfg.Netlink.Recovery != nil {
 		installationUID = cfg.Netlink.Recovery.Domain.InstallationUID
@@ -242,7 +309,7 @@ func RunRemoteType2Importer(ctx context.Context, runtime RuntimeOptions, opts Re
 	}()
 	gate := attestedReadiness{evpn.SpeakerReadiness{Client: apiClient, ASN: cfg.ASN, RouterID: cfg.RouterID}, continuity}
 	source := &evpn.GoBGPRemoteRIBSource{Client: apiClient, Gate: gate}
-	readOnly, err := evpn.NewReadOnlyType2Importer(source, cfg.Import)
+	readOnly, err := evpn.NewReadOnlyType2ImporterFromSnapshot(source, cfg.Import)
 	if err != nil {
 		return fmt.Errorf("create read-only remote Type-2 importer: %w", err)
 	}
@@ -282,9 +349,20 @@ func RunRemoteType2Importer(ctx context.Context, runtime RuntimeOptions, opts Re
 		}
 		return fmt.Errorf("verify configured OVN network mapping before importer ownership: %w", err)
 	}
+	unboundConfig := cfg
 	if cfg.Netlink.Recovery != nil {
+		recovery := *cfg.Netlink.Recovery
+		cfg.Netlink.Recovery = &recovery
 		if err := bindRemoteRecovery(&cfg, mappingGate.uuids); err != nil {
 			return err
+		}
+	}
+	if opts.InventoryGate != nil {
+		gateCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
+		err := opts.InventoryGate(gateCtx, unboundConfig)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("inventory gate blocked importer ownership: %w", err)
 		}
 	}
 	backend, err := evpn.NewOwnedOVNNetlinkBackend(cfg.Netlink)
@@ -298,8 +376,13 @@ func RunRemoteType2Importer(ctx context.Context, runtime RuntimeOptions, opts Re
 	}
 	tick := func() error {
 		stepCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
-		mappingErr := checkMapping(stepCtx)
-		err := mappingErr
+		err := checkPeer()
+		if err == nil && opts.InventoryGate != nil {
+			err = opts.InventoryGate(stepCtx, unboundConfig)
+		}
+		if err == nil {
+			err = checkMapping(stepCtx)
+		}
 		if err == nil && continuity.Evidence().PID != 0 && continuity.Check(stepCtx) != nil && conn != nil {
 			err = errors.Join(conn.Close(), continuity.Close())
 			conn = nil
@@ -313,7 +396,7 @@ func RunRemoteType2Importer(ctx context.Context, runtime RuntimeOptions, opts Re
 				conn, continuity = newConn, newGuard
 				source.Client = newClient
 				source.Gate = attestedReadiness{evpn.SpeakerReadiness{Client: newClient, ASN: cfg.ASN, RouterID: cfg.RouterID}, newGuard}
-				err = readOnly.RebindSource(source)
+				err = readOnly.RebindType2Source(source)
 			}
 		}
 		if err == nil {

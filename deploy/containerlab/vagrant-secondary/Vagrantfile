@@ -1,0 +1,32 @@
+lab_name = ENV.fetch("EVPN_VM_NAME", "evpn-cni-e2e-709bc99")
+pool_name = ENV.fetch("EVPN_VM_POOL", "evpn-cni-e2e-709bc99")
+network_name = ENV.fetch("EVPN_VM_NETWORK", "evpn-cni-e2e-nat")
+cpus = Integer(ENV.fetch("EVPN_VM_CPUS", "4"))
+memory = Integer(ENV.fetch("EVPN_VM_MEMORY_MB", "12288"))
+disk = Integer(ENV.fetch("EVPN_VM_DISK_GB", "128"))
+network_address = ENV.fetch("EVPN_VM_NETWORK_ADDRESS", "192.168.249.0/24")
+gateway = ENV.fetch("EVPN_VM_GATEWAY", "192.168.249.1")
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "generic/ubuntu2204"
+  config.vm.box_version = "4.3.12"
+  config.vm.box_check_update = false
+  config.vm.hostname = "evpn-cni-e2e"
+  config.vm.synced_folder ".", "/vagrant", disabled: true
+
+  config.vm.define lab_name do |vm|
+    vm.vm.provider :libvirt do |libvirt|
+      libvirt.default_prefix = ""
+      libvirt.driver = "kvm"
+      libvirt.cpus = cpus
+      libvirt.memory = memory
+      libvirt.machine_virtual_size = disk
+      libvirt.storage_pool_name = pool_name
+      libvirt.management_network_name = network_name
+      libvirt.management_network_address = network_address
+      libvirt.management_network_mode = "nat"
+      libvirt.management_network_keep = true
+    end
+    vm.vm.provision "shell", path: "provision.sh", args: [gateway]
+  end
+end

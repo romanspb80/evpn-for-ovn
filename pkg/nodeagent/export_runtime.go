@@ -15,9 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/romanspb80/evpn-for-ovn/pkg/endpointauth"
 	"github.com/romanspb80/evpn-for-ovn/pkg/evpn"
-	"github.com/romanspb80/evpn-for-ovn/pkg/nodeagent/ovnexport"
 	nbdb "github.com/romanspb80/evpn-for-ovn/services/ovsdb_mgmt/ovnnb"
 	"github.com/vishvananda/netns"
 
@@ -28,11 +26,15 @@ import (
 )
 
 type ExportRuntimeOptions struct {
-	ConfigPath string
-	StatusPath string
-	SBEndpoint string
-	Interval   time.Duration
-	Timeout    time.Duration
+	ConfigPath          string
+	StatusPath          string
+	SBEndpoint          string
+	Interval            time.Duration
+	Timeout             time.Duration
+	RequireLocalChassis bool
+	// PeerImportConfig is the startup snapshot of a co-hosted importer.
+	PeerImportConfig *RemoteRuntimeConfig
+	InventoryGate    func(context.Context, evpn.ExporterConfig) error
 }
 
 type ExportStatus struct {
@@ -174,7 +176,7 @@ func validateLocalExportConfig(cfg evpn.ExporterConfig) error {
 // RunEndpointExporter is an optional periodic reader/application loop alongside
 // the existing CNI server. It never invokes CNI ADD/DEL or speaker session RPCs.
 func (s *CNIServer) RunEndpointExporter(ctx context.Context, runtime RuntimeOptions, opts ExportRuntimeOptions, report func(ExportStatus)) error {
-	return runEndpointExporter(ctx, runtime, opts, report, s, nil, nil)
+	return runEndpointExporter(ctx, runtime, opts, report, &cniExportBinding{server: s})
 }
 
 func runEndpointExporter(
@@ -182,9 +184,7 @@ func runEndpointExporter(
 	runtime RuntimeOptions,
 	opts ExportRuntimeOptions,
 	report func(ExportStatus),
-	server *CNIServer,
-	standalone *StandaloneExportRuntimeConfig,
-	fencer *endpointauth.Fencer,
+	platform exportPlatformBinding,
 ) error {
 	if opts.ConfigPath == "" {
 		return nil
@@ -226,40 +226,43 @@ func runEndpointExporter(
 		}
 	}()
 	exporter := &evpn.EndpointExporter{}
-	var observer *CNIEndpointObserver
-	var standaloneObserver *standaloneAuthorizationObserver
 	var bound *evpn.ExporterConfig
 	var last evpn.ExportResult
+	var chassisLost error
 	tick := func() {
 		status := ExportStatus{Time: time.Now().UTC(), Result: evpn.ExportResult{Applied: last.Applied}}
-		if standaloneObserver != nil {
-			standaloneObserver.Observations = nil
-		}
+		platform.beginCycle()
 		cfg, err := LoadExporterConfig(opts.ConfigPath)
 		stepCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 		defer cancel()
 		if err == nil && cfg.Enabled {
 			err = validateLocalExportConfig(cfg)
 		}
-		var accepted *endpointauth.AcceptedSnapshot
-		if err == nil && standalone != nil {
-			err = validateStandaloneExporterConfig(*standalone, cfg)
-			if err == nil {
-				var policy *endpointauth.Snapshot
-				policy, err = LoadEndpointAuthorization(standalone.AuthorizationPolicyPath)
-				if err == nil && (policy.InstallationUID() != standalone.InstallationUID ||
-					policy.NodeUID() != standalone.NodeUID || policy.LocalChassis() != standalone.LocalChassis) {
-					err = fmt.Errorf("authorization policy scope differs from standalone installation, node or chassis identity")
+		if err == nil && opts.PeerImportConfig != nil {
+			err = ValidateCohostedType2Config(cfg, *opts.PeerImportConfig)
+		}
+		if err == nil && opts.InventoryGate != nil {
+			err = opts.InventoryGate(stepCtx, cfg)
+		}
+		if err != nil && opts.InventoryGate != nil {
+			err = fmt.Errorf("inventory-gated exporter blocked: %w", err)
+			if exporterRecovery != nil {
+				result, withdrawalErr := withdrawFencedExport(stepCtx, exporter, exporterRecovery)
+				last, status.Result = result, result
+				if withdrawalErr != nil {
+					err = errors.Join(err, fmt.Errorf("owned route withdrawal unresolved: %w", withdrawalErr))
 				}
-				if err == nil {
-					accepted, err = fencer.Accept(policy)
-				}
+			} else {
+				err = errors.Join(err, fmt.Errorf("owned route withdrawal unavailable: durable exporter recovery not initialized"))
 			}
+		}
+		if err == nil {
+			err = platform.prepare(cfg)
 		}
 		if err == nil && cfg.Enabled && authority == nil {
 			authority, err = evpn.AcquireExporterAuthority()
 		}
-		if err == nil && cfg.Enabled && observer == nil && standaloneObserver == nil {
+		if err == nil && cfg.Enabled && exporter.Observer == nil {
 			nb, err = newOVNNBClient(stepCtx, runtime.OVNNBEndpoint)
 			if err == nil {
 				ovs, err = newOVSClient(stepCtx, runtime.OVSDBEndpoint)
@@ -269,51 +272,7 @@ func runEndpointExporter(
 			}
 			if err == nil {
 				source := liveExportState{nb: nb, ovs: ovs, sb: sb}
-				for _, network := range cfg.Networks {
-					if network.Enabled && network.ExportSource() == "ovn-netlink" {
-						native, err = evpn.NewLocalOVNNetlinkObserver(cfg, &nativeOVNPorts{source: source, config: cfg})
-						break
-					}
-				}
-				if err == nil {
-					frameworkNetworks := make(map[string]evpn.EVPNNetworkConfig)
-					for _, network := range cfg.Networks {
-						if network.Enabled && network.ExportSource() == "framework" {
-							frameworkNetworks[network.NetworkID] = network
-						}
-					}
-					if standalone != nil {
-						standaloneObserver = &standaloneAuthorizationObserver{
-							Source: liveOVNExportState{nb: nb, sb: sb},
-							Local: ovnexport.TrustedEndpointIdentity{
-								InstallationUID: standalone.InstallationUID,
-								NodeUID:         standalone.NodeUID,
-								NodeName:        cfg.NodeName,
-								LocalChassis:    cfg.LocalChassis,
-							},
-							Networks: frameworkNetworks,
-						}
-						standaloneObserver.Accepted = accepted
-						exporter.Observer = standaloneObserver
-					} else {
-						observer = &CNIEndpointObserver{server: server, source: source, config: cfg}
-						selected := selectedEndpointObserver{cni: observer}
-						if len(frameworkNetworks) != 0 {
-							selected.framework = &ovnexport.FrameworkEndpointObserver{
-								Source:    liveOVNExportState{nb: nb, sb: sb},
-								LocalNode: cfg.NodeName, LocalChassis: cfg.LocalChassis,
-								Networks: frameworkNetworks,
-							}
-						}
-						if native != nil {
-							selected.native = native
-						}
-						exporter.Observer = selected
-						if cfg.Recovery != nil {
-							exporter.Observer = continuityExportObserver{server, selected}
-						}
-					}
-				}
+				exporter.Observer, native, err = platform.buildObserver(cfg, source)
 			}
 			if err != nil {
 				for _, c := range []client.Client{nb, ovs, sb} {
@@ -322,6 +281,23 @@ func runEndpointExporter(
 					}
 				}
 				nb, ovs, sb = nil, nil, nil
+			}
+		}
+		if err == nil && cfg.Enabled && opts.RequireLocalChassis {
+			if chassisLost == nil {
+				chassisLost = verifyLocalOVNChassis(stepCtx, ovs, sb, cfg.LocalChassis)
+			}
+			if chassisLost != nil {
+				err = fmt.Errorf("local chassis identity lost; exporter fenced: %w", chassisLost)
+				if exporterRecovery != nil {
+					result, withdrawalErr := withdrawFencedExport(stepCtx, exporter, exporterRecovery)
+					last, status.Result = result, result
+					if withdrawalErr != nil {
+						err = errors.Join(err, fmt.Errorf("owned route withdrawal unresolved: %w", withdrawalErr))
+					}
+				} else {
+					err = errors.Join(err, fmt.Errorf("owned route withdrawal unavailable: durable exporter recovery not initialized"))
+				}
 			}
 		}
 		if err == nil && cfg.Enabled {
@@ -341,13 +317,8 @@ func runEndpointExporter(
 				copy := cfg
 				bound = &copy
 			}
-			if observer != nil {
-				observer.config = cfg
-			}
+			platform.update(cfg)
 			exporter.DryRun = cfg.DryRun
-			if standaloneObserver != nil {
-				standaloneObserver.Accepted = accepted
-			}
 			if !cfg.DryRun && conn != nil && cfg.Recovery != nil && continuity.Check(stepCtx) != nil {
 				err = conn.Close()
 				err = errors.Join(err, continuity.Close())
@@ -381,10 +352,7 @@ func runEndpointExporter(
 						}
 					}
 					if cfg.Recovery != nil && err == nil {
-						var applier evpn.Type2RouteApplier = adapter
-						if standalone == nil {
-							applier = continuityRouteApplier{server, adapter}
-						}
+						applier := platform.wrapRecoveryApplier(adapter)
 						if exporterRecovery == nil {
 							exporterRecovery, err = evpn.OpenExportRecovery(*cfg.Recovery, adapter, applier, continuity)
 						} else {
@@ -396,16 +364,16 @@ func runEndpointExporter(
 					}
 				}
 			}
+			if err == nil && exporterRecovery != nil && exporterRecovery.WithdrawalRequired() {
+				status.Result, err = withdrawFencedExport(stepCtx, exporter, exporterRecovery)
+				last = status.Result
+				err = errors.Join(fmt.Errorf("exporter is durably fenced after local chassis identity loss; controlled recovery required"), err)
+			}
 			if err == nil {
 				status.Result, err = exporter.Reconcile(stepCtx)
 				last = status.Result
 			}
-			if observer != nil {
-				status.Observations = append([]ExportObservation(nil), observer.Observations...)
-			}
-			if standaloneObserver != nil {
-				status.Observations = append([]ExportObservation(nil), standaloneObserver.Observations...)
-			}
+			status.Observations = platform.observations()
 		}
 		if err != nil {
 			status.Error = err.Error()
@@ -456,6 +424,13 @@ func runEndpointExporter(
 			tick()
 		}
 	}
+}
+
+func withdrawFencedExport(ctx context.Context, exporter *evpn.EndpointExporter, recovery *evpn.ExportRecovery) (evpn.ExportResult, error) {
+	if err := recovery.RequireWithdrawal(); err != nil {
+		return evpn.ExportResult{OwnershipUnverified: true}, fmt.Errorf("persist withdrawal fence: %w", err)
+	}
+	return exporter.WithdrawAll(ctx)
 }
 
 func writeExportStatus(path string, status ExportStatus) error {

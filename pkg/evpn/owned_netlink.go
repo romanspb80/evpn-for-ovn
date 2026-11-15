@@ -94,6 +94,33 @@ type RemoteKernelEntry struct {
 	Master   int
 }
 
+type RemoteKernelSlot struct {
+	Family  int
+	Ifindex int
+	Key     string
+}
+
+type RemoteSlotQuarantine struct {
+	Slot       RemoteKernelSlot
+	Target     string
+	NetworkID  string
+	Device     RemoteDeviceIdentity
+	Domain     ownership.Domain
+	Observed   []RemoteKernelEntry
+	Reason     string
+	Resolved   bool
+	Resolution string
+}
+
+type slotQuarantineError struct {
+	slot   RemoteKernelSlot
+	reason string
+}
+
+func (e *slotQuarantineError) Error() string {
+	return fmt.Sprintf("remote kernel slot quarantined (%d/%d/%s): %s", e.slot.Family, e.slot.Ifindex, e.slot.Key, e.reason)
+}
+
 type RemoteObjectReceipt struct {
 	Request   RemoteKernelEntry
 	Observed  RemoteKernelEntry
@@ -132,6 +159,7 @@ type ownedNetlinkState struct {
 	controller, target string
 	devices            map[string]RemoteDeviceIdentity
 	receipts           map[string]*RemoteNetlinkReceipt
+	quarantines        map[string]RemoteSlotQuarantine
 	withdrawals        []RemoteNetlinkReceipt
 	latest             map[string]uint64
 	updates            chan netlink.LinkUpdate
@@ -142,6 +170,7 @@ type ownedNetlinkState struct {
 	markerPath         string
 	subscribed         bool
 	journal            *ownership.Journal
+	schemaMigration    bool
 	snapshot           RemoteImportSnapshot
 	recoveryState      string
 	// Tests stop a process at actual mutation boundaries.
@@ -177,7 +206,8 @@ func NewOwnedOVNNetlinkBackend(config RemoteNetlinkConfig) (*OVNNetlinkBackend, 
 	s := &ownedNetlinkState{kernel: kernel, config: config, controller: uuid.NewString(),
 		target:  strings.TrimSpace(string(boot)) + "/" + ns.UniqueId(),
 		devices: map[string]RemoteDeviceIdentity{}, receipts: map[string]*RemoteNetlinkReceipt{},
-		latest: map[string]uint64{}, updates: make(chan netlink.LinkUpdate, 256), done: make(chan struct{})}
+		quarantines: map[string]RemoteSlotQuarantine{},
+		latest:      map[string]uint64{}, updates: make(chan netlink.LinkUpdate, 256), done: make(chan struct{})}
 	s.config.Networks = append([]RemoteNetlinkNetwork(nil), config.Networks...)
 	err = netlink.LinkSubscribeWithOptions(s.updates, s.done, netlink.LinkSubscribeOptions{
 		Namespace: &ns, ReceiveBufferSize: 1 << 20,
@@ -216,25 +246,9 @@ func NewOwnedOVNNetlinkBackend(config RemoteNetlinkConfig) (*OVNNetlinkBackend, 
 			b.Close()
 			return nil, fmt.Errorf("network %s has invalid bridge/VXLAN topology", network.NetworkID)
 		}
-		for _, scope := range []struct{ index, family int }{
-			{vxlan.Ifindex, unix.AF_BRIDGE}, {bridge.Ifindex, unix.AF_INET}, {bridge.Ifindex, unix.AF_INET6},
-		} {
-			entries, err := kernel.NeighList(scope.index, scope.family)
-			if err != nil {
-				b.Close()
-				return nil, fmt.Errorf("initial remote-domain observation: %w", err)
-			}
-			for _, entry := range entries {
-				if entry.Flags&netlink.NTF_EXT_LEARNED != 0 ||
-					(scope.family == unix.AF_BRIDGE && len(entry.IP) != 0) {
-					if s.journal == nil || !s.hasConfirmedEntry(kernelEntry(entry)) {
-						s.blocked = fmt.Sprintf("network %s has unowned remote kernel state; no startup adoption", network.NetworkID)
-						err := s.quarantineError()
-						b.Close()
-						return nil, err
-					}
-				}
-			}
+		if err := s.scanStartupKernelState(context.Background(), network); err != nil {
+			b.Close()
+			return nil, fmt.Errorf("initial remote-domain observation: %w", err)
 		}
 	}
 	if err := s.check(context.Background()); err != nil {
@@ -253,6 +267,13 @@ func NewOwnedOVNNetlinkBackend(config RemoteNetlinkConfig) (*OVNNetlinkBackend, 
 			return nil, err
 		}
 		s.markerPath = filepath.Join(config.StateDirectory, "remote-netlink-owner")
+	}
+	if s.journal != nil && s.schemaMigration {
+		if err := s.checkpoint(); err != nil {
+			b.Close()
+			return nil, err
+		}
+		s.schemaMigration = false
 	}
 	if s.journal != nil {
 		if err := s.verifyRecovered(context.Background()); err != nil {
@@ -471,6 +492,45 @@ func sameKernelSlot(a, b RemoteKernelEntry) bool {
 	return a.IP == b.IP
 }
 
+func remoteKernelSlot(entry RemoteKernelEntry) (RemoteKernelSlot, error) {
+	if entry.Ifindex <= 0 {
+		return RemoteKernelSlot{}, fmt.Errorf("invalid kernel slot interface index %d", entry.Ifindex)
+	}
+	slot := RemoteKernelSlot{Family: entry.Family, Ifindex: entry.Ifindex}
+	switch entry.Family {
+	case unix.AF_BRIDGE:
+		mac, err := net.ParseMAC(entry.MAC)
+		if err != nil || len(mac) != 6 {
+			return RemoteKernelSlot{}, fmt.Errorf("invalid FDB slot MAC %q", entry.MAC)
+		}
+		slot.Key = mac.String()
+	case unix.AF_INET, unix.AF_INET6:
+		ip := net.ParseIP(entry.IP)
+		if ip == nil || (entry.Family == unix.AF_INET && ip.To4() == nil) ||
+			(entry.Family == unix.AF_INET6 && (ip.To4() != nil || ip.To16() == nil)) {
+			return RemoteKernelSlot{}, fmt.Errorf("invalid neighbor slot address %q for family %d", entry.IP, entry.Family)
+		}
+		slot.Key = ip.String()
+	default:
+		return RemoteKernelSlot{}, fmt.Errorf("unsupported kernel slot family %d", entry.Family)
+	}
+	return slot, nil
+}
+
+func remoteKernelSlotKey(slot RemoteKernelSlot) string {
+	return fmt.Sprintf("%d/%d/%s", slot.Family, slot.Ifindex, slot.Key)
+}
+
+func slotRequest(slot RemoteKernelSlot) RemoteKernelEntry {
+	entry := RemoteKernelEntry{Family: slot.Family, Ifindex: slot.Ifindex}
+	if slot.Family == unix.AF_BRIDGE {
+		entry.MAC = slot.Key
+	} else {
+		entry.IP = slot.Key
+	}
+	return entry
+}
+
 func (s *ownedNetlinkState) slot(ctx context.Context, want RemoteKernelEntry) ([]RemoteKernelEntry, error) {
 	if err := s.check(ctx); err != nil {
 		return nil, err
@@ -490,6 +550,27 @@ func (s *ownedNetlinkState) slot(ctx context.Context, want RemoteKernelEntry) ([
 	return found, nil
 }
 
+func (s *ownedNetlinkState) checkSlotQuarantine(entry RemoteKernelEntry) error {
+	slot, err := remoteKernelSlot(entry)
+	if err != nil {
+		s.blocked = "cannot identify mutation slot: " + err.Error()
+		return s.quarantineError()
+	}
+	if quarantine, ok := s.quarantines[remoteKernelSlotKey(slot)]; ok && !quarantine.Resolved {
+		return &slotQuarantineError{slot: slot, reason: quarantine.Reason}
+	}
+	return nil
+}
+
+func (s *ownedNetlinkState) quarantineObservedSlot(entry RemoteKernelEntry, observed []RemoteKernelEntry, reason string) error {
+	slot, err := remoteKernelSlot(entry)
+	if err != nil {
+		s.blocked = "cannot identify conflicting kernel slot: " + err.Error()
+		return s.quarantineError()
+	}
+	return s.recordSlotQuarantine(slot, observed, reason)
+}
+
 func (s *ownedNetlinkState) confirm(ctx context.Context, r *RemoteObjectReceipt, absent bool) error {
 	found, err := s.slot(ctx, r.Request)
 	if err != nil {
@@ -500,6 +581,10 @@ func (s *ownedNetlinkState) confirm(ctx context.Context, r *RemoteObjectReceipt,
 			r.Status, r.Error = "absent-confirmed", ""
 			return nil
 		}
+	} else if len(found) == 0 && r.Status == "confirmed" {
+		r.Status, r.ACK, r.DeleteACK = "unattempted", false, false
+		r.Observed, r.Error = RemoteKernelEntry{}, ""
+		return nil
 	} else if len(found) == 1 {
 		expected := r.Request
 		if r.Status == "confirmed" {
@@ -515,9 +600,9 @@ func (s *ownedNetlinkState) confirm(ctx context.Context, r *RemoteObjectReceipt,
 			return nil
 		}
 	}
-	s.blocked = "kernel entry differs from confirmed operation"
-	r.Status, r.Error = "conflict", s.blocked
-	return errors.Join(s.quarantineError(), fmt.Errorf("want=%+v observed=%+v", r.Request, found))
+	r.Error = "kernel entry differs from confirmed operation"
+	err = s.quarantineObservedSlot(r.Request, found, "kernel entry differs from confirmed operation")
+	return errors.Join(err, fmt.Errorf("want=%+v observed=%+v", r.Request, found))
 }
 
 func definitiveReject(err error) bool {
@@ -534,17 +619,22 @@ func definitiveReject(err error) bool {
 }
 
 func (s *ownedNetlinkState) applyObject(ctx context.Context, r *RemoteObjectReceipt) error {
+	if err := s.checkSlotQuarantine(r.Request); err != nil {
+		return err
+	}
 	if r.Status == "confirmed" {
-		return s.confirm(ctx, r, false)
+		if err := s.confirm(ctx, r, false); err != nil || r.Status == "confirmed" {
+			return err
+		}
 	}
 	found, err := s.slot(ctx, r.Request)
 	if err != nil {
 		return err
 	}
 	if len(found) != 0 {
-		r.Status, r.Error = "conflict", "preexisting kernel slot is not owned"
-		s.blocked = r.Error
-		return errors.Join(s.quarantineError(), fmt.Errorf("observed=%+v", found))
+		r.Error = "preexisting kernel slot is not owned"
+		return errors.Join(s.quarantineObservedSlot(r.Request, found, r.Error),
+			fmt.Errorf("observed=%+v", found))
 	}
 	if err := s.check(ctx); err != nil {
 		return err
@@ -593,14 +683,17 @@ func (s *ownedNetlinkState) withdrawObject(ctx context.Context, r *RemoteObjectR
 	if r.Status == "absent-confirmed" {
 		return nil
 	}
+	if err := s.checkSlotQuarantine(r.Request); err != nil {
+		return err
+	}
 	if r.Status == "failed" || r.Status == "unattempted" {
 		found, err := s.slot(ctx, r.Request)
 		if err != nil {
 			return err
 		}
 		if len(found) != 0 {
-			s.blocked = "unowned slot appeared during partial withdrawal"
-			return fmt.Errorf("%s", s.blocked)
+			return s.quarantineObservedSlot(r.Request, found,
+				"unowned slot appeared during partial withdrawal")
 		}
 		r.Status = "absent-confirmed"
 		return nil
@@ -610,6 +703,10 @@ func (s *ownedNetlinkState) withdrawObject(ctx context.Context, r *RemoteObjectR
 	}
 	if err := s.confirm(ctx, r, false); err != nil {
 		return err
+	}
+	if r.Status == "unattempted" {
+		r.Status = "absent-confirmed"
+		return nil
 	}
 	if err := s.check(ctx); err != nil {
 		return err
@@ -696,16 +793,28 @@ func (b *OVNNetlinkBackend) ownedApply(ctx context.Context, route ImportedType2R
 		s.receipts[route.Key] = receipt
 	}
 	receipt.Status = "partially-applied"
+	var slotErrors []error
 	if err := s.applyObject(ctx, &receipt.FDB); err != nil {
-		return err
+		if !isSlotQuarantineError(err) {
+			return err
+		}
+		slotErrors = append(slotErrors, err)
 	}
 	if receipt.Neighbor != nil {
 		if err := s.applyObject(ctx, receipt.Neighbor); err != nil {
-			return err
+			if !isSlotQuarantineError(err) {
+				return err
+			}
+			slotErrors = append(slotErrors, err)
 		}
 	}
-	receipt.Status = "applied"
-	return s.checkpoint()
+	if receipt.FDB.Status == "confirmed" && (receipt.Neighbor == nil || receipt.Neighbor.Status == "confirmed") {
+		receipt.Status = "applied"
+	}
+	if err := s.checkpoint(); err != nil {
+		return errors.Join(errors.Join(slotErrors...), err)
+	}
+	return errors.Join(slotErrors...)
 }
 
 func (s *ownedNetlinkState) newReceipt(network RemoteNetlinkNetwork, route ImportedType2Route) *RemoteNetlinkReceipt {
@@ -749,13 +858,26 @@ func (b *OVNNetlinkBackend) ownedWithdraw(ctx context.Context, route ImportedTyp
 	if err := s.checkpoint(); err != nil {
 		return err
 	}
+	var slotErrors []error
 	if receipt.Neighbor != nil {
 		if err := s.withdrawObject(ctx, receipt.Neighbor); err != nil {
-			return err
+			if !isSlotQuarantineError(err) {
+				return err
+			}
+			slotErrors = append(slotErrors, err)
 		}
 	}
 	if err := s.withdrawObject(ctx, &receipt.FDB); err != nil {
-		return err
+		if !isSlotQuarantineError(err) {
+			return err
+		}
+		slotErrors = append(slotErrors, err)
+	}
+	if len(slotErrors) != 0 {
+		if err := s.checkpoint(); err != nil {
+			return errors.Join(errors.Join(slotErrors...), err)
+		}
+		return errors.Join(slotErrors...)
 	}
 	receipt.Status = "withdrawn"
 	s.withdrawals = append(s.withdrawals, *receipt)

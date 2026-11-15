@@ -201,6 +201,9 @@ func validateStandaloneExporterImporterPair(
 		if !ok || exportNetwork.LogicalSwitch != network.LogicalSwitch || exportNetwork.VNI != network.VNI {
 			return fmt.Errorf("standalone importer network %s differs from the enabled exporter mapping", network.NetworkID)
 		}
+		if exportNetwork.LocalVTEP != importer.Import.LocalVTEP {
+			return fmt.Errorf("standalone importer network %s local VTEP differs from exporter mapping", network.NetworkID)
+		}
 	}
 	importerJournal := filepath.Clean(importer.Netlink.StateDirectory)
 	if importerJournal == filepath.Clean(config.AuthorizationFenceDirectory) ||
@@ -276,8 +279,64 @@ func RunStandaloneEndpointExporter(
 		return fmt.Errorf("open durable standalone authorization fence: %w", err)
 	}
 	opts.ConfigPath = config.ExporterConfigPath
-	runErr := runEndpointExporter(ctx, runtime, opts, report, nil, &config, fencer)
+	runErr := runEndpointExporter(ctx, runtime, opts, report, &standaloneExportBinding{config: config, fencer: fencer})
 	return errors.Join(runErr, fencer.Close())
+}
+
+type standaloneExportBinding struct {
+	config   StandaloneExportRuntimeConfig
+	fencer   *endpointauth.Fencer
+	accepted *endpointauth.AcceptedSnapshot
+	observer *standaloneAuthorizationObserver
+}
+
+func (b *standaloneExportBinding) beginCycle() {
+	if b.observer != nil {
+		b.observer.Observations = nil
+	}
+}
+
+func (b *standaloneExportBinding) prepare(cfg evpn.ExporterConfig) error {
+	if err := validateStandaloneExporterConfig(b.config, cfg); err != nil {
+		return err
+	}
+	policy, err := LoadEndpointAuthorization(b.config.AuthorizationPolicyPath)
+	if err != nil {
+		return err
+	}
+	if policy.InstallationUID() != b.config.InstallationUID ||
+		policy.NodeUID() != b.config.NodeUID || policy.LocalChassis() != b.config.LocalChassis {
+		return fmt.Errorf("authorization policy scope differs from standalone installation, node or chassis identity")
+	}
+	b.accepted, err = b.fencer.Accept(policy)
+	return err
+}
+
+func (b *standaloneExportBinding) buildObserver(cfg evpn.ExporterConfig, source liveExportState) (evpn.EndpointObserver, *evpn.LocalOVNNetlinkObserver, error) {
+	b.observer = &standaloneAuthorizationObserver{
+		Source: liveOVNExportState{nb: source.nb, sb: source.sb},
+		Local: ovnexport.TrustedEndpointIdentity{
+			InstallationUID: b.config.InstallationUID,
+			NodeUID:         b.config.NodeUID,
+			NodeName:        cfg.NodeName,
+			LocalChassis:    cfg.LocalChassis,
+		},
+		Networks: frameworkExportNetworks(cfg),
+		Accepted: b.accepted,
+	}
+	return b.observer, nil, nil
+}
+
+func (b *standaloneExportBinding) update(evpn.ExporterConfig) {
+	b.observer.Accepted = b.accepted
+}
+
+func (*standaloneExportBinding) wrapRecoveryApplier(applier evpn.Type2RouteApplier) evpn.Type2RouteApplier {
+	return applier
+}
+
+func (b *standaloneExportBinding) observations() []ExportObservation {
+	return append([]ExportObservation(nil), b.observer.Observations...)
 }
 
 type standaloneAuthorizationObserver struct {

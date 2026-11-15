@@ -1,0 +1,38 @@
+# Dedicated example addresses: never attach either NAD to multiple Pods.
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata: {name: tenant-a-worker-a, namespace: evpn-system}
+spec:
+  config: '{"cniVersion":"1.0.0","name":"tenant-a-worker-a","type":"evpn-cni","nodeAgentSocket":"/run/evpn-node-agent/agent.sock","networkID":"tenant-a","attachmentID":"secondary","logicalSwitch":"tenant-a","ipAddress":"10.244.240.11/24","macAddress":"02:00:00:00:00:11","creationIdentity":true}'
+---
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata: {name: tenant-a-worker-b, namespace: evpn-system}
+spec:
+  config: '{"cniVersion":"1.0.0","name":"tenant-a-worker-b","type":"evpn-cni","nodeAgentSocket":"/run/evpn-node-agent/agent.sock","networkID":"tenant-a","attachmentID":"secondary","logicalSwitch":"tenant-a","ipAddress":"10.244.240.12/24","macAddress":"02:00:00:00:00:12","creationIdentity":true}'
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tenant-a-worker-a
+  namespace: evpn-system
+  annotations: {k8s.v1.cni.cncf.io/networks: tenant-a-worker-a}
+spec:
+  nodeName: <NODE_A>
+  containers:
+    - name: client
+      image: <CLIENT_IMAGE>
+      command: ["/bin/sh", "-c", "sleep infinity"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tenant-a-worker-b
+  namespace: evpn-system
+  annotations: {k8s.v1.cni.cncf.io/networks: tenant-a-worker-b}
+spec:
+  nodeName: <NODE_B>
+  containers:
+    - name: client
+      image: <CLIENT_IMAGE>
+      command: ["/bin/sh", "-c", "sleep infinity"]

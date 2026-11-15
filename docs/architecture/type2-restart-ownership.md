@@ -8,7 +8,7 @@ blocked. This is not universal recovery or a
 production-readiness claim; see the actual
 [operator-managed acceptance results](operator-type2-acceptance.md).
 
-**Bounded Phase D acceptance passes:** the complete normal and additional
+**Bounded operator-managed recovery acceptance passes:** the complete normal and additional
 forced-agent-crash suites each pass all 18 cases, including authenticated
 [two-stage CNI creation](cni-creation-authority.md), speaker replacement,
 authoritative importer recovery, post-restart forwarding, final withdrawal,
@@ -183,8 +183,8 @@ The existing exporter abstract-socket authority remains unchanged. It
 continues to fence independently started cooperating exporters; the new
 agent fence also covers the CNI and importer startup window.
 
-This boundary assumes the supported operator `hostNetwork`/single-node
-placement contract. Abstract sockets are network-namespace scoped, not
+This boundary assumes each operator agent uses the node's `hostNetwork`
+namespace. Abstract sockets are network-namespace scoped, not
 cluster-wide. It does not fence an unrelated privileged writer, an older
 agent that does not acquire this authority, or a program in a different
 network namespace accessing the same mounted host state. The persistent
@@ -309,7 +309,9 @@ Without `Recovery`, the previous no-restart-adoption behavior is retained.
 The state directory contains the original `remote-netlink-owner` and a private
 `receipts-v1/` directory holding `owner.lock` and `journal.json`. The generic
 journal envelope is version 1; its importer `State.Version` is independently
-versioned at 1. Importer state contains:
+versioned at 2. Version 1 state migrates only when its legacy global quarantine
+is empty; a legacy global quarantine remains blocking and is never reinterpreted
+as a per-slot record. Importer state contains:
 
 - Stable random controller UUID and boot/network-namespace target.
 - Explicit networks and complete recorded bridge/VXLAN device identities
@@ -318,8 +320,13 @@ versioned at 1. Importer state contains:
 - Active or retiring receipts, exact requested and acknowledged/read-back
   FDB/neighbor tuples, ACK/deletion ACK, status and per-route incarnation.
 - Latest incarnation counters, including already withdrawn routes.
-- Durable quarantine evidence for observed ownership/device continuity loss;
-  restarting cannot erase a previously observed conflict.
+- Durable per-slot quarantine evidence for unknown or conflicting kernel state:
+  FDB slots are `(family, ifindex, MAC)` and neighbor slots are
+  `(family, ifindex, IP)`. Records bind the slot to its target, network, device
+  identity and ownership domain, and retain observed tuples and a reason.
+  Restart cannot erase a conflict. Resolution requires explicit non-empty
+  operator evidence and a complete observation that the slot is empty; the
+  resolved record remains durable, and later state in that slot reactivates it.
 
 Each `netlink-add` or `netlink-delete` intent contains the operation object and
 the current importer state. The previous acknowledged state remains in the
@@ -333,21 +340,30 @@ An interrupted checkpoint is conservatively blocked too.
 process authority + journal inode lock
     -> VERIFYING_OWNERSHIP
     -> verify domain, original marker, device identities, durable receipts
-    -> authoritative kernel dumps (errors are never empty state)
+    -> complete supported kernel dumps (errors are never empty state)
+    -> persist unknown/conflicting slots as per-key quarantine
+    -> verify exact receipts and mark absent owned objects for fresh recovery
     -> RECONCILING_STATE
     -> two equivalent fresh complete remote RIB observations
     -> withdraw obsolete owned receipts, then apply desired routes
     -> RUNNING
 
-any ambiguous evidence or pending intent -> RECOVERY_BLOCKED
+domain/journal/dump uncertainty or unresolved mutation intent -> RECOVERY_BLOCKED
+unknown/conflicting slot -> RECOVERY_PARTIAL; independent owned slots may recover
 ```
 
-Every creation checks that the slot is empty, durably records intent, issues
-exclusive `NeighAdd`, requires ACK and exact readback, then durably acknowledges
-the receipt. Every deletion requires the current receipt and exact readback
-before recording intent and issuing `NeighDel`; ACK and confirmed absence
-precede durable acknowledgement. Neighbors are withdrawn before FDB entries.
-Authority and the journal lock outlive all operations and kernel handle cleanup.
+Every creation checks that its reserved slot is empty and not quarantined,
+durably records intent, issues exclusive `NeighAdd`, requires ACK and exact
+readback, then durably acknowledges the receipt. Every deletion requires the
+current receipt, an unquarantined slot and exact readback before recording intent
+and issuing `NeighDel`; ACK and confirmed absence precede durable acknowledgement.
+Neighbors are withdrawn before FDB entries. A matching tuple without an
+acknowledged receipt is never adopted or deleted. Quarantined slots remain
+untouched while independent slots continue. There is no kernel-level atomic
+compare-and-delete, so this relies on the existing single-writer contract and
+rechecks immediately before deletion; arbitrary concurrent foreign writers are
+not claimed to be fenced. Authority and the journal lock outlive all operations
+and kernel handle cleanup.
 
 Recovery never adopts a preexisting tuple from an intent or an unattempted
 receipt. A confirmed durable receipt plus unchanged ownership domain/device
@@ -393,7 +409,7 @@ tuple during downtime. Such noncooperating privileged mutation is outside this
 contract; if it is suspected, do not enable automatic recovery. Cross-boot and
 device recreation recovery are unsupported.
 The journal is bounded to 4 MiB and retains latest-incarnation tombstones.
-There is no online compaction or cross-domain migration in this phase;
+Online compaction and cross-domain migration are not supported;
 exhaustion fails closed rather than discarding ownership evidence.
 
 ## Exporter recovery integration
@@ -475,11 +491,11 @@ durable LSP/attachment receipts. Snapshot validation is serialized with CNI;
 each advertisement revalidates the endpoint and holds that serialization
 through AddPath. UUID withdrawal remains available after Pod deletion.
 
-## Phase D API investigation: unresolved AddPath
+## AddPath ownership limitation
 
-The initial Phase D investigation stopped at this safety gate. Subsequent
-implementation covers the safe lanes above without altering this verified
-limitation or changing the provider API.
+The existing provider API does not expose a safe way to recover an AddPath
+UUID when its acknowledgement is lost. The recovery paths above preserve this
+limitation rather than guessing ownership or changing provider semantics.
 
 The repository uses `github.com/osrg/gobgp/v4 v4.5.0`, but the acceptance
 provider is the pinned k8gobgp v0.2.8 image
@@ -569,11 +585,11 @@ assertions. To execute those assertions, build the test binary as the ordinary
 user and run that specific trusted test binary as root:
 
 ```bash
-go test -race -c -o /tmp/evpn-ownership-phase-b.test ./pkg/ownership
-sudo -n /tmp/evpn-ownership-phase-b.test -test.v
+go test -race -c -o /tmp/evpn-ownership.test ./pkg/ownership
+sudo -n /tmp/evpn-ownership.test -test.v
 go test -race -c -o /tmp/evpn-importer.test ./pkg/evpn
 sudo -n env EVPN_OWNED_KERNEL=disposable /tmp/evpn-importer.test \
-  -test.run '^TestImporterRecovery' -test.v
+  -test.run '^Test(ImporterRecovery|ImporterQuarantine|OwnedNetlinkKernel|OwnedNetlinkRecoveryPreservesForeignKernelState)' -test.v
 ```
 
 The journal tests use their own temporary directories. They exercise exclusive
@@ -586,5 +602,8 @@ authority retention while an RPC handler is draining.
 Importer tests additionally use newly allocated Linux namespaces, actual
 Netlink FDB/neighbors and SIGKILL before/after creation, deletion and durable
 acknowledgement of both objects. Confirmed partial progress recovers; unresolved
-outcomes remain blocked. These tests do not alter the host's network namespace
-or use simulated kernel entries for the SIGKILL cases.
+mutation intents and global uncertainty remain blocked. Unknown/conflicting
+slots stay quarantined while independent owned slots recover, and disposable
+namespace restart/withdrawal tests verify foreign FDB and neighbor preservation.
+These tests do not alter the host's network namespace or use simulated kernel
+entries for the SIGKILL cases.

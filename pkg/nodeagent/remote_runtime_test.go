@@ -160,6 +160,60 @@ func validRemoteRuntimeConfig() RemoteRuntimeConfig {
 	}
 }
 
+func TestCohostedType2Configuration(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*evpn.ExporterConfig, *RemoteRuntimeConfig)
+		wantErr bool
+	}{
+		{name: "matching"},
+		{name: "different speaker", mutate: func(_ *evpn.ExporterConfig, c *RemoteRuntimeConfig) { c.RouterID = "192.0.2.33" }, wantErr: true},
+		{name: "different attestation", mutate: func(_ *evpn.ExporterConfig, c *RemoteRuntimeConfig) { c.AttestationConfigPath = "/other" }, wantErr: true},
+		{name: "different vtep", mutate: func(_ *evpn.ExporterConfig, c *RemoteRuntimeConfig) { c.Import.LocalVTEP = "192.0.2.33" }, wantErr: true},
+		{name: "different vni", mutate: func(_ *evpn.ExporterConfig, c *RemoteRuntimeConfig) { c.Netlink.Networks[0].VNI++ }, wantErr: true},
+		{name: "different switch", mutate: func(_ *evpn.ExporterConfig, c *RemoteRuntimeConfig) { c.Netlink.Networks[0].LogicalSwitch = "other" }, wantErr: true},
+		{name: "network id alias", mutate: func(_ *evpn.ExporterConfig, c *RemoteRuntimeConfig) { c.Netlink.Networks[0].NetworkID = "other" }, wantErr: true},
+		{name: "independent network", mutate: func(_ *evpn.ExporterConfig, c *RemoteRuntimeConfig) {
+			c.Netlink.Networks[0].NetworkID = "other"
+			c.Netlink.Networks[0].LogicalSwitch = "other"
+			c.Netlink.Networks[0].VNI = 200
+		}},
+		{name: "disabled importer", mutate: func(_ *evpn.ExporterConfig, c *RemoteRuntimeConfig) { c.Enabled = false; c.ASN++ }},
+		{name: "different recovery node", mutate: func(e *evpn.ExporterConfig, c *RemoteRuntimeConfig) {
+			e.Recovery = &evpn.ExportRecoveryConfig{StateDirectory: "/export", Domain: ownership.Domain{NodeUID: "a"}}
+			c.Netlink.Recovery = &evpn.RemoteNetlinkRecovery{Domain: ownership.Domain{NodeUID: "b"}}
+		}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			importer := validRemoteRuntimeConfig()
+			exporter := evpn.ExporterConfig{
+				Enabled: true, GRPCEndpoint: importer.GRPCEndpoint, ASN: importer.ASN, RouterID: importer.RouterID,
+				Networks: []evpn.EVPNNetworkConfig{{Enabled: true, NetworkID: "n24", LogicalSwitch: "ls24b", VNI: 100, LocalVTEP: importer.Import.LocalVTEP}},
+			}
+			if tc.mutate != nil {
+				tc.mutate(&exporter, &importer)
+			}
+			if err := ValidateCohostedType2Config(exporter, importer); (err != nil) != tc.wantErr {
+				t.Fatalf("error = %v, wantErr %t", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestCohostedImporterSnapshotChangeBlocksStartup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "remote.json")
+	if err := os.WriteFile(path, []byte(`{"Enabled":false}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	expected := RemoteRuntimeConfig{Enabled: true}
+	err := RunRemoteType2Importer(context.Background(), RuntimeOptions{}, RemoteRuntimeOptions{
+		ConfigPath: path, ExpectedConfig: &expected,
+	}, func(RemoteRuntimeStatus) { t.Fatal("configuration change reported as successful") })
+	if err == nil {
+		t.Fatal("changed startup snapshot accepted")
+	}
+}
+
 func TestValidateRemoteRuntimeOptions(t *testing.T) {
 	report := func(RemoteRuntimeStatus) {}
 	opts := RemoteRuntimeOptions{ConfigPath: "remote.json", Interval: time.Second, Timeout: time.Second}

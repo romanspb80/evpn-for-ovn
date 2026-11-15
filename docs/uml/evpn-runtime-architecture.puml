@@ -1,80 +1,90 @@
-@startuml
-title Kubernetes lab runtime and separate compatibility-manifest wiring
-top to bottom direction
-skinparam shadowing false
-skinparam componentStyle rectangle
-skinparam packageStyle rectangle
-skinparam ArrowColor #2F5D7C
-skinparam note {
-  BackgroundColor #F8FAFC
-  BorderColor #CBD5E1
-}
-skinparam component {
-  BackgroundColor #EAF4FF
-  BorderColor #2F5D7C
-}
-skinparam database {
-  BackgroundColor #FFF7E7
-  BorderColor #D99A22
-}
+@startdot
+digraph KubernetesRuntime {
+  graph [rankdir=TB, bgcolor="#FCFCFD", pad="0.18", nodesep="0.18", ranksep="0.30",
+         splines=ortho, compound=true, newrank=true, outputorder=edgesfirst,
+         fontname="DejaVu Sans", labelloc=t,
+         label=<<FONT POINT-SIZE="17" COLOR="#17263C"><B>Kubernetes runtime | logical deployment view</B></FONT><BR/><FONT POINT-SIZE="9" COLOR="#61738A">The Node-Agent hosts the Framework; this is not an E2E acceptance topology</FONT>>];
+  node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=8,
+        fontcolor="#17263C", color="#AAB8C8", fillcolor="white", penwidth=1.1,
+        margin="0.11,0.07"];
+  edge [fontname="DejaVu Sans", fontsize=7, fontcolor="#566B82",
+        color="#7290AD", penwidth=1.1, arrowsize=0.55];
 
-node "kind cluster (disposable lab; not a production dependency)" {
-  package "k8gobgp-system: upstream installation" {
-    component "BGPConfiguration CRD\nconfigs.bgp.purelb.io" as BGPConfig
-    node "k8gobgp DaemonSet pod\none upstream image" {
-      component "k8gobgp manager" as Manager
-      component "managed gobgpd\nlocal Unix gRPC" as Speaker
-    }
+  subgraph cluster_management {
+    label="KUBERNETES MANAGEMENT";
+    labelloc=t; fontsize=9; fontcolor="#5F7187";
+    style="rounded,filled"; color="#DCE5EF"; fillcolor="#F8FAFD"; margin=10;
+    api [label=<<B>Kubernetes API</B><BR/><FONT POINT-SIZE="7">EvpnCore · inventory</FONT>>, fillcolor="#F1F5F9"];
+    operator [label=<<B>EVPN Core Operator</B><BR/><FONT POINT-SIZE="7">experimental lifecycle</FONT>>, fillcolor="#FFF4DB"];
+    multus [label=<<B>Multus / EVPN CNI</B><BR/><FONT POINT-SIZE="7">separately installed</FONT>>, fillcolor="#FFF4DB"];
+    bgpconfig [label=<<B>BGPConfiguration CRD</B><BR/><FONT POINT-SIZE="7">optional provider path</FONT>>, fillcolor="#F1F5F9"];
+    manager [label=<<B>k8gobgp manager</B><BR/><FONT POINT-SIZE="7">independent Kubernetes provider</FONT>>, fillcolor="#F1F5F9"];
+    {rank=same; api; operator; multus;}
+    {rank=same; bgpconfig; manager;}
+    api -> operator [label="watches"];
+    bgpconfig -> manager [label="reconciles"];
   }
-  package "Suite-generated Framework / application runtime" {
-    component "evpn-node-agent\nshared endpoint services + optional\nNetlink Type-2 reconcilers" as Agent
-    component "Multus / evpn-cni\nCNI application only" as CNI
-    component "cmd/evpn-ovsdb\nopt-in standalone Type-2 importer" as Importer
+
+  subgraph cluster_worker_a {
+    label="WORKER A · NODE-AGENT DAEMONSET";
+    labelloc=t; fontsize=8; fontcolor="#35628F";
+    style="rounded,filled"; color="#9AB9DC"; fillcolor="#F1F7FF"; margin=9;
+    agent_a [label=<<B>Node-Agent A</B><BR/><FONT POINT-SIZE="7">embedded Type-2 core · local journal</FONT>>, fillcolor="#DEEDFF", color="#4F86BF"];
+    gobgp_a [label=<<B>GoBGP A</B><BR/><FONT POINT-SIZE="7">speaker</FONT>>];
+    linux_a [label=<<B>Linux Netlink</B><BR/><FONT POINT-SIZE="7">owned bridge / VXLAN / FDB</FONT>>];
+    ovs_a [label=<<B>ovn-controller + OVS A</B><BR/><FONT POINT-SIZE="7">workload forwarding</FONT>>];
+    {rank=same; agent_a; gobgp_a;}
+    {rank=same; linux_a; ovs_a;}
+    agent_a -> gobgp_a [color="#397AB5", label="Type-2 RIB"];
+    agent_a -> linux_a [color="#4479B6", label="reconciles"];
+    linux_a -> ovs_a [color="#7C8B9C", label="observed"];
   }
-  component "OVN/OVS runtime\nNBDB / northd / SBDB /\novn-controller / OVSDB" as OVN
-  package "Checked-in compatibility manifest\nnot the accepted suite's speaker connection" as Bundle {
-    component "evpn-mgmt\nDeployment / Service :50052" as EvpnMgmt
-    component "ovsdb-mgmt\nDeployment / Service :50053" as OvsdbMgmt
-    component "bgp_ad_handler\nseparate route-handler Deployment" as Handler
-    component "k8gobgp Service\n:50051 -> target :50054" as BGPService
+
+  subgraph cluster_worker_b {
+    label="WORKER B · NODE-AGENT DAEMONSET";
+    labelloc=t; fontsize=8; fontcolor="#35628F";
+    style="rounded,filled"; color="#9AB9DC"; fillcolor="#F1F7FF"; margin=9;
+    agent_b [label=<<B>Node-Agent B</B><BR/><FONT POINT-SIZE="7">embedded Type-2 core · local journal</FONT>>, fillcolor="#DEEDFF", color="#4F86BF"];
+    gobgp_b [label=<<B>GoBGP B</B><BR/><FONT POINT-SIZE="7">speaker</FONT>>];
+    linux_b [label=<<B>Linux Netlink</B><BR/><FONT POINT-SIZE="7">owned bridge / VXLAN / FDB</FONT>>];
+    ovs_b [label=<<B>ovn-controller + OVS B</B><BR/><FONT POINT-SIZE="7">workload forwarding</FONT>>];
+    {rank=same; agent_b; gobgp_b;}
+    {rank=same; linux_b; ovs_b;}
+    agent_b -> gobgp_b [color="#397AB5", label="Type-2 RIB"];
+    agent_b -> linux_b [color="#4479B6", label="reconciles"];
+    linux_b -> ovs_b [color="#7C8B9C", label="observed"];
   }
-  package "Optional project Operator" {
-    component "EvpnCore CRD" as EvpnCore
-    component "EvpnCore reconciler\nYAML lifecycle / workload readiness" as Operator
-  }
+
+  ovn_db [shape=cylinder, label=<<B>OVN NBDB / SBDB</B><BR/><FONT POINT-SIZE="7">shared OVN mode</FONT>>,
+          fillcolor="#FFF7E7", color="#D99A22"];
+  peer [label=<<B>External EVPN peer</B><BR/><FONT POINT-SIZE="7">FRR / GoBGP</FONT>>];
+  endpoint [label=<<B>External VTEP / workload</B><BR/><FONT POINT-SIZE="7">EVPN VXLAN packets</FONT>>];
+  note [shape=note, style="filled", color="#D8E2ED", fillcolor="#F8FAFC", fontsize=8,
+        label="Operator does not install Multus or k8gobgp.\nDaemonSet Ready and inventory acknowledgment are not full health proof."];
+
+  {rank=same; agent_a; agent_b;}
+  {rank=same; gobgp_a; gobgp_b;}
+  {rank=same; linux_a; linux_b;}
+  {rank=same; ovs_a; ovs_b;}
+  operator -> agent_a [color="#7C8B9C", label="manages workload"];
+  operator -> agent_b [color="#7C8B9C"];
+  api -> agent_a [style=dashed, color="#397AB5", label="inventory / acceptance"];
+  api -> agent_b [style=dashed, color="#397AB5"];
+  agent_a -> api [style=dashed, color="#397AB5", label="acknowledges"];
+  agent_b -> api [style=dashed, color="#397AB5"];
+  multus -> agent_a [color="#4479B6", label="Unix CNI RPC"];
+  multus -> agent_b [color="#4479B6"];
+  manager -> gobgp_a [style=dashed, color="#7C8B9C", label="optional speaker management"];
+  manager -> gobgp_b [style=dashed, color="#7C8B9C"];
+  ovn_db -> ovs_a [color="#7C8B9C", label="SB state"];
+  ovn_db -> ovs_b [color="#7C8B9C"];
+  ovs_a -> ovs_b [dir=both, color="#7C8B9C", style=dashed, label="shared-OVN Geneve"];
+  gobgp_a -> peer [dir=both, color="#397AB5", label="BGP EVPN"];
+  gobgp_b -> peer [dir=both, color="#397AB5"];
+  ovs_a -> endpoint [dir=both, color="#34846A", label="external VXLAN"];
+  ovs_b -> endpoint [dir=both, color="#34846A"];
+  {rank=same; peer; endpoint;}
+  peer -> endpoint [style=invis, weight=8];
+  endpoint -> note [style=invis];
 }
-component "External FRR peer\n+ remote workload" as FRR
-
-BGPConfig --> Manager : desired configuration
-Manager --> Speaker : reconcile identity / peers / AF / VRFs
-Agent --> Speaker : Unix GoBGP gRPC\nType-2 AddPath / UUID DeletePath / ListPath
-Importer --> Speaker : Unix GoBGP gRPC ListPath
-Speaker <--> FRR : BGP EVPN
-CNI --> Agent : local Unix NodeAgentCNI gRPC
-Agent --> OVN : shared endpoint services;\nowned Netlink integration observed by controller
-Importer --> OVN : direct owned NBDB / OVSDB reconciliation
-OVN <--> FRR : OVN/OVS workload VXLAN
-EvpnMgmt ..> BGPService : configured TCP client
-Handler ..> BGPService : configured TCP route observation
-Handler --> OvsdbMgmt : management RPCs
-OvsdbMgmt --> OVN : NBDB / OVSDB
-EvpnCore --> Operator : reconcile
-Operator ..> Bundle : apply core manifest\nalso OVN Deployment / Services
-Operator --> Agent : optional managed DaemonSet
-
-note bottom of BGPService
-  Service declaration does not install a proxy or listener.
-  No proxy sidecar is assumed in the upstream DaemonSet.
-  Accepted suites use managed Unix gRPC directly.
-end note
-note bottom of Operator
-  Does not own upstream BGPConfiguration, CRDs or DaemonSet.
-  App / OVN / agent image fields configure managed workloads.
-  Singleton lock, journal and finalizer; Ready gates rollout, not traffic.
-  Future EvpnGateway / EvpnVTEP / EvpnNetwork are not implemented.
-end note
-note bottom of Importer
-  Alternative integration, not the bgp_ad_handler service.
-  One network / one remote VTEP accepted; disabled by default.
-end note
-@enduml
+@enddot

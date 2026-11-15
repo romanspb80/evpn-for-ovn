@@ -1,118 +1,276 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" contentScriptType="application/ecmascript" contentStyleType="text/css" height="1564px" preserveAspectRatio="none" style="width:1381px;height:1564px;background:#FCFCFD;" version="1.1" viewBox="0 0 1381 1564" width="1381px" zoomAndPan="magnify"><defs/><rect x="0" y="0" width="100%" height="100%" fill="#FCFCFD"/><g><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="438" x="475.5" y="19.2419">EVPN-for-OVN | ownership and module boundaries</text><!--MD5=[3b6e72e4b877453cbcb29b8457d88fa9]
-cluster Integrations--><rect fill="#FFFBF2" height="323" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="830" x="331.51" y="48.5158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" font-weight="bold" lengthAdjust="spacingAndGlyphs" textLength="310" x="591.51" y="69.7577">Project integration / orchestration</text><!--MD5=[2c2e2644034c00788261e03c85b06837]
-cluster Core--><rect fill="#F5F9FF" height="323" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="602" x="196.51" y="429.5158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" font-weight="bold" lengthAdjust="spacingAndGlyphs" textLength="308" x="343.51" y="450.7577">EVPN Core (logical responsibilities)</text><!--MD5=[ef78d94fd978f189d1fd6ea9e2053e09]
-cluster Reused--><rect fill="#F8FAFC" height="348" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="966" x="364.51" y="835.5158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" font-weight="bold" lengthAdjust="spacingAndGlyphs" textLength="256" x="719.51" y="856.7577">Reused third-party solutions</text><!--MD5=[2571bb1592dc874a255a7701a0171bbf]
-entity Operator--><rect fill="#FFF4DB" height="93.5475" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="225" x="920.01" y="91.5158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="128" x="930.01" y="120.7577">EVPN Operator</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="205" x="930.01" y="145.2736">EvpnCore YAML lifecycle</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="197" x="930.01" y="169.7894">Readiness / finalization</text><!--MD5=[9088e465e2790d659f06b5bcdededdb4]
-entity CNI--><rect fill="#FFF4DB" height="93.5475" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="219" x="666.01" y="91.5158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="155" x="676.01" y="120.7577">EVPN CNI Adapter</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="160" x="676.01" y="145.2736">ADD / CHECK / DEL</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="199" x="676.01" y="169.7894">Attachment translation</text><!--MD5=[9cb65aab968679016cabe6121c7526ca]
-entity Agent--><rect fill="#FFF4DB" height="93.5475" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="319" x="631.01" y="261.5158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="103" x="641.01" y="290.7577">Node-Agent</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="275" x="641.01" y="315.2736">Endpoint services / Type-2 loops</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="299" x="641.01" y="339.7894">CNI authority / runtime verification</text><!--MD5=[c9fca9bfe34ace49cb504f3e78eca066]
-entity Future--><rect fill="#FFF4DB" height="69.0317" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="283" x="348.01" y="104.0158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="263" x="358.01" y="133.2577">Neutron / standalone adapters</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="262" x="358.01" y="157.7736">PLANNED platform integration</text><!--MD5=[7a43269fac721b1ccfb3b5f042acc3e7]
-entity Routes--><rect fill="#E8F1FF" height="93.5475" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="263" x="213.01" y="472.5158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="243" x="223.01" y="501.7577">EVPN Type-2 import / export</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="233" x="223.01" y="526.2736">Route validation / reconcile</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="182" x="223.01" y="550.7894">GoBGP route adapter</text><!--MD5=[a08b6ada277d3635d238da73539b2f19]
-entity Endpoints--><rect fill="#E8F1FF" height="93.5475" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="218" x="511.51" y="472.5158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="198" x="521.51" y="501.7577">Endpoint reconciliation</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="179" x="521.51" y="526.2736">Identity-owned ports</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="185" x="521.51" y="550.7894">and OVS attachments</text><!--MD5=[6c934802f387774f1c6fa79ae3b0cb2c]
-entity Integration--><rect fill="#E8F1FF" height="93.5475" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="241" x="213.01" y="642.5158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="139" x="223.01" y="671.7577">OVN integration</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="198" x="223.01" y="696.2736">Netlink or OVSDB state</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="221" x="223.01" y="720.7894">Alternative network paths</text><!--MD5=[2027353d4ea5ade6524554547ca00db7]
-entity Recovery--><rect fill="#E8F1FF" height="93.5475" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="293" x="489.01" y="642.5158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="206" x="499.01" y="671.7577">Ownership and recovery</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="229" x="499.01" y="696.2736">Fences / journals / receipts</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="273" x="499.01" y="720.7894">Ambiguous outcomes BLOCKED</text><!--MD5=[18e56130062a5abd5191a576337b1df5]
-entity Kube--><rect fill="#F1F5F9" height="69.0317" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="281" x="1028.01" y="891.0158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="206" x="1038.01" y="920.2577">Kubernetes / containerd</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="261" x="1038.01" y="944.7736">Workloads / sandbox evidence</text><!--MD5=[4306195d98b889b189ef8be6167fcd14]
-entity Multus--><rect fill="#F1F5F9" height="93.5475" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="292" x="1022.51" y="1073.5158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="59" x="1032.51" y="1102.7577">Multus</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="272" x="1032.51" y="1127.2736">External Kubernetes integration</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="226" x="1032.51" y="1151.7894">Invokes EVPN CNI Adapter</text><!--MD5=[dd7b450ed98e923804f481404422501c]
-entity Provider--><rect fill="#F1F5F9" height="93.5475" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="239" x="436.01" y="878.5158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="203" x="446.01" y="907.7577">k8gobgp | independent</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="211" x="446.01" y="932.2736">BGPConfiguration owner</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="219" x="446.01" y="956.7894">Manager + gobgpd image</text><!--MD5=[86eec81ce1f364f1b4c217c0accf4d13]
-entity GoBGP--><rect fill="#F1F5F9" height="69.0317" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="289" x="380.01" y="1086.0158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="242" x="390.01" y="1115.2577">GoBGP | reused BGP engine</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="269" x="390.01" y="1139.7736">Sessions, EVPN RIB, route gRPC</text><!--MD5=[7453483e40b7d823ca17f971f918f6f5]
-entity Linux--><rect fill="#F1F5F9" height="69.0317" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="283" x="710.01" y="891.0158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="173" x="720.01" y="920.2577">Linux / Netlink state</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="263" x="720.01" y="944.7736">Integration FDB and neighbors</text><!--MD5=[8dce5c9fb92cf95bae90426cf03918ba]
-entity OVN--><rect fill="#F1F5F9" height="93.5475" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="283" x="704.01" y="1073.5158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="91" x="714.01" y="1102.7577">OVN / OVS</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="263" x="714.01" y="1127.2736">NB / SB, northd, ovn-controller</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="242" x="714.01" y="1151.7894">Workload VXLAN forwarding</text><!--MD5=[9414f9e6693ccb975e684ece63c110ee]
-entity Peers--><rect fill="#F1F5F9" height="69.0317" rx="8" ry="8" style="stroke: #475569; stroke-width: 2.0;" width="261" x="554.01" y="1250.5158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="241" x="564.01" y="1279.7577">External EVPN peers / VTEPs</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="238" x="564.01" y="1304.2736">FRR / Linux acceptance peer</text><!--MD5=[f54f68f75d96f14923cec6c6f6893104]
-link Operator to Agent--><path d="M990.3,185.5558 C973.09,202.8058 952.35,221.7658 931.51,236.5158 C920.36,244.4158 908.19,251.9258 895.84,258.9058 " fill="none" id="Operator-&gt;Agent" style="stroke: #475569; stroke-width: 2.0;"/><polygon fill="#475569" points="891.28,261.4558,901.0878,260.5572,895.6447,259.0167,897.1852,253.5737,891.28,261.4558" style="stroke: #475569; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="173" x="962.51" y="230.7577">deploys / configures</text><!--MD5=[6beb5dd6c9e41b56367d44c4c1783713]
-link Kube to Multus--><path d="M1168.51,960.1358 C1168.51,989.8658 1168.51,1033.6958 1168.51,1067.8758 " fill="none" id="Kube-&gt;Multus" style="stroke: #475569; stroke-width: 2.0;"/><polygon fill="#475569" points="1168.51,1073.2758,1172.51,1064.2758,1168.51,1068.2758,1164.51,1064.2758,1168.51,1073.2758" style="stroke: #475569; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="125" x="1169.51" y="1030.2577">CNI invocation</text><!--MD5=[ce4709e41223832a38f44e3f3ae8a130]
-link CNI to Agent--><path d="M766.44,185.5758 C764.53,201.7458 763.8,219.9958 766.51,236.5158 C767.59,243.0658 769.19,249.8158 771.06,256.4458 " fill="none" id="CNI-&gt;Agent" style="stroke: #475569; stroke-width: 2.0;"/><polygon fill="#475569" points="772.54,261.4758,773.8332,251.7123,771.1269,256.6797,766.1594,253.9733,772.54,261.4758" style="stroke: #475569; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="159" x="767.51" y="230.7577">Unix endpoint RPC</text><!--MD5=[d0bf9f874faaf6708e7b33379b41d9c1]
-link Future to Endpoints--><path d="M484.54,173.2358 C478.23,227.1358 472.38,334.6458 511.51,413.5158 C521.77,434.1958 537.83,453.0458 554.49,468.8858 " fill="none" id="Future-&gt;Endpoints" style="stroke: #925C00; stroke-width: 2.0; stroke-dasharray: 7.0,7.0;"/><polygon fill="#925C00" points="558.28,472.4358,554.431,463.3702,554.6252,469.0237,548.9717,469.2179,558.28,472.4358" style="stroke: #925C00; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="104" x="498.51" y="315.7577">target reuse</text><!--MD5=[596deecff53b0874d576272b24cbc0c2]
-link Agent to Routes--><path d="M678.99,355.5258 C654.43,364.4558 628.33,373.0358 603.51,379.5158 C580.89,385.4258 573.52,379.6058 551.51,387.5158 C523.76,397.4958 519.57,405.9458 494.51,421.5158 C469.84,436.8458 443.14,453.9458 419.2,469.4658 " fill="none" id="Agent-&gt;Routes" style="stroke: #475569; stroke-width: 2.0;"/><polygon fill="#475569" points="414.76,472.3458,424.4839,470.7819,418.9486,469.6154,420.1151,464.0801,414.76,472.3458" style="stroke: #475569; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="151" x="552.51" y="407.7577">runs Type-2 loops</text><!--MD5=[145974798f8ec30f123497482ca1a4b0]
-link Agent to Endpoints--><path d="M757.08,355.6558 C743.55,373.9158 727.58,394.9358 712.51,413.5158 C697.68,431.8058 680.86,451.3358 665.69,468.5258 " fill="none" id="Agent-&gt;Endpoints" style="stroke: #475569; stroke-width: 2.0;"/><polygon fill="#475569" points="662.28,472.3858,671.2324,468.2804,665.5867,468.6354,665.2317,462.9897,662.28,472.3858" style="stroke: #475569; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="138" x="732.51" y="407.7577">invokes services</text><!--MD5=[514e84771774749e4ef64ba09d1c3e14]
-link Endpoints to Integration--><path d="M582.94,566.9058 C566.75,584.6058 546.68,603.7958 525.51,617.5158 C512.83,625.7358 487.37,636.3358 459.02,646.8258 " fill="none" id="Endpoints-&gt;Integration" style="stroke: #475569; stroke-width: 2.0;"/><polygon fill="#475569" points="454.08,648.6458,463.9082,649.2837,458.771,646.9153,461.1394,641.7781,454.08,648.6458" style="stroke: #475569; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="195" x="558.51" y="611.7577">OVN / OVS attachment</text><!--MD5=[2d53d7c80395c5fa24976432ad5cfa41]
-link Routes to Integration--><path d="M341.48,566.8658 C340.05,588.7158 338.34,614.8558 336.87,637.2958 " fill="none" id="Routes-&gt;Integration" style="stroke: #475569; stroke-width: 2.0;"/><polygon fill="#475569" points="336.54,642.3158,341.0983,633.5853,336.8546,637.3258,333.1141,633.082,336.54,642.3158" style="stroke: #475569; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="176" x="340.51" y="611.7577">accepted route state</text><!--MD5=[f176ad7f197bfc00f3553360db9840f0]
-link Integration to Recovery--><!--MD5=[8a78eefbb38f936b5f24246876cf83b0]
-link Agent to Kube--><path d="M849.7,355.6358 C860.36,365.4758 870.83,376.3058 879.51,387.5158 C949.63,478.0158 941.62,516.5058 995.51,617.5158 C1047.72,715.3658 1112.74,828.5758 1146.24,886.3258 " fill="none" id="Agent-&gt;Kube" style="stroke: #475569; stroke-width: 2.0;"/><polygon fill="#475569" points="1148.8,890.7258,1147.7626,880.9318,1146.2993,886.3961,1140.835,884.9329,1148.8,890.7258" style="stroke: #475569; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="145" x="996.51" y="611.7577">identity evidence</text><!--MD5=[95784a70253e5e642d3152c7322ac870]
-link Operator to Kube--><path d="M1120.57,185.5258 C1129.58,192.9458 1137.85,201.2658 1144.51,210.5158 C1170.47,246.5558 1168.51,263.1058 1168.51,307.5158 C1168.51,307.5158 1168.51,307.5158 1168.51,690.5158 C1168.51,759.1658 1168.51,839.1458 1168.51,885.5858 " fill="none" id="Operator-&gt;Kube" style="stroke: #475569; stroke-width: 2.0;"/><polygon fill="#475569" points="1168.51,890.8058,1172.51,881.8058,1168.51,885.8058,1164.51,881.8058,1168.51,890.8058" style="stroke: #475569; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="200" x="1169.51" y="526.7577">workload reconciliation</text><!--MD5=[7649728840e985f9f87d028655053d36]
-link Provider to GoBGP--><path d="M548.09,972.7458 C542.81,1005.6358 535.79,1049.3358 530.78,1080.4758 " fill="none" id="Provider-&gt;GoBGP" style="stroke: #475569; stroke-width: 2.0;"/><polygon fill="#475569" points="529.94,1085.7558,535.3266,1077.5105,530.7389,1080.8201,527.4293,1076.2324,529.94,1085.7558" style="stroke: #475569; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="170" x="544.51" y="1017.7577">BGP identity / peers</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="163" x="548.01" y="1042.2736">independent writer</text><!--MD5=[f21d63c748eda675fa705742b14b62ed]
-link Routes to GoBGP--><path d="M216.31,568.6958 C105.98,618.7858 -29.11,705.7858 14.51,819.5158 C63.54,947.3358 102.66,978.8558 220.51,1048.5158 C266.96,1075.9658 323.24,1092.8058 374.7,1103.1358 " fill="none" id="Routes-GoBGP" style="stroke: #2457A7; stroke-width: 2.0;"/><polygon fill="#2457A7" points="379.66,1104.1158,371.5938,1098.4646,374.7527,1103.1573,370.0601,1106.3162,379.66,1104.1158" style="stroke: #2457A7; stroke-width: 2.0;"/><polygon fill="#2457A7" points="220.89,566.6358,211.0413,566.693,216.3328,568.693,214.3328,573.9845,220.89,566.6358" style="stroke: #2457A7; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="171" x="23.01" y="788.7577">RIB reads / AddPath</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="186" x="15.51" y="813.2736">UUID-only DeletePath</text><!--MD5=[44b1083ad47fe891a651674a05bbf3c8]
-link Integration to Linux--><path d="M418.57,736.5758 C435.84,745.0958 454.06,753.5058 471.51,760.5158 C566.76,798.7658 598.84,785.5658 692.51,827.5158 C729.78,844.2058 768.98,868.0358 799.12,887.8958 " fill="none" id="Integration-&gt;Linux" style="stroke: #475569; stroke-width: 2.0;"/><polygon fill="#475569" points="803.5,890.7958,798.1974,882.4963,799.3288,888.0388,793.7862,889.1702,803.5,890.7958" style="stroke: #475569; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="116" x="671.51" y="801.2577">Netlink mode</text><!--MD5=[09cdb482806fd8fb931c3bb0e8ad5ca3]
-link Linux to OVN--><path d="M850.47,960.1358 C849.54,989.8658 848.18,1033.6958 847.12,1067.8758 " fill="none" id="Linux-&gt;OVN" style="stroke: #475569; stroke-width: 2.0;"/><polygon fill="#475569" points="846.95,1073.2758,851.2307,1064.4059,847.1071,1068.2783,843.2347,1064.1546,846.95,1073.2758" style="stroke: #475569; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="228" x="849.51" y="1030.2577">observed by ovn-controller</text><!--MD5=[0ae8b3c8e0e0b0da79fb12d12d1d6180]
-link Integration to OVN--><path d="M274.1,736.5758 C248.09,760.5358 220.37,792.1858 206.51,827.5158 C182.98,887.5158 166.54,921.9658 206.51,972.5158 C341.75,1143.5058 473.71,1026.1958 686.51,1073.5158 C690.65,1074.4358 694.83,1075.3958 699.05,1076.4058 " fill="none" id="Integration-&gt;OVN" style="stroke: #475569; stroke-width: 2.0;"/><polygon fill="#475569" points="704.01,1077.5958,696.1987,1071.5972,699.1494,1076.4236,694.323,1079.3743,704.01,1077.5958" style="stroke: #475569; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="210" x="207.51" y="932.7577">alternative OVSDB mode</text><!--MD5=[d7636a2a5cfab12e2233af1cf022f8f8]
-link GoBGP to Peers--><path d="M545.63,1159.7858 C558.35,1180.6958 575.86,1206.2058 595.51,1225.5158 C603.41,1233.2658 612.47,1240.5958 621.73,1247.2658 " fill="none" id="GoBGP-Peers" style="stroke: #2457A7; stroke-width: 2.0;"/><polygon fill="#2457A7" points="625.99,1250.2858,620.9603,1241.8181,621.9107,1247.3946,616.3343,1248.345,625.99,1250.2858" style="stroke: #2457A7; stroke-width: 2.0;"/><polygon fill="#2457A7" points="543,1155.3858,544.2005,1165.1613,545.5725,1159.6733,551.0604,1161.0453,543,1155.3858" style="stroke: #2457A7; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="180" x="596.51" y="1219.7577">MP-BGP EVPN routes</text><!--MD5=[1662db030c5fc130884ba309c048f227]
-link OVN to Peers--><path d="M820.81,1172.1958 C810.36,1190.3858 796.99,1210.1758 781.51,1225.5158 C773.39,1233.5758 763.94,1240.9858 754.2,1247.6358 " fill="none" id="OVN-Peers" style="stroke: #18724B; stroke-width: 2.0;"/><polygon fill="#18724B" points="750.01,1250.4358,759.7133,1248.7487,754.1637,1247.6525,755.2599,1242.1028,750.01,1250.4358" style="stroke: #18724B; stroke-width: 2.0;"/><polygon fill="#18724B" points="823.41,1167.6058,815.4904,1173.4607,820.9431,1171.9549,822.4489,1177.4077,823.41,1167.6058" style="stroke: #18724B; stroke-width: 2.0;"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="128" x="803.51" y="1219.7577">VXLAN packets</text><rect fill="#DDDDDD" height="161.0951" rx="5" ry="5" style="stroke: #000000; stroke-width: 1.0;" width="687" x="350.5" y="1337.5158"/><text fill="#172B4D" font-family="sans-serif" font-size="18" font-weight="bold" lengthAdjust="spacingAndGlyphs" textLength="96" x="361.5" y="1363.7577">Color / line</text><text fill="#172B4D" font-family="sans-serif" font-size="18" font-weight="bold" lengthAdjust="spacingAndGlyphs" textLength="79" x="595.5" y="1363.7577">Meaning</text><rect fill="#E8F1FF" height="24.5158" style="stroke: none; stroke-width: 1.0;" width="234" x="356.5" y="1369.0317"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="38" x="361.5" y="1388.2736">Blue</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="300" x="595.5" y="1388.2736">Project-owned core responsibilities</text><rect fill="#FFF4DB" height="24.5158" style="stroke: none; stroke-width: 1.0;" width="234" x="356.5" y="1393.5475"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="57" x="361.5" y="1412.7894">Amber</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="431" x="595.5" y="1412.7894">Project-owned optional integration / orchestration</text><rect fill="#F1F5F9" height="24.5158" style="stroke: none; stroke-width: 1.0;" width="234" x="356.5" y="1418.0634"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="42" x="361.5" y="1437.3053">Slate</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="404" x="595.5" y="1437.3053">Third-party implementations and infrastructure</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="224" x="361.5" y="1461.8211">Solid / dashed + PLANNED</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="246" x="595.5" y="1461.8211">Implemented / design target</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="212" x="361.5" y="1486.337">Blue arrow / green arrow</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="288" x="595.5" y="1486.337">Route control / packet forwarding</text><line style="stroke: #172B4D; stroke-width: 1.0;" x1="356.5" x2="1031.5" y1="1344.5158" y2="1344.5158"/><line style="stroke: #172B4D; stroke-width: 1.0;" x1="356.5" x2="1031.5" y1="1369.0317" y2="1369.0317"/><line style="stroke: #172B4D; stroke-width: 1.0;" x1="356.5" x2="1031.5" y1="1393.5475" y2="1393.5475"/><line style="stroke: #172B4D; stroke-width: 1.0;" x1="356.5" x2="1031.5" y1="1418.0634" y2="1418.0634"/><line style="stroke: #172B4D; stroke-width: 1.0;" x1="356.5" x2="1031.5" y1="1442.5792" y2="1442.5792"/><line style="stroke: #172B4D; stroke-width: 1.0;" x1="356.5" x2="1031.5" y1="1467.0951" y2="1467.0951"/><line style="stroke: #172B4D; stroke-width: 1.0;" x1="356.5" x2="1031.5" y1="1491.6109" y2="1491.6109"/><line style="stroke: #172B4D; stroke-width: 1.0;" x1="356.5" x2="356.5" y1="1344.5158" y2="1491.6109"/><line style="stroke: #172B4D; stroke-width: 1.0;" x1="590.5" x2="590.5" y1="1344.5158" y2="1491.6109"/><line style="stroke: #172B4D; stroke-width: 1.0;" x1="1031.5" x2="1031.5" y1="1344.5158" y2="1491.6109"/><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="571" x="409" y="1526.8528">EVPN Core: logical core responsibilities - not a standalone runtime.</text><text fill="#172B4D" font-family="sans-serif" font-size="18" lengthAdjust="spacingAndGlyphs" textLength="784" x="302.5" y="1551.3686">Recovery spans core and runtime modules; platform independence remains a design target.</text><!--MD5=[f6c693e521ab21ea9cd7efe93d0dcc62]
-@startuml
-top to bottom direction
-skinparam backgroundColor #FCFCFD
-skinparam defaultFontName SansSerif
-skinparam defaultFontSize 18
-skinparam defaultFontColor #172B4D
-skinparam shadowing false
-skinparam roundCorner 16
-skinparam nodesep 35
-skinparam ranksep 50
-skinparam ArrowColor #475569
-skinparam ArrowThickness 2
-skinparam rectangle {
-  BorderThickness 2
-  BackgroundColor #FFFFFF
-  BorderColor #475569
-}
-title EVPN-for-OVN | ownership and module boundaries
-
-rectangle "Project integration / orchestration" as Integrations #FFFBF2 {
-  rectangle "EVPN Operator\nEvpnCore YAML lifecycle\nReadiness / finalization" as Operator #FFF4DB
-  rectangle "EVPN CNI Adapter\nADD / CHECK / DEL\nAttachment translation" as CNI #FFF4DB
-  rectangle "Node-Agent\nEndpoint services / Type-2 loops\nCNI authority / runtime verification" as Agent #FFF4DB
-  rectangle "Neutron / standalone adapters\nPLANNED platform integration" as Future #FFF4DB
-}
-rectangle "EVPN Core (logical responsibilities)" as Core #F5F9FF {
-  rectangle "EVPN Type-2 import / export\nRoute validation / reconcile\nGoBGP route adapter" as Routes #E8F1FF
-  rectangle "Endpoint reconciliation\nIdentity-owned ports\nand OVS attachments" as Endpoints #E8F1FF
-  rectangle "OVN integration\nNetlink or OVSDB state\nAlternative network paths" as Integration #E8F1FF
-  rectangle "Ownership and recovery\nFences / journals / receipts\nAmbiguous outcomes BLOCKED" as Recovery #E8F1FF
-}
-rectangle "Reused third-party solutions" as Reused #F8FAFC {
-  rectangle "Kubernetes / containerd\nWorkloads / sandbox evidence" as Kube #F1F5F9
-  rectangle "Multus\nExternal Kubernetes integration\nInvokes EVPN CNI Adapter" as Multus #F1F5F9
-  rectangle "k8gobgp | independent\nBGPConfiguration owner\nManager + gobgpd image" as Provider #F1F5F9
-  rectangle "GoBGP | reused BGP engine\nSessions, EVPN RIB, route gRPC" as GoBGP #F1F5F9
-  rectangle "Linux / Netlink state\nIntegration FDB and neighbors" as Linux #F1F5F9
-  rectangle "OVN / OVS\nNB / SB, northd, ovn-controller\nWorkload VXLAN forwarding" as OVN #F1F5F9
-}
-rectangle "External EVPN peers / VTEPs\nFRR / Linux acceptance peer" as Peers #F1F5F9
-
-Operator - -> Agent : deploys / configures
-Kube - -> Multus : CNI invocation
-CNI - -> Agent : Unix endpoint RPC
-Future -[#925C00,dashed]-> Endpoints : target reuse
-Agent - -> Routes : runs Type-2 loops
-Agent - -> Endpoints : invokes services
-Endpoints - -> Integration : OVN / OVS attachment
-Routes - -> Integration : accepted route state
-Integration -[hidden]right-> Recovery
-Agent - -> Kube : identity evidence
-Operator - -> Kube : workload reconciliation
-Provider -[#475569]-> GoBGP : BGP identity / peers\nindependent writer
-Routes <-[#2457A7]-> GoBGP : RIB reads / AddPath\nUUID-only DeletePath
-Integration - -> Linux : Netlink mode
-Linux - -> OVN : observed by ovn-controller
-Integration - -> OVN : alternative OVSDB mode
-GoBGP <-[#2457A7]-> Peers : MP-BGP EVPN routes
-OVN <-[#18724B]-> Peers : VXLAN packets
-
-legend bottom
-  |= Color / line |= Meaning |
-  |<#E8F1FF> Blue | Project-owned core responsibilities |
-  |<#FFF4DB> Amber | Project-owned optional integration / orchestration |
-  |<#F1F5F9> Slate | Third-party implementations and infrastructure |
-  | Solid / dashed + PLANNED | Implemented / design target |
-  | Blue arrow / green arrow | Route control / packet forwarding |
-endlegend
-footer EVPN Core: logical core responsibilities - not a standalone runtime.\nRecovery spans core and runtime modules; platform independence remains a design target.
-@enduml
-
-PlantUML version 1.2020.02(Sun Mar 01 10:22:07 WET 2020)
-(GPL source distribution)
-Java Runtime: OpenJDK Runtime Environment
-JVM: OpenJDK 64-Bit Server VM
-Java Version: 21.0.12.1+1-1-24.04.4-Ubuntu
-Operating System: Linux
-Default Encoding: UTF-8
-Language: en
-Country: US
---></g></svg>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+ "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<!-- Generated by graphviz version 2.43.0 (0)
+ -->
+<!-- Title: Modules Pages: 1 -->
+<svg width="1030pt" height="807pt"
+ viewBox="0.00 0.00 1029.68 806.68" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(15.84 790.84)">
+<title>Modules</title>
+<polygon fill="#fcfcfd" stroke="transparent" points="-15.84,15.84 -15.84,-790.84 1013.84,-790.84 1013.84,15.84 -15.84,15.84"/>
+<text text-anchor="start" x="248.5" y="-758.4" font-family="DejaVu Sans" font-weight="bold" font-size="17.00" fill="#172b4d">EVPN&#45;for&#45;OVN | implemented logical responsibilities</text>
+<text text-anchor="start" x="301.5" y="-747.8" font-family="DejaVu Sans" font-size="9.00" fill="#64748b">Groups describe source responsibilities, not standalone services or package boundaries</text>
+<g id="clust1" class="cluster">
+<title>cluster_context</title>
+<path fill="#f8fafc" stroke="#d8e2ed" d="M141,-499C141,-499 569,-499 569,-499 575,-499 581,-505 581,-511 581,-511 581,-721 581,-721 581,-727 575,-733 569,-733 569,-733 141,-733 141,-733 135,-733 129,-727 129,-721 129,-721 129,-511 129,-511 129,-505 135,-499 141,-499"/>
+<text text-anchor="middle" x="355" y="-721.8" font-family="DejaVu Sans" font-size="9.00" fill="#64748b">CONSUMERS AND RUNTIME AUTHORITY</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_core</title>
+<path fill="#f3f8ff" stroke="#a9c6e5" stroke-width="1.4" d="M325,-374C325,-374 978,-374 978,-374 984,-374 990,-380 990,-386 990,-386 990,-462 990,-462 990,-468 984,-474 978,-474 978,-474 325,-474 325,-474 319,-474 313,-468 313,-462 313,-462 313,-386 313,-386 313,-380 319,-374 325,-374"/>
+<text text-anchor="middle" x="651.5" y="-462" font-family="DejaVu Sans" font-size="10.00" fill="#35628f">EVPN CORE · LOGICAL RESPONSIBILITIES</text>
+</g>
+<g id="clust6" class="cluster">
+<title>cluster_adapters</title>
+<path fill="#f8fafc" stroke="#d8e2ed" d="M20,-253C20,-253 662,-253 662,-253 668,-253 674,-259 674,-265 674,-265 674,-337 674,-337 674,-343 668,-349 662,-349 662,-349 20,-349 20,-349 14,-349 8,-343 8,-337 8,-337 8,-265 8,-265 8,-259 14,-253 20,-253"/>
+<text text-anchor="middle" x="341" y="-337.8" font-family="DejaVu Sans" font-size="9.00" fill="#64748b">PROVIDER AND DATAPLANE INTEGRATION BOUNDARIES</text>
+</g>
+<g id="clust8" class="cluster">
+<title>cluster_runtime</title>
+<path fill="#f8fafc" stroke="#d8e2ed" d="M87,-67C87,-67 600,-67 600,-67 606,-67 612,-73 612,-79 612,-79 612,-216 612,-216 612,-222 606,-228 600,-228 600,-228 87,-228 87,-228 81,-228 75,-222 75,-216 75,-216 75,-79 75,-79 75,-73 81,-67 87,-67"/>
+<text text-anchor="middle" x="343.5" y="-216.8" font-family="DejaVu Sans" font-size="9.00" fill="#64748b">EXTERNAL ENGINES AND FORWARDING</text>
+</g>
+<!-- cni&#45;&gt;operator -->
+<!-- cni&#45;&gt;agent -->
+<g id="edge2" class="edge">
+<title>cni&#45;&gt;agent</title>
+<path fill="none" stroke="#7c8b9c" stroke-width="1.2" d="M390.95,-661C379.38,-661 370.25,-661 370.25,-661 370.25,-661 370.25,-553.08 370.25,-553.08"/>
+<polygon fill="#7c8b9c" stroke="#7c8b9c" stroke-width="1.2" points="372.35,-553.08 370.25,-547.08 368.15,-553.08 372.35,-553.08"/>
+<text text-anchor="middle" x="551" y="-600.1" font-family="DejaVu Sans" font-size="8.00" fill="#475569">Unix RPC</text>
+</g>
+<!-- multus&#45;&gt;cni -->
+<g id="edge1" class="edge">
+<title>multus&#45;&gt;cni</title>
+<path fill="none" stroke="#7c8b9c" stroke-width="1.2" d="M342.22,-673C342.22,-673 384.83,-673 384.83,-673"/>
+<polygon fill="#7c8b9c" stroke="#7c8b9c" stroke-width="1.2" points="384.83,-675.1 390.83,-673 384.83,-670.9 384.83,-675.1"/>
+</g>
+<!-- operator&#45;&gt;agent -->
+<g id="edge3" class="edge">
+<title>operator&#45;&gt;agent</title>
+<path fill="none" stroke="#7c8b9c" stroke-width="1.2" d="M438,-583.96C438,-583.96 438,-553.09 438,-553.09"/>
+<polygon fill="#7c8b9c" stroke="#7c8b9c" stroke-width="1.2" points="440.1,-553.09 438,-547.09 435.9,-553.09 440.1,-553.09"/>
+<text text-anchor="middle" x="463.5" y="-563.6" font-family="DejaVu Sans" font-size="8.00" fill="#475569">deploys</text>
+</g>
+<!-- agent&#45;&gt;routes -->
+<g id="edge13" class="edge">
+<title>agent&#45;&gt;routes</title>
+<path fill="none" stroke="#4479b6" stroke-width="1.2" d="M432.75,-510.97C432.75,-510.97 432.75,-429.05 432.75,-429.05"/>
+<polygon fill="#4479b6" stroke="#4479b6" stroke-width="1.2" points="434.85,-429.05 432.75,-423.05 430.65,-429.05 434.85,-429.05"/>
+<text text-anchor="middle" x="441.5" y="-484.6" font-family="DejaVu Sans" font-size="8.00" fill="#475569">runs</text>
+</g>
+<!-- agent&#45;&gt;endpoints -->
+<g id="edge14" class="edge">
+<title>agent&#45;&gt;endpoints</title>
+<path fill="none" stroke="#4479b6" stroke-width="1.2" d="M546,-510.97C546,-510.97 546,-429.05 546,-429.05"/>
+<polygon fill="#4479b6" stroke="#4479b6" stroke-width="1.2" points="548.1,-429.05 546,-423.05 543.9,-429.05 548.1,-429.05"/>
+<text text-anchor="middle" x="492" y="-484.6" font-family="DejaVu Sans" font-size="8.00" fill="#475569">uses</text>
+</g>
+<!-- authority&#45;&gt;endpoints -->
+<g id="edge15" class="edge">
+<title>authority&#45;&gt;endpoints</title>
+<path fill="none" stroke="#7c8b9c" stroke-width="1.2" d="M343,-583.79C343,-546.94 343,-467 343,-467 343,-467 541,-467 541,-467 541,-467 541,-429.27 541,-429.27"/>
+<polygon fill="#7c8b9c" stroke="#7c8b9c" stroke-width="1.2" points="543.1,-429.27 541,-423.27 538.9,-429.27 543.1,-429.27"/>
+<text text-anchor="middle" x="645" y="-527.1" font-family="DejaVu Sans" font-size="8.00" fill="#475569">identity / authorization</text>
+</g>
+<!-- routes&#45;&gt;endpoints -->
+<!-- routes&#45;&gt;recovery -->
+<g id="edge16" class="edge">
+<title>routes&#45;&gt;recovery</title>
+<path fill="none" stroke="#4479b6" stroke-width="1.2" d="M495.17,-386.7C495.17,-368.73 495.17,-344 495.17,-344 495.17,-344 877,-344 877,-344 877,-344 877,-380.7 877,-380.7"/>
+<polygon fill="#4479b6" stroke="#4479b6" stroke-width="1.2" points="874.9,-380.7 877,-386.7 879.1,-380.7 874.9,-380.7"/>
+<text text-anchor="middle" x="572" y="-484.6" font-family="DejaVu Sans" font-size="8.00" fill="#475569">durable mutations</text>
+</g>
+<!-- routes&#45;&gt;bgp_adapter -->
+<g id="edge17" class="edge">
+<title>routes&#45;&gt;bgp_adapter</title>
+<path fill="none" stroke="#397ab5" stroke-width="1.2" d="M325.2,-405C262.1,-405 188.5,-405 188.5,-405 188.5,-405 188.5,-307 188.5,-307"/>
+<polygon fill="#397ab5" stroke="#397ab5" stroke-width="1.2" points="190.6,-307 188.5,-301 186.4,-307 190.6,-307"/>
+<text text-anchor="middle" x="260" y="-359.6" font-family="DejaVu Sans" font-size="8.00" fill="#475569">Type&#45;2 operations</text>
+</g>
+<!-- routes&#45;&gt;netlink -->
+<g id="edge18" class="edge">
+<title>routes&#45;&gt;netlink</title>
+<path fill="none" stroke="#4479b6" stroke-width="1.2" d="M386.25,-387C386.25,-387 386.25,-307.08 386.25,-307.08"/>
+<polygon fill="#4479b6" stroke="#4479b6" stroke-width="1.2" points="388.35,-307.08 386.25,-301.08 384.15,-307.08 388.35,-307.08"/>
+<text text-anchor="middle" x="422.5" y="-359.6" font-family="DejaVu Sans" font-size="8.00" fill="#475569">selected backend</text>
+</g>
+<!-- routes&#45;&gt;ovsdb -->
+<g id="edge19" class="edge">
+<title>routes&#45;&gt;ovsdb</title>
+<path fill="none" stroke="#b8873b" stroke-width="1.2" d="M487.83,-387C487.83,-387 487.83,-307.08 487.83,-307.08"/>
+<polygon fill="#b8873b" stroke="#b8873b" stroke-width="1.2" points="489.93,-307.08 487.83,-301.08 485.73,-307.08 489.93,-307.08"/>
+<text text-anchor="middle" x="561" y="-359.6" font-family="DejaVu Sans" font-size="8.00" fill="#475569">alternative backend</text>
+</g>
+<!-- endpoints&#45;&gt;recovery -->
+<!-- endpoints&#45;&gt;ovn -->
+<g id="edge20" class="edge">
+<title>endpoints&#45;&gt;ovn</title>
+<path fill="none" stroke="#7c8b9c" stroke-width="1.2" d="M676,-386.89C676,-325.49 676,-129 676,-129 676,-129 393.75,-129 393.75,-129 393.75,-129 393.75,-121.24 393.75,-121.24"/>
+<polygon fill="#7c8b9c" stroke="#7c8b9c" stroke-width="1.2" points="395.85,-121.24 393.75,-115.24 391.65,-121.24 395.85,-121.24"/>
+<text text-anchor="middle" x="739" y="-238.6" font-family="DejaVu Sans" font-size="8.00" fill="#475569">NB / local attachment</text>
+</g>
+<!-- bgp_adapter&#45;&gt;netlink -->
+<!-- bgp_adapter&#45;&gt;gobgp -->
+<g id="edge21" class="edge">
+<title>bgp_adapter&#45;&gt;gobgp</title>
+<path fill="none" stroke="#397ab5" stroke-width="1.2" d="M147,-264.89C147,-264.89 147,-186.24 147,-186.24"/>
+<polygon fill="#397ab5" stroke="#397ab5" stroke-width="1.2" points="149.1,-186.24 147,-180.24 144.9,-186.24 149.1,-186.24"/>
+<text text-anchor="middle" x="174.5" y="-238.6" font-family="DejaVu Sans" font-size="8.00" fill="#475569">gRPC RIB / paths</text>
+</g>
+<!-- netlink&#45;&gt;ovsdb -->
+<!-- netlink&#45;&gt;linux -->
+<g id="edge23" class="edge">
+<title>netlink&#45;&gt;linux</title>
+<path fill="none" stroke="#4479b6" stroke-width="1.2" d="M276.5,-264.72C276.5,-219.5 276.5,-106 276.5,-106 276.5,-106 223.17,-106 223.17,-106"/>
+<polygon fill="#4479b6" stroke="#4479b6" stroke-width="1.2" points="223.17,-103.9 217.17,-106 223.17,-108.1 223.17,-103.9"/>
+<text text-anchor="middle" x="489" y="-160.1" font-family="DejaVu Sans" font-size="8.00" fill="#475569">owns</text>
+</g>
+<!-- ovsdb&#45;&gt;ovn -->
+<g id="edge25" class="edge">
+<title>ovsdb&#45;&gt;ovn</title>
+<path fill="none" stroke="#b8873b" stroke-width="1.2" d="M480.04,-277C470.25,-277 463.75,-277 463.75,-277 463.75,-277 463.75,-103 463.75,-103 463.75,-103 452.76,-103 452.76,-103"/>
+<polygon fill="#b8873b" stroke="#b8873b" stroke-width="1.2" points="452.76,-100.9 446.76,-103 452.76,-105.1 452.76,-100.9"/>
+<text text-anchor="middle" x="592" y="-160.1" font-family="DejaVu Sans" font-size="8.00" fill="#475569">programs owned objects</text>
+</g>
+<!-- gobgp&#45;&gt;provider -->
+<!-- provider&#45;&gt;gobgp -->
+<g id="edge22" class="edge">
+<title>provider&#45;&gt;gobgp</title>
+<path fill="none" stroke="#7c8b9c" stroke-width="1.2" d="M283.81,-162C283.81,-162 212.51,-162 212.51,-162"/>
+<polygon fill="#7c8b9c" stroke="#7c8b9c" stroke-width="1.2" points="212.51,-159.9 206.51,-162 212.51,-164.1 212.51,-159.9"/>
+</g>
+<!-- provider&#45;&gt;linux -->
+<!-- linux&#45;&gt;ovn -->
+<!-- linux&#45;&gt;ovn -->
+<g id="edge24" class="edge">
+<title>linux&#45;&gt;ovn</title>
+<path fill="none" stroke="#7c8b9c" stroke-width="1.2" d="M217.12,-88C217.12,-88 337.17,-88 337.17,-88"/>
+<polygon fill="#7c8b9c" stroke="#7c8b9c" stroke-width="1.2" points="337.17,-90.1 343.17,-88 337.17,-85.9 337.17,-90.1"/>
+</g>
+<!-- ovn&#45;&gt;cms -->
+<!-- cms&#45;&gt;note -->
+<!-- cni -->
+<g id="node1" class="node">
+<title>cni</title>
+<path fill="#fff4db" stroke="#64748b" stroke-width="1.1" d="M473,-685C473,-685 403,-685 403,-685 397,-685 391,-679 391,-673 391,-673 391,-661 391,-661 391,-655 397,-649 403,-649 403,-649 473,-649 473,-649 479,-649 485,-655 485,-661 485,-661 485,-673 485,-673 485,-679 479,-685 473,-685"/>
+<text text-anchor="start" x="414" y="-669.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">EVPN CNI</text>
+<text text-anchor="start" x="400" y="-661.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">ADD / CHECK / DEL</text>
+</g>
+<!-- multus -->
+<g id="node2" class="node">
+<title>multus</title>
+<path fill="#f1f5f9" stroke="#64748b" stroke-width="1.1" d="M330,-685C330,-685 260,-685 260,-685 254,-685 248,-679 248,-673 248,-673 248,-661 248,-661 248,-655 254,-649 260,-649 260,-649 330,-649 330,-649 336,-649 342,-655 342,-661 342,-661 342,-673 342,-673 342,-679 336,-685 330,-685"/>
+<text text-anchor="start" x="277" y="-669.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">Multus</text>
+<text text-anchor="start" x="257" y="-661.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">optional K8s caller</text>
+</g>
+<!-- operator -->
+<g id="node3" class="node">
+<title>operator</title>
+<path fill="#fff4db" stroke="#64748b" stroke-width="1.1" d="M486.5,-620C486.5,-620 389.5,-620 389.5,-620 383.5,-620 377.5,-614 377.5,-608 377.5,-608 377.5,-596 377.5,-596 377.5,-590 383.5,-584 389.5,-584 389.5,-584 486.5,-584 486.5,-584 492.5,-584 498.5,-590 498.5,-596 498.5,-596 498.5,-608 498.5,-608 498.5,-614 492.5,-620 486.5,-620"/>
+<text text-anchor="start" x="389" y="-604.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">EvpnCore Operator</text>
+<text text-anchor="start" x="386.5" y="-596.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">Kubernetes lifecycle only</text>
+</g>
+<!-- agent -->
+<g id="node4" class="node">
+<title>agent</title>
+<path fill="#fff4db" stroke="#64748b" stroke-width="1.1" d="M539,-547C539,-547 375,-547 375,-547 369,-547 363,-541 363,-535 363,-535 363,-523 363,-523 363,-517 369,-511 375,-511 375,-511 539,-511 539,-511 545,-511 551,-517 551,-523 551,-523 551,-535 551,-535 551,-541 545,-547 539,-547"/>
+<text text-anchor="start" x="426.5" y="-531.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">Node&#45;Agent</text>
+<text text-anchor="start" x="372" y="-523.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">hosts endpoint services and Type&#45;2 loops</text>
+</g>
+<!-- authority -->
+<g id="node5" class="node">
+<title>authority</title>
+<path fill="#f1f5f9" stroke="#64748b" stroke-width="1.1" d="M348.5,-620C348.5,-620 153.5,-620 153.5,-620 147.5,-620 141.5,-614 141.5,-608 141.5,-608 141.5,-596 141.5,-596 141.5,-590 147.5,-584 153.5,-584 153.5,-584 348.5,-584 348.5,-584 354.5,-584 360.5,-590 360.5,-596 360.5,-596 360.5,-608 360.5,-608 360.5,-614 354.5,-620 348.5,-620"/>
+<text text-anchor="start" x="203" y="-604.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">Platform authority</text>
+<text text-anchor="start" x="150.5" y="-596.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">Kubernetes identity / accepted standalone policy</text>
+</g>
+<!-- routes -->
+<g id="node6" class="node">
+<title>routes</title>
+<path fill="#deedff" stroke="#4f86bf" stroke-width="1.1" d="M490.5,-423C490.5,-423 337.5,-423 337.5,-423 331.5,-423 325.5,-417 325.5,-411 325.5,-411 325.5,-399 325.5,-399 325.5,-393 331.5,-387 337.5,-387 337.5,-387 490.5,-387 490.5,-387 496.5,-387 502.5,-393 502.5,-399 502.5,-399 502.5,-411 502.5,-411 502.5,-417 496.5,-423 490.5,-423"/>
+<text text-anchor="start" x="352" y="-407.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">Type&#45;2 route processing</text>
+<text text-anchor="start" x="334.5" y="-399.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">eligibility · import policy · reconciliation</text>
+</g>
+<!-- endpoints -->
+<g id="node7" class="node">
+<title>endpoints</title>
+<path fill="#deedff" stroke="#4f86bf" stroke-width="1.1" d="M732,-423C732,-423 548,-423 548,-423 542,-423 536,-417 536,-411 536,-411 536,-399 536,-399 536,-393 542,-387 548,-387 548,-387 732,-387 732,-387 738,-387 744,-393 744,-399 744,-399 744,-411 744,-411 744,-417 738,-423 732,-423"/>
+<text text-anchor="start" x="568.5" y="-407.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">Network / endpoint lifecycle</text>
+<text text-anchor="start" x="545" y="-399.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">identity&#45;owned NB ports and OVS attachments</text>
+</g>
+<!-- recovery -->
+<g id="node8" class="node">
+<title>recovery</title>
+<path fill="#deedff" stroke="#4f86bf" stroke-width="1.1" d="M964.5,-423C964.5,-423 789.5,-423 789.5,-423 783.5,-423 777.5,-417 777.5,-411 777.5,-411 777.5,-399 777.5,-399 777.5,-393 783.5,-387 789.5,-387 789.5,-387 964.5,-387 964.5,-387 970.5,-387 976.5,-393 976.5,-399 976.5,-399 976.5,-411 976.5,-411 976.5,-417 970.5,-423 964.5,-423"/>
+<text text-anchor="start" x="822.5" y="-407.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">Ownership / recovery</text>
+<text text-anchor="start" x="786.5" y="-399.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">journals · fences · exact receipts · fail closed</text>
+</g>
+<!-- bgp_adapter -->
+<g id="node9" class="node">
+<title>bgp_adapter</title>
+<path fill="#e8f1ff" stroke="#64748b" stroke-width="1.1" d="M223.5,-301C223.5,-301 32.5,-301 32.5,-301 26.5,-301 20.5,-295 20.5,-289 20.5,-289 20.5,-277 20.5,-277 20.5,-271 26.5,-265 32.5,-265 32.5,-265 223.5,-265 223.5,-265 229.5,-265 235.5,-271 235.5,-277 235.5,-277 235.5,-289 235.5,-289 235.5,-295 229.5,-301 223.5,-301"/>
+<text text-anchor="start" x="73.5" y="-285.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">GoBGP route adapter</text>
+<text text-anchor="start" x="29.5" y="-277.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">RIB snapshots · AddPath UUID · exact withdrawal</text>
+</g>
+<!-- netlink -->
+<g id="node10" class="node">
+<title>netlink</title>
+<path fill="#e8f1ff" stroke="#64748b" stroke-width="1.1" d="M435,-301C435,-301 281,-301 281,-301 275,-301 269,-295 269,-289 269,-289 269,-277 269,-277 269,-271 275,-265 281,-265 281,-265 435,-265 435,-265 441,-265 447,-271 447,-277 447,-277 447,-289 447,-289 447,-295 441,-301 435,-301"/>
+<text text-anchor="start" x="304" y="-285.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">Netlink&#45;Programmed</text>
+<text text-anchor="start" x="278" y="-277.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">primary · owned Linux integration state</text>
+</g>
+<!-- ovsdb -->
+<g id="node11" class="node">
+<title>ovsdb</title>
+<path fill="#fff2de" stroke="#64748b" stroke-width="1.1" d="M649.5,-301C649.5,-301 492.5,-301 492.5,-301 486.5,-301 480.5,-295 480.5,-289 480.5,-289 480.5,-277 480.5,-277 480.5,-271 486.5,-265 492.5,-265 492.5,-265 649.5,-265 649.5,-265 655.5,-265 661.5,-271 661.5,-277 661.5,-277 661.5,-289 661.5,-289 661.5,-295 655.5,-301 649.5,-301"/>
+<text text-anchor="start" x="518" y="-285.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">OVSDB&#45;Programmed</text>
+<text text-anchor="start" x="489.5" y="-277.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">experimental · separate ownership path</text>
+</g>
+<!-- gobgp -->
+<g id="node12" class="node">
+<title>gobgp</title>
+<path fill="white" stroke="#64748b" stroke-width="1.1" d="M194.5,-180C194.5,-180 99.5,-180 99.5,-180 93.5,-180 87.5,-174 87.5,-168 87.5,-168 87.5,-156 87.5,-156 87.5,-150 93.5,-144 99.5,-144 99.5,-144 194.5,-144 194.5,-144 200.5,-144 206.5,-150 206.5,-156 206.5,-156 206.5,-168 206.5,-168 206.5,-174 200.5,-180 194.5,-180"/>
+<text text-anchor="start" x="129.5" y="-164.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">GoBGP</text>
+<text text-anchor="start" x="96.5" y="-156.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">BGP / EVPN control plane</text>
+</g>
+<!-- provider -->
+<g id="node13" class="node">
+<title>provider</title>
+<path fill="white" stroke="#64748b" stroke-width="1.1" d="M432,-180C432,-180 296,-180 296,-180 290,-180 284,-174 284,-168 284,-168 284,-156 284,-156 284,-150 290,-144 296,-144 296,-144 432,-144 432,-144 438,-144 444,-150 444,-156 444,-156 444,-168 444,-168 444,-174 438,-180 432,-180"/>
+<text text-anchor="start" x="341" y="-164.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">k8gobgp</text>
+<text text-anchor="start" x="293" y="-156.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">optional independent K8s provider</text>
+</g>
+<!-- linux -->
+<g id="node14" class="node">
+<title>linux</title>
+<path fill="white" stroke="#64748b" stroke-width="1.1" d="M205,-115C205,-115 99,-115 99,-115 93,-115 87,-109 87,-103 87,-103 87,-91 87,-91 87,-85 93,-79 99,-79 99,-79 205,-79 205,-79 211,-79 217,-85 217,-91 217,-91 217,-103 217,-103 217,-109 211,-115 205,-115"/>
+<text text-anchor="start" x="100" y="-99.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">Linux / Netlink state</text>
+<text text-anchor="start" x="96" y="-91.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">integration FDB / neighbors</text>
+</g>
+<!-- ovn -->
+<g id="node15" class="node">
+<title>ovn</title>
+<path fill="white" stroke="#64748b" stroke-width="1.1" d="M434.5,-115C434.5,-115 355.5,-115 355.5,-115 349.5,-115 343.5,-109 343.5,-103 343.5,-103 343.5,-91 343.5,-91 343.5,-85 349.5,-79 355.5,-79 355.5,-79 434.5,-79 434.5,-79 440.5,-79 446.5,-85 446.5,-91 446.5,-91 446.5,-103 446.5,-103 446.5,-109 440.5,-115 434.5,-115"/>
+<text text-anchor="start" x="369" y="-99.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">OVN / OVS</text>
+<text text-anchor="start" x="352.5" y="-91.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">workload forwarding</text>
+</g>
+<!-- cms -->
+<g id="node16" class="node">
+<title>cms</title>
+<path fill="white" stroke="#64748b" stroke-width="1.1" d="M587.5,-115C587.5,-115 492.5,-115 492.5,-115 486.5,-115 480.5,-109 480.5,-103 480.5,-103 480.5,-91 480.5,-91 480.5,-85 486.5,-79 492.5,-79 492.5,-79 587.5,-79 587.5,-79 593.5,-79 599.5,-85 599.5,-91 599.5,-91 599.5,-103 599.5,-103 599.5,-109 593.5,-115 587.5,-115"/>
+<text text-anchor="start" x="528.5" y="-99.3" font-family="DejaVu Sans" font-weight="bold" font-size="9.00" fill="#172b4d">CMS</text>
+<text text-anchor="start" x="489.5" y="-91.1" font-family="DejaVu Sans" font-size="8.00" fill="#172b4d">test/demo emulator only</text>
+</g>
+<!-- note -->
+<g id="node17" class="node">
+<title>note</title>
+<polygon fill="#f8fafc" stroke="#d8e2ed" stroke-width="1.1" points="684.5,-44 389.5,-44 389.5,0 690.5,0 690.5,-38 684.5,-44"/>
+<polyline fill="none" stroke="#d8e2ed" stroke-width="1.1" points="684.5,-44 684.5,-38 "/>
+<polyline fill="none" stroke="#d8e2ed" stroke-width="1.1" points="690.5,-38 684.5,-38 "/>
+<text text-anchor="middle" x="540" y="-29.8" font-family="DejaVu Sans" font-size="9.00" fill="#172b4d">Netlink and OVSDB are alternatives, not separate Frameworks.</text>
+<text text-anchor="middle" x="540" y="-19.8" font-family="DejaVu Sans" font-size="9.00" fill="#172b4d">OVN/OVS forwards workload packets; GoBGP does not.</text>
+<text text-anchor="middle" x="540" y="-9.8" font-family="DejaVu Sans" font-size="9.00" fill="#172b4d">Type&#45;3 / Type&#45;5 are not implied.</text>
+</g>
+</g>
+</svg>

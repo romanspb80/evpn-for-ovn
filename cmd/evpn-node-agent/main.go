@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/romanspb80/evpn-for-ovn/pkg/evpn"
 	"github.com/romanspb80/evpn-for-ovn/pkg/nodeagent"
 )
 
@@ -30,6 +31,7 @@ func run() int {
 	var standaloneExportConfig nodeagent.StandaloneExportRuntimeConfig
 	var exportOptions nodeagent.ExportRuntimeOptions
 	var remoteOptions nodeagent.RemoteRuntimeOptions
+	var inventoryOptions nodeagent.InventoryGateOptions
 	flag.StringVar(&socketPath, "socket", "/run/evpn-node-agent/agent.sock", "Unix domain socket path for NodeAgentCNI gRPC server")
 	flag.BoolVar(&standaloneImportOnly, "standalone-evpn-import", false, "Run only the standalone-attested Type-2 importer (requires real-ovn-ovs/linux-veth)")
 	flag.StringVar(&standaloneExportConfigPath, "standalone-evpn-export-config", "", "Root-protected standalone EVPN export runtime config; does not start the CNI server")
@@ -41,17 +43,25 @@ func run() int {
 	flag.StringVar(&exportOptions.ConfigPath, "evpn-export-config", "", "Optional node-local EVPN export JSON config; disabled by default")
 	flag.StringVar(&exportOptions.StatusPath, "evpn-export-status", "", "Optional exporter status JSON file")
 	flag.StringVar(&exportOptions.SBEndpoint, "ovn-sb-endpoint", "unix:/var/run/ovn/ovnsb_db.sock", "OVN SBDB endpoint for EVPN readiness reads")
+	flag.BoolVar(&exportOptions.RequireLocalChassis, "evpn-export-verify-local-chassis", false, "Verify local OVS system-id against the configured OVN Southbound chassis before every export cycle")
 	flag.DurationVar(&exportOptions.Interval, "evpn-export-interval", 2*time.Second, "EVPN observation interval")
 	flag.DurationVar(&exportOptions.Timeout, "evpn-export-timeout", 5*time.Second, "Timeout for one EVPN observation/application cycle")
 	flag.StringVar(&remoteOptions.ConfigPath, "evpn-remote-config", "", "Optional node-local remote EVPN import JSON config; disabled by default")
 	flag.StringVar(&remoteOptions.StatusPath, "evpn-remote-status", "", "Optional remote importer status JSON file")
 	flag.DurationVar(&remoteOptions.Interval, "evpn-remote-interval", 2*time.Second, "Remote EVPN import reconciliation interval")
 	flag.DurationVar(&remoteOptions.Timeout, "evpn-remote-timeout", 5*time.Second, "Timeout for one remote EVPN import reconciliation")
+	flag.StringVar(&inventoryOptions.Namespace, "worker-inventory-namespace", "", "Kubernetes namespace of the operator inventory; empty disables inventory mode")
+	flag.StringVar(&inventoryOptions.ConfigMapUID, "worker-inventory-uid", "", "Pinned Kubernetes UID of the operator inventory ConfigMap")
+	flag.StringVar(&inventoryOptions.ClusterUID, "worker-inventory-cluster-uid", "", "Trusted inventory cluster UID")
+	flag.StringVar(&inventoryOptions.InstallationUID, "worker-inventory-installation-uid", "", "Trusted EvpnCore installation UID")
+	flag.StringVar(&inventoryOptions.JournalDirectory, "worker-inventory-journal", "", "Dedicated durable node-local inventory fence directory")
 	flag.Parse()
 
 	var err error
+	var exportConfig evpn.ExporterConfig
 	if exportOptions.ConfigPath != "" {
-		if _, err := nodeagent.LoadExporterConfig(exportOptions.ConfigPath); err != nil {
+		exportConfig, err = nodeagent.LoadExporterConfig(exportOptions.ConfigPath)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "invalid EVPN exporter configuration: %v\n", err)
 			return 1
 		}
@@ -101,6 +111,20 @@ func run() int {
 			return 1
 		}
 	}
+	if !standaloneImportOnly && standaloneExportConfigPath == "" && exportOptions.ConfigPath != "" && remoteOptions.ConfigPath != "" {
+		if err := nodeagent.ValidateCohostedType2Config(exportConfig, remoteConfig); err != nil {
+			fmt.Fprintf(os.Stderr, "invalid co-hosted EVPN configuration: %v\n", err)
+			return 1
+		}
+		exportOptions.PeerImportConfig = &remoteConfig
+		remoteOptions.ExpectedConfig = &remoteConfig
+		remoteOptions.PeerExportConfigPath = exportOptions.ConfigPath
+	}
+	if standaloneExportConfigPath != "" && standaloneExportConfig.EnableRemoteImport {
+		exportOptions.PeerImportConfig = &remoteConfig
+		remoteOptions.ExpectedConfig = &remoteConfig
+		remoteOptions.PeerExportConfigPath = standaloneExportConfig.ExporterConfigPath
+	}
 
 	authority, err := nodeagent.AcquireAgentAuthority()
 	if err != nil {
@@ -111,6 +135,42 @@ func run() int {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	inventoryEnabled := inventoryOptions.Namespace != "" || inventoryOptions.ConfigMapUID != "" ||
+		inventoryOptions.ClusterUID != "" || inventoryOptions.InstallationUID != "" || inventoryOptions.JournalDirectory != ""
+	var inventoryGate *nodeagent.InventoryGate
+	if inventoryEnabled {
+		if standaloneImportOnly || standaloneExportConfigPath != "" || !exportOptions.RequireLocalChassis {
+			fmt.Fprintln(os.Stderr, "inventory mode requires co-hosted CNI Type-2 runtimes and local chassis verification")
+			return 1
+		}
+		inventoryOptions.ExportConfigPath, inventoryOptions.ImportConfigPath = exportOptions.ConfigPath, remoteOptions.ConfigPath
+		inventoryOptions.ContinuityConfigPath = cniContinuityConfig
+		inventoryOptions.OVSDBEndpoint, inventoryOptions.SBEndpoint = ovsDBEndpoint, exportOptions.SBEndpoint
+		gate, err := nodeagent.OpenInventoryGate(inventoryOptions)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "inventory gate initialization failed: %v\n", err)
+			return 1
+		}
+		defer func() {
+			if err := gate.Close(); err != nil {
+				fmt.Fprintf(os.Stderr, "inventory gate close failed: %v\n", err)
+			}
+		}()
+		checkCtx, done := context.WithTimeout(ctx, 30*time.Second)
+		err = gate.CheckExporter(checkCtx, exportConfig)
+		if err == nil {
+			err = gate.CheckImporter(checkCtx, remoteConfig)
+		}
+		done()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "inventory startup blocked: %v\n", err)
+			return 1
+		}
+		exportOptions.InventoryGate = gate.CheckExporter
+		remoteOptions.InventoryGate = gate.CheckImporter
+		inventoryGate = gate
+	}
 
 	options := nodeagent.RuntimeOptions{
 		Mode:           runtimeMode,
@@ -155,6 +215,12 @@ func run() int {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "invalid CNI continuity configuration: %v\n", err)
 			return 1
+		}
+		if inventoryEnabled {
+			if err := inventoryGate.ValidateContinuity(cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "inventory CNI startup blocked: %v\n", err)
+				return 1
+			}
 		}
 		closeContinuity, err := service.EnableCNIContinuity(ctx, cfg, options)
 		if err != nil {

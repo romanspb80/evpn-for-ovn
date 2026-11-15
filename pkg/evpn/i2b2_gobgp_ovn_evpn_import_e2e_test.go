@@ -106,7 +106,7 @@ func TestGoBGPFRRType2OVNNetlinkImport(t *testing.T) {
 		t.Fatalf("OVN worker missing ovn-evpn-vxlan-ports external_ids:\n%s", ovsExternalIDs)
 	}
 
-	importer := NewRemoteType2Importer(
+	importer := NewRemoteType2ImporterFromSnapshot(
 		&GoBGPServerSnapshotSource{Server: gobgp},
 		&Type2RouteValidator{
 			LocalVTEP: localIP,

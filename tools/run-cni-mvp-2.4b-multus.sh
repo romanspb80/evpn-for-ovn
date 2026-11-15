@@ -71,6 +71,7 @@ OVN_IMAGE="evpn4ovn/ovn-ovs:kind-26.09"
 BASE_ID="sha256:f01f29f4d8b1fd4f377103015aa7b7dab6f8189416ce2a363f63d7e538c4e5a7"
 source "${ROOT}/tools/lib/cni-agent-image-test.sh"
 source "${ROOT}/tools/lib/containerlab-e2e.sh"
+source "${ROOT}/tools/lib/e2e-artifact-cache.sh"
 e2e_lab_acquire
 EVPN_AGENT_IMAGE_MODE="${EVPN_AGENT_IMAGE_MODE:-build}"
 if [[ "${EVPN_FRR_INTEROP_INITIAL_ONLY}" == 1 ]]; then
@@ -94,6 +95,7 @@ EXPORT_FLAGS=""
 REMOTE_FLAGS=""
 EXPORT_MOUNTS=""
 EXPORT_VOLUMES=""
+EXPORT_SERVICE_ACCOUNT=""
 mkdir -p "${EVIDENCE_DIR}/build"
 if [[ "${EVPN_FRR_INTEROP_TEST}" == 1 ]]; then
   source "${ROOT}/tools/lib/cni-evpn-frr-interop-test.sh"
@@ -321,6 +323,7 @@ spec:
 ${EXPORT_HOST_PID:-}
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector: {kubernetes.io/hostname: "${WORKER}"}
+${EXPORT_SERVICE_ACCOUNT}
       containers:
       - name: agent
         image: ${AGENT_IMAGE}

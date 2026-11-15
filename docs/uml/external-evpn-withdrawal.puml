@@ -1,0 +1,55 @@
+@startuml
+title Withdrawal and ownership - PLANNED / NOT EXECUTED
+skinparam backgroundColor #FCFCFD
+skinparam shadowing false
+skinparam roundcorner 12
+skinparam defaultFontName DejaVu Sans
+skinparam sequenceArrowColor #2563EB
+skinparam participantBackgroundColor #F3F4F6
+
+actor "Lifecycle authority" as Auth
+database "OVN NB / SB" as DB
+participant "Node-Agent A" as A
+database "Independent\ndurable journals" as J
+participant "GoBGP A" as G
+participant "FRR Remote1 /\nzebra" as F
+participant "Remote1 Linux\ndataplane" as R
+participant "Local Netlink /\nOVN / OVS" as O
+
+alt confirmed endpoint deletion
+  Auth -> DB : delete exact LSP; wait for SB absence
+  Auth -> A : higher revision + exact deleted tombstone
+  A -> J : durably accept retirement
+  A -> DB : complete authoritative reads
+  DB --> A : retired LSP / binding absent
+  A -> A : confirmed ineligible
+  A -> J : export-delete intent for acknowledged UUID
+  A -> G : DeletePath(Uuid), never NLRI fallback
+  G -> F : withdraw local Type-2
+  A -> G : confirm complete RIB absence
+  A -> J : commit export withdrawal
+  F -> R : remove corresponding learned FDB / neighbor
+  note over DB,O
+    Local attachment cleanup belongs to OVN / endpoint lifecycle.
+  end note
+else unavailable or incomplete observation
+  DB --> A : uncertain; deletion not established
+  A -> A : retain owned advertisement; freeze mutation
+end
+
+== Independent external endpoint withdrawal ==
+Auth -> F : remove exact external endpoint ownership
+F -> G : withdraw external Type-2
+A -> G : two equal complete RIB snapshots
+G --> A : external route absent
+A -> J : importer-only withdrawal intent / receipts
+A -> O : remove exact owned FDB / neighbor
+O -> O : reconcile OVS flows / VTEP state
+A -> J : commit verified kernel absence
+
+note over A,R
+  Preserve foreign routes, kernel state and survivors.
+  BGP absence, desired absence, receipts and kernel absence
+  are checked independently.
+end note
+@enduml

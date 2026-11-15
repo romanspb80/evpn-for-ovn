@@ -7,9 +7,9 @@ acceptance evidence.
 
 ## Reproducibility boundary
 
-The [Quick Start](../../QUICK_START.md) builds original Go source from `go.mod`
-and `go.sum`; it requires no private image or acceptance bundle. This is the safe
-source-validation baseline.
+The [development checks](../../TESTING_GUIDE.md#development-checks) build
+original Go source from `go.mod` and `go.sum`; they require no private image or
+acceptance bundle. This is the safe source-validation baseline.
 
 The live runners additionally require local OVN and test-base images with
 specific **image config IDs**, not just matching tags. These IDs establish what
@@ -48,7 +48,7 @@ The [official Quay tag metadata](https://quay.io/api/v1/repository/frrouting/frr
 and manifest list were checked. It includes Linux amd64, arm64, ppc64le,
 s390x, arm/v7, arm/v6 and riscv64. Acceptance runners intentionally require
 the inspected **linux/amd64** image config. Other architectures are not
-accepted by those runners or validated by this milestone. The official image
+accepted by those runners or validated by these tests. The official image
 prints the `_git` suffix; this is retained in evidence, not normalized away.
 
 k8gobgp image and installation:
@@ -71,7 +71,7 @@ daemon using a local Unix gRPC socket. The maintained suites use that managed
 Unix socket directly. The Containerlab environment-only bootstrap does not
 install Framework services or add a separate TCP/proxy deployment path.
 
-The optional EVPNCore operator's image fields/environment defaults are aligned
+The EVPNCore operator's image fields/environment defaults are aligned
 with this pin, but its current controller does not install upstream k8gobgp
 from those fields. They must not be presented as an effective installation
 mechanism.
@@ -114,6 +114,39 @@ single-writer boundary. No architecture redesign or API removal is implied.
 The provider does have general connected-route Netlink import and kernel
 route export; disabling those writers here is deliberate ownership isolation,
 not a claim that upstream lacks Netlink support.
+
+## Embedded exporter composition
+
+The exporter-composition change affects code structure, not dependency versions
+or deployment topology.
+`CNIServer.RunEndpointExporter` supplies `cniExportBinding`;
+`RunStandaloneEndpointExporter` supplies `standaloneExportBinding`. Both use
+the same private `runEndpointExporter` and existing `evpn.EndpointObserver`
+and `Type2RouteApplier` contracts.
+
+```text
+Node-Agent entry point
+  -> CNI binding: CNIServer + CNI/Framework/native observers + continuity guards
+  -> standalone binding: protected policy + durable fencer + NB/SB intersection
+       -> shared exporter loop
+            -> actual attested GoBGP Unix transport + Type-2 recovery
+```
+
+Bindings select observers, prepare platform authority, update cycle inputs and
+expose status observations. Shared runtime owns the database/transport/native
+observer lifetimes; standalone runtime separately owns its authorization fence.
+The CNI check-and-Add critical section is unchanged. No caller-provided identity
+replaces actual peer/process, workload/CRI or OVN verification.
+
+Direct package edges remain `cmd/evpn-node-agent -> pkg/nodeagent`,
+`pkg/nodeagent -> pkg/evpn`, `pkg/nodeagent -> Kubernetes/CRI`, and
+`pkg/evpn -> GoBGP/libovsdb/Netlink/ownership/domain`. Only `pkg/evpn/domain`
+is standard-library-only. Standalone runtime avoids Kubernetes initialization;
+the shared binary is not Kubernetes-free at compile time. Physical adapter
+package extraction and future platform integrations are deferred.
+
+See the [composition boundary](framework-architecture.md#export-runtime-composition-boundary)
+and [acceptance evidence](../archive/validation-record.md#framework-fixture-and-exporter-regressions).
 
 ## Verification and limits
 

@@ -14,16 +14,16 @@ import (
 )
 
 const (
-	model1BridgeMappingsKey  = "ovn-bridge-mappings"
-	model1NetworkIDKey       = "evpn4ovn-network-id"
-	model1LogicalSwitchKey   = "evpn4ovn-logical-switch"
-	model1PhysicalNetworkKey = "evpn4ovn-physical-network"
-	model1ProviderBridgeKey  = "evpn4ovn-provider-bridge"
-	model1BridgeRole         = "provider-bridge"
-	model1BridgeLocalRole    = "provider-bridge-local"
+	ovsdbBridgeMappingsKey  = "ovn-bridge-mappings"
+	ovsdbNetworkIDKey       = "evpn4ovn-network-id"
+	ovsdbLogicalSwitchKey   = "evpn4ovn-logical-switch"
+	ovsdbPhysicalNetworkKey = "evpn4ovn-physical-network"
+	ovsdbProviderBridgeKey  = "evpn4ovn-provider-bridge"
+	ovsdbBridgeRole         = "provider-bridge"
+	ovsdbBridgeLocalRole    = "provider-bridge-local"
 )
 
-func validModel1BridgeMapping(physicalNetwork, bridge string) bool {
+func validOVSDBBridgeMapping(physicalNetwork, bridge string) bool {
 	if strings.TrimSpace(physicalNetwork) == "" || strings.TrimSpace(bridge) == "" {
 		return false
 	}
@@ -38,59 +38,59 @@ func validModel1BridgeMapping(physicalNetwork, bridge string) bool {
 	return true
 }
 
-func validateModel1Network(network Model1Network) error {
+func validateOVSDBNetwork(network Model1Network) error {
 	if strings.TrimSpace(network.NetworkID) == "" ||
 		strings.TrimSpace(network.LogicalSwitch) == "" ||
-		!validModel1BridgeMapping(network.PhysicalNetwork, network.ProviderBridge) ||
+		!validOVSDBBridgeMapping(network.PhysicalNetwork, network.ProviderBridge) ||
 		network.VNI == 0 || network.VNI > 16777215 {
 		return fmt.Errorf("invalid OVSDB-Programmed provider network identity")
 	}
 	return nil
 }
 
-func model1NetworkExternalIDs(network Model1Network) map[string]string {
+func ovsdbNetworkExternalIDs(network Model1Network) map[string]string {
 	return map[string]string{
-		model1ManagedByKey:       model1Owner,
-		model1NetworkIDKey:       network.NetworkID,
-		model1LogicalSwitchKey:   network.LogicalSwitch,
-		model1PhysicalNetworkKey: network.PhysicalNetwork,
-		model1ProviderBridgeKey:  network.ProviderBridge,
-		"evpn4ovn-vni":           fmt.Sprint(network.VNI),
+		ovsdbManagedByKey:       ovsdbOwner,
+		ovsdbNetworkIDKey:       network.NetworkID,
+		ovsdbLogicalSwitchKey:   network.LogicalSwitch,
+		ovsdbPhysicalNetworkKey: network.PhysicalNetwork,
+		ovsdbProviderBridgeKey:  network.ProviderBridge,
+		"evpn4ovn-vni":          fmt.Sprint(network.VNI),
 	}
 }
 
-func model1ProviderBridgeExternalIDs(network Model1Network) map[string]string {
-	ids := model1NetworkExternalIDs(network)
-	ids[model1RoleKey] = model1BridgeRole
+func ovsdbProviderBridgeExternalIDs(network Model1Network) map[string]string {
+	ids := ovsdbNetworkExternalIDs(network)
+	ids[ovsdbRoleKey] = ovsdbBridgeRole
 	return ids
 }
 
-func model1ProviderBridgeLocalExternalIDs(network Model1Network) map[string]string {
+func ovsdbProviderBridgeLocalExternalIDs(network Model1Network) map[string]string {
 	return map[string]string{
-		model1ManagedByKey:      model1Owner,
-		model1RoleKey:           model1BridgeLocalRole,
-		model1NetworkIDKey:      network.NetworkID,
-		model1ProviderBridgeKey: network.ProviderBridge,
+		ovsdbManagedByKey:      ovsdbOwner,
+		ovsdbRoleKey:           ovsdbBridgeLocalRole,
+		ovsdbNetworkIDKey:      network.NetworkID,
+		ovsdbProviderBridgeKey: network.ProviderBridge,
 	}
 }
 
-func model1NetworkPortName(network Model1Network) string {
-	return "m1ln-" + model1TunnelID(Model1TunnelKey{
+func ovsdbNetworkPortName(network Model1Network) string {
+	return "m1ln-" + ovsdbTunnelID(Model1TunnelKey{
 		NetworkID: network.NetworkID, LogicalSwitch: network.LogicalSwitch, VNI: network.VNI,
 	})[:10]
 }
 
-func model1BridgeMappingOwnerKey(physicalNetwork string) string {
-	return "evpn4ovn-model1-bridge-map-" + model1TunnelID(Model1TunnelKey{
+func ovsdbBridgeMappingOwnerKey(physicalNetwork string) string {
+	return "evpn4ovn-model1-bridge-map-" + ovsdbTunnelID(Model1TunnelKey{
 		NetworkID: physicalNetwork, LogicalSwitch: "provider", VNI: 1,
 	})[:12]
 }
 
 func (p *LibovsdbModel1Programmer) EnsureModel1ProviderBridge(ctx context.Context, network Model1Network) error {
-	if err := validateModel1Network(network); err != nil {
+	if err := validateOVSDBNetwork(network); err != nil {
 		return err
 	}
-	if err := p.validateModel1BridgeMappingAvailability(ctx, network); err != nil {
+	if err := p.validateOVSDBBridgeMappingAvailability(ctx, network); err != nil {
 		return err
 	}
 
@@ -117,20 +117,20 @@ func (p *LibovsdbModel1Programmer) EnsureModel1ProviderBridge(ctx context.Contex
 		bridge = &bridges[i]
 	}
 	if bridge != nil {
-		if !model1IDsMatch(bridge.ExternalIDs, model1ProviderBridgeExternalIDs(network)) {
+		if !ovsdbIDsMatch(bridge.ExternalIDs, ovsdbProviderBridgeExternalIDs(network)) {
 			return fmt.Errorf("provider bridge %q exists but is not owned by this OVSDB-Programmed network", bridge.Name)
 		}
 		if bridge.FailMode == nil || *bridge.FailMode != vswitch.BridgeFailModeStandalone || len(bridge.Controller) != 0 {
 			return fmt.Errorf("owned OVSDB-Programmed provider bridge %q has conflicting controller or fail-mode configuration", bridge.Name)
 		}
-		root, err := model1OpenvSwitchRoot(ctx, p)
+		root, err := ovsdbOpenvSwitchRoot(ctx, p)
 		if err != nil {
 			return err
 		}
-		if !model1Contains(root.Bridges, bridge.UUID) {
+		if !ovsdbContains(root.Bridges, bridge.UUID) {
 			return fmt.Errorf("owned OVSDB-Programmed provider bridge %q is not attached to Open_vSwitch", bridge.Name)
 		}
-		return validateModel1ProviderBridgeLocalPort(*bridge, ports, interfaces, network)
+		return validateOVSDBProviderBridgeLocalPort(*bridge, ports, interfaces, network)
 	}
 	for i := range ports {
 		if ports[i].Name == network.ProviderBridge {
@@ -142,22 +142,22 @@ func (p *LibovsdbModel1Programmer) EnsureModel1ProviderBridge(ctx context.Contex
 			return fmt.Errorf("provider bridge local interface %q already exists without its owned bridge", network.ProviderBridge)
 		}
 	}
-	root, err := model1OpenvSwitchRoot(ctx, p)
+	root, err := ovsdbOpenvSwitchRoot(ctx, p)
 	if err != nil {
 		return err
 	}
 	iface := &vswitch.Interface{
 		UUID: uuid.NewString(), Name: network.ProviderBridge, Type: "internal",
-		ExternalIDs: model1ProviderBridgeLocalExternalIDs(network),
+		ExternalIDs: ovsdbProviderBridgeLocalExternalIDs(network),
 	}
 	port := &vswitch.Port{
 		UUID: uuid.NewString(), Name: network.ProviderBridge,
-		Interfaces: []string{iface.UUID}, ExternalIDs: model1ProviderBridgeLocalExternalIDs(network),
+		Interfaces: []string{iface.UUID}, ExternalIDs: ovsdbProviderBridgeLocalExternalIDs(network),
 	}
 	failMode := vswitch.BridgeFailModeStandalone
 	bridge = &vswitch.Bridge{
 		UUID: uuid.NewString(), Name: network.ProviderBridge, FailMode: &failMode,
-		Ports: []string{port.UUID}, ExternalIDs: model1ProviderBridgeExternalIDs(network),
+		Ports: []string{port.UUID}, ExternalIDs: ovsdbProviderBridgeExternalIDs(network),
 	}
 	createIface, err := p.ovs.Create(iface)
 	if err != nil {
@@ -180,10 +180,10 @@ func (p *LibovsdbModel1Programmer) EnsureModel1ProviderBridge(ctx context.Contex
 	ops := append(createIface, createPort...)
 	ops = append(ops, createBridge...)
 	ops = append(ops, attachBridge...)
-	return transactModel1(ctx, p.ovs, ops...)
+	return transactOVSDB(ctx, p.ovs, ops...)
 }
 
-func validateModel1ProviderBridgeLocalPort(
+func validateOVSDBProviderBridgeLocalPort(
 	bridge vswitch.Bridge,
 	ports []vswitch.Port,
 	interfaces []vswitch.Interface,
@@ -199,8 +199,8 @@ func validateModel1ProviderBridgeLocalPort(
 		}
 		port = &ports[i]
 	}
-	if port == nil || !model1IDsMatch(port.ExternalIDs, model1ProviderBridgeLocalExternalIDs(network)) ||
-		len(port.Interfaces) != 1 || !model1Contains(bridge.Ports, port.UUID) {
+	if port == nil || !ovsdbIDsMatch(port.ExternalIDs, ovsdbProviderBridgeLocalExternalIDs(network)) ||
+		len(port.Interfaces) != 1 || !ovsdbContains(bridge.Ports, port.UUID) {
 		return fmt.Errorf("provider bridge %q has no correctly owned local port", network.ProviderBridge)
 	}
 	var iface *vswitch.Interface
@@ -214,24 +214,24 @@ func validateModel1ProviderBridgeLocalPort(
 		iface = &interfaces[i]
 	}
 	if iface == nil || iface.UUID != port.Interfaces[0] || iface.Type != "internal" ||
-		!model1IDsMatch(iface.ExternalIDs, model1ProviderBridgeLocalExternalIDs(network)) {
+		!ovsdbIDsMatch(iface.ExternalIDs, ovsdbProviderBridgeLocalExternalIDs(network)) {
 		return fmt.Errorf("provider bridge %q has no correctly owned internal interface", network.ProviderBridge)
 	}
 	return nil
 }
 
 func (p *LibovsdbModel1Programmer) DeleteModel1ProviderBridge(ctx context.Context, network Model1Network) error {
-	if err := validateModel1Network(network); err != nil {
+	if err := validateOVSDBNetwork(network); err != nil {
 		return err
 	}
-	if err := p.ensureModel1NetworkHasNoTunnels(ctx, network); err != nil {
+	if err := p.ensureOVSDBNetworkHasNoTunnels(ctx, network); err != nil {
 		return err
 	}
-	root, err := model1OpenvSwitchRoot(ctx, p)
+	root, err := ovsdbOpenvSwitchRoot(ctx, p)
 	if err != nil {
 		return err
 	}
-	mappings, err := parseModel1BridgeMappings(root.ExternalIDs[model1BridgeMappingsKey])
+	mappings, err := parseOVSDBBridgeMappings(root.ExternalIDs[ovsdbBridgeMappingsKey])
 	if err != nil {
 		return err
 	}
@@ -275,16 +275,16 @@ func (p *LibovsdbModel1Programmer) DeleteModel1ProviderBridge(ctx context.Contex
 		}
 		return nil
 	}
-	if !model1IDsMatch(bridge.ExternalIDs, model1ProviderBridgeExternalIDs(network)) ||
+	if !ovsdbIDsMatch(bridge.ExternalIDs, ovsdbProviderBridgeExternalIDs(network)) ||
 		bridge.FailMode == nil || *bridge.FailMode != vswitch.BridgeFailModeStandalone ||
-		len(bridge.Controller) != 0 || !model1Contains(root.Bridges, bridge.UUID) {
+		len(bridge.Controller) != 0 || !ovsdbContains(root.Bridges, bridge.UUID) {
 		return fmt.Errorf("refusing to delete changed, unowned, or detached provider bridge %q", network.ProviderBridge)
 	}
 	if len(bridge.Ports) != 1 {
 		return fmt.Errorf("provider bridge %q still has attached ports; withdraw the localnet path and tunnels before retrying",
 			network.ProviderBridge)
 	}
-	if err := validateModel1ProviderBridgeLocalPort(*bridge, ports, interfaces, network); err != nil {
+	if err := validateOVSDBProviderBridgeLocalPort(*bridge, ports, interfaces, network); err != nil {
 		return fmt.Errorf("refusing to delete provider bridge %q: %w", network.ProviderBridge, err)
 	}
 	localPort := portsByName(ports, network.ProviderBridge)
@@ -312,7 +312,7 @@ func (p *LibovsdbModel1Programmer) DeleteModel1ProviderBridge(ctx context.Contex
 	ops = append(ops, deleteBridge...)
 	ops = append(ops, deletePort...)
 	ops = append(ops, deleteInterface...)
-	return transactModel1(ctx, p.ovs, ops...)
+	return transactOVSDB(ctx, p.ovs, ops...)
 }
 
 func portsByName(rows []vswitch.Port, name string) *vswitch.Port {
@@ -334,32 +334,32 @@ func interfacesByName(rows []vswitch.Interface, name string) *vswitch.Interface 
 }
 
 func (p *LibovsdbModel1Programmer) EnsureModel1Network(ctx context.Context, network Model1Network) error {
-	if err := validateModel1Network(network); err != nil {
+	if err := validateOVSDBNetwork(network); err != nil {
 		return err
 	}
 	if err := p.EnsureModel1ProviderBridge(ctx, network); err != nil {
 		return fmt.Errorf("ensure OVSDB-Programmed provider bridge: %w", err)
 	}
-	return runModel1DatabaseSteps("ensure provider network", "OVSDB", "NBDB",
+	return runOVSDBDatabaseSteps("ensure provider network", "OVSDB", "NBDB",
 		"retry EnsureModel1Network with the same network specification",
-		func() error { return p.ensureModel1BridgeMapping(ctx, network) },
-		func() error { return p.ensureModel1LocalnetLSP(ctx, network) })
+		func() error { return p.ensureOVSDBBridgeMapping(ctx, network) },
+		func() error { return p.ensureOVSDBLocalnetLSP(ctx, network) })
 }
 
 func (p *LibovsdbModel1Programmer) DeleteModel1Network(ctx context.Context, network Model1Network) error {
-	if err := validateModel1Network(network); err != nil {
+	if err := validateOVSDBNetwork(network); err != nil {
 		return err
 	}
-	if err := p.ensureModel1NetworkHasNoTunnels(ctx, network); err != nil {
+	if err := p.ensureOVSDBNetworkHasNoTunnels(ctx, network); err != nil {
 		return err
 	}
-	return runModel1DatabaseSteps("delete provider network", "NBDB", "OVSDB",
+	return runOVSDBDatabaseSteps("delete provider network", "NBDB", "OVSDB",
 		"retry DeleteModel1Network with the same network specification",
-		func() error { return p.deleteModel1LocalnetLSP(ctx, network) },
-		func() error { return p.deleteModel1BridgeMapping(ctx, network) })
+		func() error { return p.deleteOVSDBLocalnetLSP(ctx, network) },
+		func() error { return p.deleteOVSDBBridgeMapping(ctx, network) })
 }
 
-func (p *LibovsdbModel1Programmer) ensureModel1BridgeMapping(ctx context.Context, network Model1Network) error {
+func (p *LibovsdbModel1Programmer) ensureOVSDBBridgeMapping(ctx context.Context, network Model1Network) error {
 	var bridges []vswitch.Bridge
 	if err := p.ovs.List(ctx, &bridges); err != nil {
 		return err
@@ -384,18 +384,18 @@ func (p *LibovsdbModel1Programmer) ensureModel1BridgeMapping(ctx context.Context
 		return fmt.Errorf("OVSDB-Programmed provider bridge %q must use standalone fail mode", bridge.Name)
 	}
 
-	root, err := model1OpenvSwitchRoot(ctx, p)
+	root, err := ovsdbOpenvSwitchRoot(ctx, p)
 	if err != nil {
 		return err
 	}
-	mappings, err := parseModel1BridgeMappings(root.ExternalIDs[model1BridgeMappingsKey])
+	mappings, err := parseOVSDBBridgeMappings(root.ExternalIDs[ovsdbBridgeMappingsKey])
 	if err != nil {
 		return err
 	}
-	if err := validateModel1BridgeMappings(root, mappings, network); err != nil {
+	if err := validateOVSDBBridgeMappings(root, mappings, network); err != nil {
 		return err
 	}
-	ownerKey := model1BridgeMappingOwnerKey(network.PhysicalNetwork)
+	ownerKey := ovsdbBridgeMappingOwnerKey(network.PhysicalNetwork)
 	if owner, exists := root.ExternalIDs[ownerKey]; exists && owner != network.ProviderBridge {
 		return fmt.Errorf("physical network %q bridge mapping has conflicting OVSDB-Programmed ownership", network.PhysicalNetwork)
 	}
@@ -404,31 +404,31 @@ func (p *LibovsdbModel1Programmer) ensureModel1BridgeMapping(ctx context.Context
 	}
 	mappings[network.PhysicalNetwork] = network.ProviderBridge
 	root.ExternalIDs = copyStringMap(root.ExternalIDs)
-	root.ExternalIDs[model1BridgeMappingsKey] = formatModel1BridgeMappings(mappings)
+	root.ExternalIDs[ovsdbBridgeMappingsKey] = formatOVSDBBridgeMappings(mappings)
 	root.ExternalIDs[ownerKey] = network.ProviderBridge
 	ops, err := p.ovs.Where(&vswitch.OpenvSwitch{UUID: root.UUID}).Update(root, &root.ExternalIDs)
 	if err != nil {
 		return err
 	}
-	return transactModel1(ctx, p.ovs, ops...)
+	return transactOVSDB(ctx, p.ovs, ops...)
 }
 
-func (p *LibovsdbModel1Programmer) validateModel1BridgeMappingAvailability(
+func (p *LibovsdbModel1Programmer) validateOVSDBBridgeMappingAvailability(
 	ctx context.Context,
 	network Model1Network,
 ) error {
-	root, err := model1OpenvSwitchRoot(ctx, p)
+	root, err := ovsdbOpenvSwitchRoot(ctx, p)
 	if err != nil {
 		return err
 	}
-	mappings, err := parseModel1BridgeMappings(root.ExternalIDs[model1BridgeMappingsKey])
+	mappings, err := parseOVSDBBridgeMappings(root.ExternalIDs[ovsdbBridgeMappingsKey])
 	if err != nil {
 		return err
 	}
-	return validateModel1BridgeMappings(root, mappings, network)
+	return validateOVSDBBridgeMappings(root, mappings, network)
 }
 
-func validateModel1BridgeMappings(root *vswitch.OpenvSwitch, mappings map[string]string, network Model1Network) error {
+func validateOVSDBBridgeMappings(root *vswitch.OpenvSwitch, mappings map[string]string, network Model1Network) error {
 	if mappedBridge, exists := mappings[network.PhysicalNetwork]; exists && mappedBridge != network.ProviderBridge {
 		return fmt.Errorf("physical network %q is already mapped to bridge %q", network.PhysicalNetwork, mappedBridge)
 	}
@@ -438,19 +438,19 @@ func validateModel1BridgeMappings(root *vswitch.OpenvSwitch, mappings map[string
 				network.ProviderBridge, physicalNetwork)
 		}
 	}
-	ownerKey := model1BridgeMappingOwnerKey(network.PhysicalNetwork)
+	ownerKey := ovsdbBridgeMappingOwnerKey(network.PhysicalNetwork)
 	if owner, exists := root.ExternalIDs[ownerKey]; exists && owner != network.ProviderBridge {
 		return fmt.Errorf("physical network %q bridge mapping has conflicting OVSDB-Programmed ownership", network.PhysicalNetwork)
 	}
 	return nil
 }
 
-func (p *LibovsdbModel1Programmer) deleteModel1BridgeMapping(ctx context.Context, network Model1Network) error {
-	root, err := model1OpenvSwitchRoot(ctx, p)
+func (p *LibovsdbModel1Programmer) deleteOVSDBBridgeMapping(ctx context.Context, network Model1Network) error {
+	root, err := ovsdbOpenvSwitchRoot(ctx, p)
 	if err != nil {
 		return err
 	}
-	ownerKey := model1BridgeMappingOwnerKey(network.PhysicalNetwork)
+	ownerKey := ovsdbBridgeMappingOwnerKey(network.PhysicalNetwork)
 	owner, owned := root.ExternalIDs[ownerKey]
 	if !owned {
 		return nil
@@ -458,7 +458,7 @@ func (p *LibovsdbModel1Programmer) deleteModel1BridgeMapping(ctx context.Context
 	if owner != network.ProviderBridge {
 		return fmt.Errorf("refusing to remove physical network mapping owned by another provider bridge")
 	}
-	mappings, err := parseModel1BridgeMappings(root.ExternalIDs[model1BridgeMappingsKey])
+	mappings, err := parseOVSDBBridgeMappings(root.ExternalIDs[ovsdbBridgeMappingsKey])
 	if err != nil {
 		return err
 	}
@@ -471,18 +471,18 @@ func (p *LibovsdbModel1Programmer) deleteModel1BridgeMapping(ctx context.Context
 	root.ExternalIDs = copyStringMap(root.ExternalIDs)
 	delete(root.ExternalIDs, ownerKey)
 	if len(mappings) == 0 {
-		delete(root.ExternalIDs, model1BridgeMappingsKey)
+		delete(root.ExternalIDs, ovsdbBridgeMappingsKey)
 	} else {
-		root.ExternalIDs[model1BridgeMappingsKey] = formatModel1BridgeMappings(mappings)
+		root.ExternalIDs[ovsdbBridgeMappingsKey] = formatOVSDBBridgeMappings(mappings)
 	}
 	ops, err := p.ovs.Where(&vswitch.OpenvSwitch{UUID: root.UUID}).Update(root, &root.ExternalIDs)
 	if err != nil {
 		return err
 	}
-	return transactModel1(ctx, p.ovs, ops...)
+	return transactOVSDB(ctx, p.ovs, ops...)
 }
 
-func (p *LibovsdbModel1Programmer) ensureModel1LocalnetLSP(ctx context.Context, network Model1Network) error {
+func (p *LibovsdbModel1Programmer) ensureOVSDBLocalnetLSP(ctx context.Context, network Model1Network) error {
 	var switches []nbdb.LogicalSwitch
 	if err := p.nb.List(ctx, &switches); err != nil {
 		return err
@@ -505,7 +505,7 @@ func (p *LibovsdbModel1Programmer) ensureModel1LocalnetLSP(ctx context.Context, 
 		return err
 	}
 	var existing *nbdb.LogicalSwitchPort
-	name := model1NetworkPortName(network)
+	name := ovsdbNetworkPortName(network)
 	for i := range ports {
 		if ports[i].Name != name {
 			continue
@@ -516,7 +516,7 @@ func (p *LibovsdbModel1Programmer) ensureModel1LocalnetLSP(ctx context.Context, 
 		existing = &ports[i]
 	}
 	if existing == nil {
-		port := model1LocalnetLSP(network)
+		port := ovsdbLocalnetLSP(network)
 		create, err := p.nb.Create(port)
 		if err != nil {
 			return err
@@ -527,17 +527,17 @@ func (p *LibovsdbModel1Programmer) ensureModel1LocalnetLSP(ctx context.Context, 
 		if err != nil {
 			return err
 		}
-		return transactModel1(ctx, p.nb, append(create, mutate...)...)
+		return transactOVSDB(ctx, p.nb, append(create, mutate...)...)
 	}
-	if !model1IDsMatch(existing.ExternalIDs, model1NetworkExternalIDs(network)) ||
+	if !ovsdbIDsMatch(existing.ExternalIDs, ovsdbNetworkExternalIDs(network)) ||
 		existing.Type != "localnet" ||
-		!model1MapsEqual(existing.Options, model1LocalnetOptions(network)) ||
-		!sameModel1Addresses(existing.Addresses, []string{"unknown"}) || existing.Tag != nil {
+		!ovsdbMapsEqual(existing.Options, ovsdbLocalnetOptions(network)) ||
+		!sameOVSDBAddresses(existing.Addresses, []string{"unknown"}) || existing.Tag != nil {
 		return fmt.Errorf("logical switch port %q is not the expected owned OVSDB-Programmed localnet port", name)
 	}
 	owners := 0
 	for i := range switches {
-		if !model1Contains(switches[i].Ports, existing.UUID) {
+		if !ovsdbContains(switches[i].Ports, existing.UUID) {
 			continue
 		}
 		owners++
@@ -557,10 +557,10 @@ func (p *LibovsdbModel1Programmer) ensureModel1LocalnetLSP(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	return transactModel1(ctx, p.nb, mutate...)
+	return transactOVSDB(ctx, p.nb, mutate...)
 }
 
-func (p *LibovsdbModel1Programmer) deleteModel1LocalnetLSP(ctx context.Context, network Model1Network) error {
+func (p *LibovsdbModel1Programmer) deleteOVSDBLocalnetLSP(ctx context.Context, network Model1Network) error {
 	var switches []nbdb.LogicalSwitch
 	var ports []nbdb.LogicalSwitchPort
 	if err := p.nb.List(ctx, &switches); err != nil {
@@ -569,7 +569,7 @@ func (p *LibovsdbModel1Programmer) deleteModel1LocalnetLSP(ctx context.Context, 
 	if err := p.nb.List(ctx, &ports); err != nil {
 		return err
 	}
-	name := model1NetworkPortName(network)
+	name := ovsdbNetworkPortName(network)
 	var port *nbdb.LogicalSwitchPort
 	for i := range ports {
 		if ports[i].Name != name {
@@ -583,15 +583,15 @@ func (p *LibovsdbModel1Programmer) deleteModel1LocalnetLSP(ctx context.Context, 
 	if port == nil {
 		return nil
 	}
-	if !model1IDsMatch(port.ExternalIDs, model1NetworkExternalIDs(network)) ||
+	if !ovsdbIDsMatch(port.ExternalIDs, ovsdbNetworkExternalIDs(network)) ||
 		port.Type != "localnet" ||
-		!model1MapsEqual(port.Options, model1LocalnetOptions(network)) ||
-		!sameModel1Addresses(port.Addresses, []string{"unknown"}) || port.Tag != nil {
+		!ovsdbMapsEqual(port.Options, ovsdbLocalnetOptions(network)) ||
+		!sameOVSDBAddresses(port.Addresses, []string{"unknown"}) || port.Tag != nil {
 		return fmt.Errorf("refusing to delete changed or unowned OVSDB-Programmed localnet port %q", name)
 	}
 	var ops []ovsdb.Operation
 	for i := range switches {
-		if !model1Contains(switches[i].Ports, port.UUID) {
+		if !ovsdbContains(switches[i].Ports, port.UUID) {
 			continue
 		}
 		if switches[i].Name != network.LogicalSwitch {
@@ -609,40 +609,40 @@ func (p *LibovsdbModel1Programmer) deleteModel1LocalnetLSP(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	return transactModel1(ctx, p.nb, append(ops, deleteOps...)...)
+	return transactOVSDB(ctx, p.nb, append(ops, deleteOps...)...)
 }
 
-func (p *LibovsdbModel1Programmer) ensureModel1NetworkHasNoTunnels(ctx context.Context, network Model1Network) error {
+func (p *LibovsdbModel1Programmer) ensureOVSDBNetworkHasNoTunnels(ctx context.Context, network Model1Network) error {
 	var interfaces []vswitch.Interface
 	if err := p.ovs.List(ctx, &interfaces); err != nil {
 		return err
 	}
 	for i := range interfaces {
-		if interfaces[i].ExternalIDs[model1ManagedByKey] == model1Owner &&
-			interfaces[i].ExternalIDs[model1RoleKey] == model1TunnelRole &&
-			interfaces[i].ExternalIDs[model1NetworkIDKey] == network.NetworkID {
+		if interfaces[i].ExternalIDs[ovsdbManagedByKey] == ovsdbOwner &&
+			interfaces[i].ExternalIDs[ovsdbRoleKey] == ovsdbTunnelRole &&
+			interfaces[i].ExternalIDs[ovsdbNetworkIDKey] == network.NetworkID {
 			return fmt.Errorf("refusing to delete provider network while OVSDB-Programmed tunnel %q remains", interfaces[i].Name)
 		}
 	}
 	return nil
 }
 
-func model1LocalnetLSP(network Model1Network) *nbdb.LogicalSwitchPort {
+func ovsdbLocalnetLSP(network Model1Network) *nbdb.LogicalSwitchPort {
 	return &nbdb.LogicalSwitchPort{
 		UUID:        uuid.NewString(),
-		Name:        model1NetworkPortName(network),
+		Name:        ovsdbNetworkPortName(network),
 		Type:        "localnet",
 		Addresses:   []string{"unknown"},
-		Options:     model1LocalnetOptions(network),
-		ExternalIDs: model1NetworkExternalIDs(network),
+		Options:     ovsdbLocalnetOptions(network),
+		ExternalIDs: ovsdbNetworkExternalIDs(network),
 	}
 }
 
-func model1LocalnetOptions(network Model1Network) map[string]string {
+func ovsdbLocalnetOptions(network Model1Network) map[string]string {
 	return map[string]string{"network_name": network.PhysicalNetwork}
 }
 
-func model1OpenvSwitchRoot(ctx context.Context, programmer *LibovsdbModel1Programmer) (*vswitch.OpenvSwitch, error) {
+func ovsdbOpenvSwitchRoot(ctx context.Context, programmer *LibovsdbModel1Programmer) (*vswitch.OpenvSwitch, error) {
 	var roots []vswitch.OpenvSwitch
 	if err := programmer.ovs.List(ctx, &roots); err != nil {
 		return nil, err
@@ -653,14 +653,14 @@ func model1OpenvSwitchRoot(ctx context.Context, programmer *LibovsdbModel1Progra
 	return &roots[0], nil
 }
 
-func parseModel1BridgeMappings(raw string) (map[string]string, error) {
+func parseOVSDBBridgeMappings(raw string) (map[string]string, error) {
 	mappings := make(map[string]string)
 	if raw == "" {
 		return mappings, nil
 	}
 	for _, entry := range strings.Split(raw, ",") {
 		parts := strings.SplitN(entry, ":", 2)
-		if len(parts) != 2 || !validModel1BridgeMapping(parts[0], parts[1]) {
+		if len(parts) != 2 || !validOVSDBBridgeMapping(parts[0], parts[1]) {
 			return nil, fmt.Errorf("invalid existing ovn-bridge-mappings entry %q", entry)
 		}
 		if _, exists := mappings[parts[0]]; exists {
@@ -671,7 +671,7 @@ func parseModel1BridgeMappings(raw string) (map[string]string, error) {
 	return mappings, nil
 }
 
-func formatModel1BridgeMappings(mappings map[string]string) string {
+func formatOVSDBBridgeMappings(mappings map[string]string) string {
 	keys := make([]string, 0, len(mappings))
 	for key := range mappings {
 		keys = append(keys, key)

@@ -1,0 +1,14 @@
+[Unit]
+Description=Independent node-local EVPN GoBGP speaker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+RuntimeDirectory=gobgp
+RuntimeDirectoryMode=0700
+ExecStart=/usr/local/bin/gobgpd -f /etc/evpn/gobgpd.yaml --api-hosts unix:///run/gobgp/gobgp.sock
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

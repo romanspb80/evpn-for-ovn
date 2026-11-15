@@ -3,7 +3,7 @@ set -eu
 export LC_ALL=C
 
 fail() { echo "worker CNI integrity: $*" >&2; exit 1; }
-for tool in stat sha256sum od tr mktemp chmod mv rm rmdir readlink; do
+for tool in stat sha256sum od tr mktemp chmod chown mv rm rmdir readlink; do
   command -v "$tool" >/dev/null 2>&1 || fail "required utility unavailable: $tool"
 done
 
@@ -17,9 +17,20 @@ case "$expected_sha" in ''|*[!0-9a-f]*) fail "invalid expected SHA-256" ;; esac
 [ "${#expected_sha}" = 64 ] || fail "invalid expected SHA-256 length"
 [ "$(readlink -f /opt/cni/bin)" = /opt/cni/bin ] || fail "unexpected CNI directory resolution"
 
+ensure_root_owner() {
+  path=$1
+  if [ "$(id -u)" = 0 ]; then
+    chown root:root -- "$path" || fail "failed to restore root ownership on $path"
+  elif [ "$(stat -c %u -- "$path")" != 0 ] || [ "$(stat -c %g -- "$path")" != 0 ]; then
+    fail "ownership mismatch: $path uid=$(stat -c %u -- "$path") expected=0"
+  fi
+}
+
 verify() {
   path=$1 executable=$2
   [ -f "$path" ] && [ ! -L "$path" ] || fail "not a regular non-symlink file: $path"
+  [ "$(stat -c %u -- "$path")" = 0 ] || fail "ownership mismatch: $path uid=$(stat -c %u -- "$path") expected=0"
+  [ "$(stat -c %g -- "$path")" = 0 ] || fail "group ownership mismatch: $path gid=$(stat -c %g -- "$path") expected=0"
   [ "$(stat -c %s -- "$path")" = "$expected_size" ] || fail "size mismatch: $path"
   digest=$(sha256sum -- "$path") || fail "SHA-256 read failed: $path"
   [ "${digest%% *}" = "$expected_sha" ] || fail "SHA-256 mismatch: $path"
@@ -35,8 +46,8 @@ verify() {
     [ -x "$path" ] && [ "$(stat -c %a -- "$path")" = 755 ] ||
       fail "not an executable mode-0755 file: $path"
   fi
-  printf 'verified path=%s size=%s sha256=%s mode=%s kind=%s\n' \
-    "$path" "$expected_size" "$expected_sha" "$(stat -c %a -- "$path")" "$kind"
+  printf 'verified path=%s size=%s sha256=%s mode=%s owner=%s:%s kind=%s\n' \
+    "$path" "$expected_size" "$expected_sha" "$(stat -c %a -- "$path")" "$(stat -c %u -- "$path")" "$(stat -c %g -- "$path")" "$kind"
 }
 
 if [ "$action" = prepare ]; then
@@ -60,6 +71,7 @@ case "$suffix" in ''|*[!a-zA-Z0-9]*) fail "invalid owned temporary directory" ;;
 
 case "$action" in
   publish)
+    ensure_root_owner "$directory/artifact"
     verify "$directory/artifact" no
     chmod 755 -- "$directory/artifact"
     verify "$directory/artifact" yes
@@ -75,6 +87,7 @@ case "$action" in
       exit "$rc"
     fi
     [ ! -e "$directory/artifact" ] || fail "destination appeared during publication"
+    ensure_root_owner "$destination"
     verify "$destination" yes
     ;;
   cleanup)

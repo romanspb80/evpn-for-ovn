@@ -142,9 +142,10 @@ func newOVNNBClient(ctx context.Context, endpointAddress string) (client.Client,
 func newOVSClient(ctx context.Context, endpointAddress string) (client.Client, error) {
 	ovsModel, err := model.NewClientDBModel("Open_vSwitch",
 		map[string]model.Model{
-			"Bridge":    &vswitch.Bridge{},
-			"Port":      &vswitch.Port{},
-			"Interface": &vswitch.Interface{},
+			"Open_vSwitch": &vswitch.OpenvSwitch{},
+			"Bridge":       &vswitch.Bridge{},
+			"Port":         &vswitch.Port{},
+			"Interface":    &vswitch.Interface{},
 		})
 	if err != nil {
 		return nil, err

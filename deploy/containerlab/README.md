@@ -22,6 +22,13 @@ also require tcpdump, systemd and passwordless access to their documented
 privileged capture commands. macOS, Windows, rootless Docker and other
 Containerlab versions have not been accepted.
 
+For isolated secondary-CNI host inventory, process network namespace IDs are
+read directly when permitted, or with `sudo -n stat -Lc %i` on the specific
+`/proc/<pid>/ns/net` path when access is denied. If neither succeeds, a
+still-existing process remains an unknown host-or-foreign conflict; it is
+never treated as run-owned. A process in a different namespace is reported
+as unverified, not as evidence of ownership.
+
 The accepted host used Docker Engine **29.1.2** and kind CLI **v0.27.0**.
 The native kind topology pins the Kubernetes **v1.32.3** node image by digest;
 host kind CLI version and Kubernetes node version are different identities.
@@ -43,6 +50,7 @@ the evidence directory. Four profiles share this implementation:
 | `framework-netlink` | Native `k8s-kind`, two nodes, pinned Linux FRR peer and underlay | OVN/OVS, managed k8gobgp, Framework services, endpoints and assertions |
 | `framework-ovsdb` | Same common kind/FRR topology | Explicit OVSDB importer, provider bridge/localnet, endpoints and assertions |
 | `cni` | Same native kind topology; FRR included in interop modes | Multus, node-agent, CNI workloads and selected lifecycle/continuity assertions |
+| `cni-isolated` | Disposable native kind with two workers on its run-owned `198.18.30.0/24` network | Kindnet-primary Multus secondary CNI with a separate OVN central DB service and one project-owned OVS/controller runtime per worker |
 | `type2` | Linux standalone gobgpd and FRR on a run-owned internal bridge | BGP readiness, Type-2 route and isolated endpoint lifecycle; **not managed k8gobgp coverage** |
 
 [`topologies/kind.yaml`](topologies/kind.yaml) is the common native kind
@@ -77,6 +85,91 @@ bash tools/run-cni-full-lifecycle-e2e.sh
 The same lifecycle is used by every mode of
 `tools/run-cni-mvp-2.4b-multus.sh`. The standalone fixture's commands are
 documented [here](../../tests/e2e/type2-fixture/README.md).
+
+The bounded isolated secondary-CNI scenario is run with:
+
+```bash
+bash tools/run-cni-isolated-secondary-e2e.sh
+```
+
+The tested disposable Vagrant/libvirt VM used Ubuntu 22.04.3 (kernel
+5.15.0-91), 4 vCPU, 12 GiB RAM and a 128 GiB sparse virtual disk. Its root
+filesystem was 62 GiB. The tested tools were Vagrant 2.4.9, libvirt 10.0.0,
+Docker 29.1.3, kind 0.27.0, kubectl 1.32.3, Containerlab 0.79.0, Go 1.27.3
+and Python 3.11.0rc1. These are tested settings, not established minimums;
+the complete isolated secondary-CNI scenario passed on this configuration.
+The VM needs working Docker-managed `bridge` and `kind` networks, a loaded
+`openvswitch` kernel module, and the pinned images described above.
+
+The validated scope is two workloads on different Kind workers using Kindnet,
+Multus and a separate OVN domain: ADD, CHECK replayed from captured Multus
+arguments, exact Southbound bindings,
+bidirectional net1 and Geneve packet correlation, actual Multus DEL and owned
+endpoint cleanup, and primary address/route preservation and bidirectional
+Kindnet connectivity after DEL. The run did not test EVPN Type-2; it had no
+suitable pre-existing foreign OVN/OVS witness, so foreign-resource preservation
+was not demonstrated. This is not a claim about other environments.
+
+On workload failure, `workload-failure-evidence.json` records individual command
+statuses, Pod YAML/events, NADs, CNI binary/configuration and invocation
+evidence, kubelet/containerd logs, and node-agent/OVN logs before teardown.
+Check `failure.json` for the first failure and `workload-evidence-error.json`
+or individual command errors for incomplete diagnostics. Evidence lives in
+the private `/tmp/cni-sec-<run>-evidence` directory inside the execution host;
+it can contain sensitive configuration and must not be published. Scoped
+Containerlab teardown is attempted even after a failure. If teardown reports
+an error or a lease remains, preserve the resources and use the exact lab
+ownership receipts and documented recovery procedure; never remove a shared
+Docker network to force cleanup.
+
+It uses the same Containerlab lease, Kind topology reservation and exact cluster
+ownership teardown as the other suites. It requires a disposable Docker host
+with no running unrelated containers and no host OVS/OVN processes, sockets or
+datapath links. Its currently supported primary CNI is Kindnet only. Before
+installing Multus or starting the secondary domain, it requires the disposable
+workers to have no existing `br-int`, default OVS/OVN sockets, OVS/OVN
+processes, or OVS/OVN Kubernetes workloads. It records
+Kindnet Pod identities, the primary CNI conflist hash, and pre-existing worker
+link, address and route identities; post-ADD and post-DEL inventories must
+preserve them. Pre-existing OVS/OVN conflicts are rejected before startup; the
+test never creates a stand-in and calls it foreign state. If no suitable
+pre-existing witness is available, the evidence reports
+`FOREIGN_WITNESS_NOT_AVAILABLE`. Runtime receipts include
+the secondary OVSDB UUID/socket inode, OVS system/chassis IDs, OVN database
+UUIDs, controller process identity, logical-switch and endpoint identities.
+CNI ADD/CHECK/DEL evidence includes the Pod UID, sandbox ID, netns, interface
+and captured config identity. Native Geneve proof correlates unique ICMP
+identifiers, payload markers and sequences with both worker VTEP captures and
+the OVN datapath tunnel key carried in the Geneve header (not an EVPN VNI)
+and request/reply packets captured on each Pod's `net1`; it preserves decoded
+packets and PCAP hashes.
+
+The secondary OVN DB service, each worker's OVSDB files/sockets, OVN runtime,
+agent socket, and `br-int` are separately identified by the run and held under
+run-specific paths. The central Pod runs on the control-plane node, separate
+from the workers whose host PID namespaces are inspected for conflicts. The
+workers use the Service's validated numeric ClusterIP for SBDB, after its TCP
+port and ready central Pod endpoint are checked; they do not depend on OVN's
+DNS resolver for the Southbound connection. The
+OVS kernel module must already be loaded in the disposable VM before worker
+startup; the worker does not load or unload shared kernel modules. The workers
+require the mount containing `/run/netns` to be shared and fail before deploying
+the runtime if it is not. Only the Node-Agent's `/run/netns` bind mount uses
+host-to-container propagation, so sandbox namespace mounts created later by
+containerd are visible to the agent. `netns-source-propagation.json` records
+the checked source propagation. If this check fails, fix the disposable worker
+mount configuration rather than weakening the assertion. The workers share
+their Linux network namespace with the project-owned OVS instances because the
+actual CNI-created host veth must be
+visible to OVS. The test therefore fails closed on an existing OVS/OVN domain;
+it does not claim coexistence with OVN-Kubernetes or another OVS-owning primary
+CNI. It validates native OVN Geneve forwarding only, not EVPN Type-2.
+
+Offline ownership tests:
+
+```bash
+python3 -m unittest discover -s tools/e2e -p 'test_isolated_secondary_cni.py'
+```
 Run the primary acceptance matrix **sequentially**, twice:
 
 ```bash

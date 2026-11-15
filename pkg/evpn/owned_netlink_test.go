@@ -33,6 +33,24 @@ type memoryOwnedKernel struct {
 	omitAdd, omitDelete bool
 }
 
+func addTestLocalVTEP(t *testing.T, h *netlink.Handle) {
+	t.Helper()
+	lo, err := h.LinkByName("lo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr, err := netlink.ParseAddr("192.0.2.32/32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.AddrAdd(lo, addr); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.LinkSetUp(lo); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (k *memoryOwnedKernel) Close() error { return nil }
 func (k *memoryOwnedKernel) LinkByName(name string) (netlink.Link, error) {
 	link, ok := k.links[name]
@@ -95,7 +113,7 @@ func remoteOwnedFixture(t *testing.T) (*RemoteType2Importer, *OVNNetlinkBackend,
 	t.Helper()
 	k := &memoryOwnedKernel{links: map[string]netlink.Link{
 		"test-br": &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: "test-br", Index: 2}},
-		"test-vx": &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: "test-vx", Index: 3, MasterIndex: 2}, VxlanId: 100},
+		"test-vx": &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: "test-vx", Index: 3, MasterIndex: 2}, VxlanId: 100, SrcAddr: net.ParseIP("192.0.2.32")},
 	}}
 	s := &ownedNetlinkState{kernel: k, controller: "controller-test", target: "boot/netns-test",
 		config: RemoteNetlinkConfig{Enabled: true, ExclusiveWriter: true, Networks: []RemoteNetlinkNetwork{{
@@ -122,9 +140,41 @@ func remoteOwnedFixture(t *testing.T) (*RemoteType2Importer, *OVNNetlinkBackend,
 	return i, b, k, source
 }
 
+func TestValidatedImporterBindsLocalVTEPAndNetworkMapping(t *testing.T) {
+	i, b, k, _ := remoteOwnedFixture(t)
+	reader := i.verified
+	if _, err := NewValidatedRemoteType2Importer(reader, b); err != nil {
+		t.Fatal(err)
+	}
+	original := b.owned.devices["test-vx"]
+	for _, local := range []string{"192.0.2.33", "", "0.0.0.0"} {
+		id := original
+		id.Local = local
+		b.owned.devices["test-vx"] = id
+		if _, err := NewValidatedRemoteType2Importer(reader, b); err == nil {
+			t.Fatalf("accepted VXLAN local address %q", local)
+		}
+	}
+	b.owned.devices["test-vx"] = original
+	wrongVNI := original
+	wrongVNI.VNI = 101
+	b.owned.devices["test-vx"] = wrongVNI
+	if _, err := NewValidatedRemoteType2Importer(reader, b); err == nil {
+		t.Fatal("accepted a VXLAN device with the wrong VNI")
+	}
+	b.owned.devices["test-vx"] = original
+	reader.config.Networks = append(reader.config.Networks, RemoteImportNetwork{NetworkID: "missing", VNI: 200})
+	if _, err := NewValidatedRemoteType2Importer(reader, b); err == nil {
+		t.Fatal("accepted policy without owned dataplane network")
+	}
+	if k.mutations != 0 {
+		t.Fatal("invalid binding changed kernel state")
+	}
+}
+
 func ownedSnapshot(t *testing.T, i *RemoteType2Importer, paths ...*api.Path) RemoteImportSnapshot {
 	t.Helper()
-	source := i.verified.source.(*importTestSource)
+	source := importTestSourceFor(t, i.verified)
 	source.snap = RemoteRIBSnapshot{Paths: paths, Complete: true}
 	return confirmedImport(t, i.verified)
 }
@@ -198,6 +248,28 @@ func TestOwnedNetlinkLifecycle(t *testing.T) {
 				t.Fatal("FDB removed before neighbor")
 			}
 		})
+	}
+}
+
+func TestRemoteKernelSlotIdentity(t *testing.T) {
+	fdb, err := remoteKernelSlot(RemoteKernelEntry{Family: unix.AF_BRIDGE, Ifindex: 7,
+		MAC: "02:00:00:00:00:01", IP: "192.0.2.80"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherDestination, err := remoteKernelSlot(RemoteKernelEntry{Family: unix.AF_BRIDGE, Ifindex: 7,
+		MAC: "02:00:00:00:00:01", IP: "192.0.2.81"})
+	if err != nil || fdb != otherDestination {
+		t.Fatalf("FDB destination narrowed the reserved MAC slot: %+v %+v %v", fdb, otherDestination, err)
+	}
+	otherMAC, err := remoteKernelSlot(RemoteKernelEntry{Family: unix.AF_BRIDGE, Ifindex: 7,
+		MAC: "02:00:00:00:00:02", IP: "192.0.2.80"})
+	if err != nil || fdb == otherMAC {
+		t.Fatalf("different FDB MACs shared a slot: %+v %+v %v", fdb, otherMAC, err)
+	}
+	neighbor, err := remoteKernelSlot(RemoteKernelEntry{Family: unix.AF_INET, Ifindex: 8, IP: "10.0.0.1"})
+	if err != nil || neighbor == (RemoteKernelSlot{Family: unix.AF_INET, Ifindex: 8, Key: "10.0.0.2"}) {
+		t.Fatalf("neighbor slot did not reserve the exact address: %+v %v", neighbor, err)
 	}
 }
 
@@ -566,7 +638,8 @@ func TestOwnedNetlinkKernel(t *testing.T) {
 	if err := h.LinkSetUp(bridge); err != nil {
 		t.Fatal(err)
 	}
-	vx := &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: "owned-vx", MasterIndex: bridge.Index}, VxlanId: 100, Port: 60100}
+	addTestLocalVTEP(t, h)
+	vx := &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: "owned-vx", MasterIndex: bridge.Index}, VxlanId: 100, Port: 60100, SrcAddr: net.ParseIP("192.0.2.32")}
 	if err := h.LinkAdd(vx); err != nil {
 		t.Fatal(err)
 	}
@@ -722,6 +795,222 @@ func TestOwnedNetlinkKernel(t *testing.T) {
 		t.Fatal("foreign FDB with port override removed", got, err)
 	}
 	t.Log("real-kernel unsupported NDA_PORT fences withdrawal and preserves foreign FDB=PASS")
+}
+
+func TestOwnedNetlinkRecoveryPreservesForeignKernelState(t *testing.T) {
+	if os.Getenv("EVPN_OWNED_KERNEL") != "disposable" {
+		t.Skip("requires disposable privileged runtime")
+	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	original, err := netns.Get()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer original.Close()
+	ns, err := netns.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ns.Close()
+	defer func() {
+		if err := netns.Set(original); err != nil {
+			panic(err)
+		}
+	}()
+	h, err := netlink.NewHandleAt(ns, unix.NETLINK_ROUTE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	bridge := &netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: "recovery-br", HardwareAddr: mustMAC(t, "02:00:00:00:01:01")}}
+	if err := h.LinkAdd(bridge); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.LinkSetUp(bridge); err != nil {
+		t.Fatal(err)
+	}
+	addTestLocalVTEP(t, h)
+	vx := &netlink.Vxlan{LinkAttrs: netlink.LinkAttrs{Name: "recovery-vx", MasterIndex: bridge.Index}, VxlanId: 100, Port: 60100, SrcAddr: net.ParseIP("192.0.2.32")}
+	if err := h.LinkAdd(vx); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.LinkSetUp(vx); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	namespaceID := ns.UniqueId()
+	bootID, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	domain := recoveryDomain()
+	domain.BootID, domain.NetworkNamespace = strings.TrimSpace(string(bootID)), namespaceID
+	cfg := RemoteNetlinkConfig{Enabled: true, ExclusiveWriter: true, StateDirectory: t.TempDir(),
+		Recovery: &RemoteNetlinkRecovery{Domain: domain},
+		Networks: []RemoteNetlinkNetwork{{NetworkID: "remote-test", LogicalSwitch: "recovery-ls", VNI: 100,
+			BridgeDevice: bridge.Name, VXLANDevice: vx.Name}}}
+	b, err := NewOwnedOVNNetlinkBackend(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := NewReadOnlyType2Importer(&importTestSource{}, importConfig())
+	if err != nil {
+		b.Close()
+		t.Fatal(err)
+	}
+	i, err := NewValidatedRemoteType2Importer(reader, b)
+	if err != nil {
+		b.Close()
+		t.Fatal(err)
+	}
+	p := importPath(t, nil)
+	applyOwned(t, i, ownedSnapshot(t, i, p))
+	owned := b.Receipts()[0]
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	foreignFDB := netlink.Neigh{Family: unix.AF_BRIDGE, LinkIndex: vx.Index, IP: net.ParseIP("192.0.2.99"),
+		HardwareAddr: mustMAC(t, "02:00:00:00:01:fa"), State: netlink.NUD_PERMANENT, Flags: netlink.NTF_SELF,
+		Type: unix.RTN_UNICAST}
+	foreignNeighbor := netlink.Neigh{Family: unix.AF_INET, LinkIndex: bridge.Index, IP: net.ParseIP("10.250.0.99"),
+		HardwareAddr: mustMAC(t, "02:00:00:00:01:fb"), State: netlink.NUD_PERMANENT}
+	if err := h.NeighAdd(&foreignFDB); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.NeighAdd(&foreignNeighbor); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := NewOwnedOVNNetlinkBackend(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recovered.Close()
+	if recovered.RecoveryState() != "RECOVERY_PARTIAL" || len(recovered.Quarantines()) != 1 {
+		t.Fatalf("foreign FDB was not isolated as a per-slot quarantine: state=%s q=%+v", recovered.RecoveryState(), recovered.Quarantines())
+	}
+	reader, err = NewReadOnlyType2Importer(&importTestSource{}, importConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	i, err = NewValidatedRemoteType2Importer(reader, recovered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := importTestSourceFor(t, i.verified)
+	source.snap = RemoteRIBSnapshot{Complete: true, Paths: []*api.Path{p}}
+	if err := i.ReconcileOnce(context.Background()); err == nil {
+		t.Fatal("recovered receipt was used before two fresh BGP observations")
+	}
+	if err := i.ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(owned, recovered.Receipts()[0]) {
+		t.Fatal("receipt recovery duplicated or changed the owned FDB/neighbor", recovered.Receipts())
+	}
+	assertKernelEntry := func(family, index int, ip string, mac net.HardwareAddr) bool {
+		entries, err := h.NeighList(index, family)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range entries {
+			if entry.IP.Equal(net.ParseIP(ip)) && reflect.DeepEqual(entry.HardwareAddr, mac) {
+				return true
+			}
+		}
+		return false
+	}
+	if !assertKernelEntry(unix.AF_BRIDGE, vx.Index, foreignFDB.IP.String(), foreignFDB.HardwareAddr) ||
+		!assertKernelEntry(unix.AF_INET, bridge.Index, foreignNeighbor.IP.String(), foreignNeighbor.HardwareAddr) {
+		t.Fatal("foreign FDB/neighbor state was not preserved")
+	}
+	source.snap = RemoteRIBSnapshot{Complete: true}
+	if err := i.ReconcileOnce(context.Background()); err == nil {
+		t.Fatal("withdrawal began before two fresh BGP observations")
+	}
+	if err := i.ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if assertKernelEntry(unix.AF_BRIDGE, vx.Index, owned.FDB.Request.IP, mustMAC(t, owned.FDB.Request.MAC)) ||
+		assertKernelEntry(unix.AF_INET, bridge.Index, owned.Neighbor.Request.IP, mustMAC(t, owned.Neighbor.Request.MAC)) {
+		t.Fatal("exact owned route withdrawal left kernel state")
+	}
+	if !assertKernelEntry(unix.AF_BRIDGE, vx.Index, foreignFDB.IP.String(), foreignFDB.HardwareAddr) ||
+		!assertKernelEntry(unix.AF_INET, bridge.Index, foreignNeighbor.IP.String(), foreignNeighbor.HardwareAddr) {
+		t.Fatal("teardown removed foreign kernel state")
+	}
+	source.snap = RemoteRIBSnapshot{Complete: true, Paths: []*api.Path{p}}
+	if err := i.ReconcileOnce(context.Background()); err == nil {
+		t.Fatal("first changed observation was treated as authoritative")
+	}
+	if assertKernelEntry(unix.AF_BRIDGE, vx.Index, "192.0.2.80", mustMAC(t, owned.FDB.Request.MAC)) {
+		t.Fatal("route re-origination mutated before stable observation")
+	}
+	if err := i.ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	owned = recovered.Receipts()[0]
+	if err := recovered.Close(); err != nil {
+		t.Fatal(err)
+	}
+	conflict := *owned.FDB.Observed.neigh()
+	if err := h.NeighDel(owned.FDB.Observed.neigh()); err != nil {
+		t.Fatal(err)
+	}
+	conflict.IP = net.ParseIP("192.0.2.81")
+	conflict.State, conflict.Flags = netlink.NUD_PERMANENT, netlink.NTF_SELF
+	if err := h.NeighAdd(&conflict); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err = NewOwnedOVNNetlinkBackend(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recovered.Close()
+	if recovered.RecoveryState() != "RECOVERY_PARTIAL" || len(recovered.Quarantines()) != 2 {
+		t.Fatalf("startup conflict did not remain slot-local: state=%s q=%+v", recovered.RecoveryState(), recovered.Quarantines())
+	}
+	reader, err = NewReadOnlyType2Importer(&importTestSource{}, importConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	i, err = NewValidatedRemoteType2Importer(reader, recovered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source = importTestSourceFor(t, i.verified)
+	source.snap = RemoteRIBSnapshot{Complete: true, Paths: []*api.Path{p}}
+	if err := i.ReconcileOnce(context.Background()); err == nil {
+		t.Fatal("conflicting FDB was accepted before stable RIB observations")
+	}
+	if err := i.ReconcileOnce(context.Background()); err == nil {
+		t.Fatal("conflicting FDB slot was adopted after restart")
+	}
+	if !assertKernelEntry(unix.AF_BRIDGE, vx.Index, conflict.IP.String(), conflict.HardwareAddr) ||
+		!assertKernelEntry(unix.AF_INET, bridge.Index, owned.Neighbor.Request.IP, mustMAC(t, owned.Neighbor.Request.MAC)) {
+		t.Fatal("startup conflict altered foreign FDB or independent receipted neighbor")
+	}
+	source.snap = RemoteRIBSnapshot{Complete: true}
+	if err := i.ReconcileOnce(context.Background()); err == nil {
+		t.Fatal("conflicted route withdrawal began before stable observations")
+	}
+	if err := i.ReconcileOnce(context.Background()); err == nil {
+		t.Fatal("withdrawal did not report the protected FDB slot")
+	}
+	if !assertKernelEntry(unix.AF_BRIDGE, vx.Index, conflict.IP.String(), conflict.HardwareAddr) ||
+		assertKernelEntry(unix.AF_INET, bridge.Index, owned.Neighbor.Request.IP, mustMAC(t, owned.Neighbor.Request.MAC)) {
+		t.Fatal("withdrawal deleted foreign FDB or retained independent owned neighbor")
+	}
+	if err := h.NeighDel(&foreignFDB); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.NeighDel(&foreignNeighbor); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.NeighDel(&conflict); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("real-kernel restart recovery and exact withdrawal preserve foreign/conflicting FDB and neighbor state=PASS")
 }
 
 func TestOwnedNeighborAttributes(t *testing.T) {

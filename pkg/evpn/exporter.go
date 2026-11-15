@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/osrg/gobgp/v4/api"
-	"github.com/osrg/gobgp/v4/pkg/config/oc"
 	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
 )
 
@@ -115,32 +113,6 @@ func (c ExporterConfig) Validate() error {
 	return nil
 }
 
-type SpeakerReadiness struct {
-	Client   api.GoBgpServiceClient
-	ASN      uint32
-	RouterID string
-}
-
-func (s SpeakerReadiness) Check(ctx context.Context) error {
-	if s.Client == nil {
-		return fmt.Errorf("speaker API is not configured")
-	}
-	res, err := s.Client.GetBgp(ctx, &api.GetBgpRequest{})
-	if err != nil {
-		return fmt.Errorf("speaker GetBgp: %w", err)
-	}
-	g := res.GetGlobal()
-	if g == nil || s.ASN == 0 || g.Asn != s.ASN || g.RouterId != s.RouterID {
-		return fmt.Errorf("speaker not ready: expected ASN=%d routerID=%s, got %v", s.ASN, s.RouterID, g)
-	}
-	for _, family := range g.Families {
-		if family == uint32(oc.AFI_SAFI_TYPE_L2VPN_EVPN.ToInt()) {
-			return nil
-		}
-	}
-	return fmt.Errorf("speaker not ready: EVPN family missing")
-}
-
 type ReadinessGate interface{ Check(context.Context) error }
 
 type ExportResult struct {
@@ -193,6 +165,14 @@ func (e *EndpointExporter) DrainNetworks(ctx context.Context, networks map[strin
 		}
 	}
 	return e.reconcile(ctx, keep)
+}
+
+// WithdrawAll reconciles only acknowledged local ownership to an empty desired
+// set; the normal speaker, authoritative RIB and UUID receipt gates still apply.
+func (e *EndpointExporter) WithdrawAll(ctx context.Context) (ExportResult, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.reconcile(ctx, fixedLocalEndpoints{})
 }
 
 func (e *EndpointExporter) reconcile(ctx context.Context, observer EndpointObserver) (result ExportResult, err error) {
@@ -266,6 +246,9 @@ func (e *EndpointExporter) reconcile(ctx context.Context, observer EndpointObser
 		}
 		result.Applied = e.reconciler.AppliedRoutes()
 		e.initialized = true
+		if e.Recovery.WithdrawalRequired() && len(desired) != 0 {
+			return result, fmt.Errorf("RECOVERY_BLOCKED: exporter is fenced for withdrawal; advertisements disabled")
+		}
 	} else if !e.initialized {
 		if err := e.reconciler.Resync(ctx, e.Source, nil); err != nil {
 			return result, err

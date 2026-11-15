@@ -147,7 +147,7 @@ func frameworkE2EEndpointFor(runID, networkID, logicalSwitch, suffix, mac, ip st
 	incarnation := "framework-e2e-" + runID
 	netnsName := "fw-" + runID + "-" + suffix
 	spec := endpoint.EndpointSpec{
-		ID:                endpoint.EndpointID(id),
+		ID:                endpoint.NewEndpointID(networkID, "attachment-"+id, uid),
 		NetworkID:         networkID,
 		AttachmentID:      "attachment-" + id,
 		Incarnation:       incarnation,
@@ -158,7 +158,7 @@ func frameworkE2EEndpointFor(runID, networkID, logicalSwitch, suffix, mac, ip st
 		IPAddresses:       []string{ip},
 	}
 	identity := &nodeagentpb.EndpointIdentity{
-		EndpointId: id, NetworkId: networkID, AttachmentId: spec.AttachmentID,
+		EndpointId: string(spec.ID), NetworkId: networkID, AttachmentId: spec.AttachmentID,
 		WorkloadUid: uid, Incarnation: incarnation,
 	}
 	return frameworkE2EEndpoint{
@@ -169,6 +169,17 @@ func frameworkE2EEndpointFor(runID, networkID, logicalSwitch, suffix, mac, ip st
 			IfName:    "eth1",
 		},
 		attachment: &nodeagentpb.AttachmentRequest{StaticMac: mac, StaticIpCidr: ip + "/24"},
+	}
+}
+
+func TestFrameworkE2EEndpointIdentity(t *testing.T) {
+	for _, networkID := range []string{frameworkNetlinkE2ENetworkID, frameworkOVSDBE2ENetworkID} {
+		item := frameworkE2EEndpointFor("identity", networkID, "ls-test", "a", "0a:58:f0:01:00:0a", "10.244.240.10")
+		want := endpoint.NewEndpointID(networkID, item.spec.AttachmentID, item.spec.Workload.UID)
+		if item.spec.ID != want || item.identity.EndpointId != string(want) {
+			t.Fatalf("fixture identity does not match framework observer contract: spec=%s identity=%s want=%s",
+				item.spec.ID, item.identity.EndpointId, want)
+		}
 	}
 }
 

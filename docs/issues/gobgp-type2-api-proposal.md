@@ -30,9 +30,8 @@ No independent reproduction on current stock GoBGP is claimed.
 
 The above is a minimized **test recipe for upstream comparison**, not a newly
 executed cross-version result. Existing framework tests and bounded live receipt/
-withdrawal evidence are linked from the
-[implementation milestones](../roadmap/backlog.md#completed-g6g7-milestones) and
-[smoke manifest](../../TESTING_GUIDE.md#standalone-export-smoke-g7b5a).
+withdrawal evidence are summarized in the
+[historical validation record](../archive/validation-record.md#standalone-type2-export-smoke).
 
 ## Expected versus actual / requested clarification
 

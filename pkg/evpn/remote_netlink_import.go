@@ -2,6 +2,7 @@ package evpn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -20,6 +21,19 @@ func NewValidatedRemoteType2Importer(reader *ReadOnlyType2Importer, backend *OVN
 		}
 		if !found {
 			return nil, fmt.Errorf("Netlink network %s missing from verified import policy", n.NetworkID)
+		}
+		device, ok := backend.owned.devices[n.VXLANDevice]
+		if !ok || device.Kind != "vxlan" || device.VNI != int(n.VNI) || device.Local != reader.config.LocalVTEP {
+			return nil, fmt.Errorf("Netlink network %s VXLAN device does not match the configured local VTEP and VNI", n.NetworkID)
+		}
+	}
+	for _, policy := range reader.config.Networks {
+		found := false
+		for _, n := range backend.owned.config.Networks {
+			found = found || (policy.NetworkID == n.NetworkID && policy.VNI == n.VNI)
+		}
+		if !found {
+			return nil, fmt.Errorf("import policy network %s missing from owned Netlink configuration", policy.NetworkID)
 		}
 	}
 	i := NewRemoteType2Importer(nil, nil, backend)
@@ -117,6 +131,7 @@ func (i *RemoteType2Importer) applyValidatedSnapshot(ctx context.Context, snapsh
 		return err
 	}
 	// Deterministic withdrawal-first order also handles MAC/IP/VNI remapping.
+	var slotErrors []error
 	keys := make([]string, 0, len(i.active))
 	for key := range i.active {
 		keys = append(keys, key)
@@ -130,7 +145,11 @@ func (i *RemoteType2Importer) applyValidatedSnapshot(ctx context.Context, snapsh
 			current.retiring = true
 			i.active[key] = current
 			if err := i.ownedBackend.Withdraw(ctx, current); err != nil {
-				return err
+				if !isSlotQuarantineError(err) {
+					return errors.Join(errors.Join(slotErrors...), err)
+				}
+				slotErrors = append(slotErrors, err)
+				continue
 			}
 			delete(i.active, key)
 		}
@@ -154,7 +173,10 @@ func (i *RemoteType2Importer) applyValidatedSnapshot(ctx context.Context, snapsh
 			i.active[key] = route
 		}
 		if err := i.ownedBackend.Apply(ctx, route); err != nil {
-			return err
+			if !isSlotQuarantineError(err) {
+				return errors.Join(errors.Join(slotErrors...), err)
+			}
+			slotErrors = append(slotErrors, err)
 		}
 	}
 	s.mu.Lock()
@@ -162,5 +184,5 @@ func (i *RemoteType2Importer) applyValidatedSnapshot(ctx context.Context, snapsh
 		s.recoveryState = "RUNNING"
 	}
 	s.mu.Unlock()
-	return nil
+	return errors.Join(slotErrors...)
 }

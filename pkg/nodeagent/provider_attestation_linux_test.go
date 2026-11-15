@@ -72,6 +72,29 @@ func providerFixture(pid int32, uid uint32, executableHash string) (*providerAtt
 	return &providerAttestor{config: config, source: f}, f, SpeakerProcessEvidence{PID: pid, UID: uid, ExecutableSHA256: executableHash, PIDNamespace: "pid:[123]"}
 }
 
+func TestKubernetesSpeakerNodeBinding(t *testing.T) {
+	config := ProviderAttestationConfig{NodeName: "worker-a", NodeUID: "uid-a"}
+	for _, tc := range []struct {
+		name     string
+		node     string
+		expected *speakerRuntimeExpectation
+		wantErr  bool
+	}{
+		{"matching", "worker-a", &speakerRuntimeExpectation{NodeUID: "uid-a"}, false},
+		{"wrong worker", "worker-b", &speakerRuntimeExpectation{NodeUID: "uid-a"}, true},
+		{"wrong recovery node", "worker-a", &speakerRuntimeExpectation{NodeUID: "uid-b"}, true},
+		{"no recovery", "worker-a", nil, false},
+		{"non-kubernetes launch", "", &speakerRuntimeExpectation{NodeUID: "uid-a"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateKubernetesSpeakerNode(config, tc.expected, tc.node)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestProviderAttestationIndependentEvidence(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

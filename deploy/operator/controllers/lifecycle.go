@@ -377,6 +377,9 @@ func (r *EvpnCoreReconciler) cleanup(ctx context.Context, core *evpnv1.EvpnCore,
 }
 
 func cleanupAllowed(ref evpnv1.ManagedResource) bool {
+	if ref.APIVersion == "v1" && ref.Kind == "ConfigMap" && ref.Namespace == LockNamespace && ref.Name == reservationsName {
+		return false
+	}
 	switch ref.APIVersion + "/" + ref.Kind {
 	case "v1/Service", "v1/ConfigMap", "v1/ServiceAccount", "apps/v1/Deployment", "apps/v1/DaemonSet":
 		return ref.Namespace != "k8gobgp-system" && ref.Name != "k8gobgp"

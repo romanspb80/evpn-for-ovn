@@ -1,0 +1,48 @@
+@startuml
+title Type-2 exchange - PLANNED / NOT EXECUTED
+skinparam backgroundColor #FCFCFD
+skinparam shadowing false
+skinparam roundcorner 12
+skinparam defaultFontName DejaVu Sans
+skinparam sequenceArrowColor #2563EB
+skinparam participantBackgroundColor #F3F4F6
+
+actor "Policy authority" as Auth
+participant "Node-Agent A" as A
+database "Separate fence /\nexport journals" as J
+database "OVN NB / SB" as DB
+participant "GoBGP A" as G
+participant "FRR Remote1" as F
+participant "Remote1 Linux\nbridge / VXLAN" as R
+participant "Owned local\nNetlink sync" as K
+participant "ovn-controller /\nOVS forwarding" as O
+
+Auth -> A : scoped exact endpoint policy
+A -> J : persist revision / digest / generation
+A -> DB : complete NB / SB reads
+DB --> A : exact ready locally bound LSP
+A -> A : intersect authorization and observation
+A -> J : export journal: durable AddPath intent
+A -> G : AddPath Type-2
+G --> A : acknowledged UUID
+A -> J : commit exact UUID receipt
+G -> F : local Type-2 / RT / VNI / next hop A
+F -> R : install received endpoint FDB / neighbor
+F -> G : external Type-2 / next hop R1
+A -> G : complete RIB reads
+G --> A : two equal validated observations
+A -> K : receipt-owned remote FDB / neighbor
+K --> O : Netlink observation
+O -> O : program OVS VXLAN / flows
+O -[#16A34A]> R : local endpoint to external endpoint
+R -[#16A34A]> O : return VXLAN / VNI 1000
+
+note over G,R
+  BGP processes do not forward workload packets.
+  Linux sync UDP60100 and actual OVS UDP4789 are separate.
+end note
+note over A,O
+  Dependencies are asynchronous, not one atomic transaction.
+  Importer receipts are independent of authorization/export journals.
+end note
+@enduml

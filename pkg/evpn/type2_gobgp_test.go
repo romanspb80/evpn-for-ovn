@@ -59,6 +59,40 @@ func newType2TestSpeakerAddress(t *testing.T, bgpPorts ...int32) (*server.BgpSer
 	return s, &GoBGPType2Adapter{Client: api.NewGoBgpServiceClient(conn)}, address
 }
 
+func TestGoBGPServerSnapshotAdapterReturnsProviderNeutralRoutes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	server, adapter := newType2TestSpeaker(t)
+	if err := server.StartBgp(ctx, &api.StartBgpRequest{Global: &api.Global{
+		Asn: 65000, RouterId: "192.0.2.1", ListenPort: -1,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	reconciler := NewRouteReconciler()
+	if err := reconciler.Resync(ctx, adapter, nil); err != nil {
+		t.Fatal(err)
+	}
+	applyType2(t, reconciler, adapter, planType2(t, reconciler, sampleEndpoint()))
+
+	snapshot, err := (&GoBGPServerSnapshotSource{Server: server}).SnapshotType2(ctx)
+	if err != nil || !snapshot.Complete || len(snapshot.Routes) != 1 {
+		t.Fatalf("incomplete GoBGP adapter snapshot: %+v %v", snapshot, err)
+	}
+	route := snapshot.Routes[0]
+	if route.MAC != "aa:bb:cc:dd:ee:ff" || route.IP != "10.251.1.11" ||
+		route.NextHop != "192.0.2.10" || len(route.RouteTargets) != 1 || route.RouteTargets[0] != "65000:100" {
+		t.Fatalf("GoBGP wire route changed in provider-neutral conversion: %+v", route)
+	}
+	validated, ok, err := (&Type2RouteValidator{
+		LocalVTEP: "192.0.2.20",
+		Networks:  []EVPNImportNetwork{{Name: "blue", VNI: 100, RouteTarget: "65000:100"}},
+	}).ValidateObservation(route)
+	if err != nil || !ok || validated == nil || validated.RemoteVTEP != route.NextHop {
+		t.Fatalf("provider-neutral validator rejected observed route: route=%+v validated=%+v ok=%t err=%v",
+			route, validated, ok, err)
+	}
+}
+
 type failingType2Client struct {
 	api.GoBgpServiceClient
 	addErr         error

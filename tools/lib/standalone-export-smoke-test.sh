@@ -55,13 +55,14 @@ standalone_smoke_capture_diagnostics() {
     provider_exec gobgp global || rc=1
   standalone_smoke_capture_command standalone-gobgp-neighbor \
     provider_exec gobgp neighbor "${FRR_PEER}" || rc=1
+  standalone_smoke_capture_command standalone-agent-log \
+    standalone_smoke_agent_exec cat /run/evpn-node-agent/standalone-smoke/agent.log || rc=1
   standalone_smoke_capture_command standalone-agent-startup \
     standalone_smoke_agent_exec sh -ec '
       if test -f /run/evpn-node-agent/standalone-smoke/agent.pid; then
         pid=$(cat /run/evpn-node-agent/standalone-smoke/agent.pid)
         printf "pid=%s\n" "$pid"
         cat "/proc/$pid/status"
-        cat /run/evpn-node-agent/standalone-smoke/agent.log
       else
         echo "Node-Agent launch not reached"
       fi
@@ -143,6 +144,17 @@ neighbors:
   - config:
       afi-safi-name: l2vpn-evpn
 EOF
+  if [[ "${EVPN_STANDALONE_MULTICHASSIS_SMOKE:-0}" == 1 &&
+        "${LOCAL_VTEP}" == 198.18.0.2 ]]; then
+    cat >>"${EVIDENCE_DIR}/standalone-gobgpd.yaml" <<'EOF'
+- config:
+    neighbor-address: "198.18.0.5"
+    peer-as: 64512
+  afi-safis:
+  - config:
+      afi-safi-name: l2vpn-evpn
+EOF
+  fi
   k -n k8gobgp-system patch ds k8gobgp --type=merge -p \
     '{"spec":{"template":{"spec":{"nodeSelector":{"evpn-standalone-smoke-disabled":"true"}}}}}'
   if [[ -n "${PROVIDER_POD:-}" ]]; then
@@ -223,22 +235,23 @@ PY
 }
 
 standalone_smoke_start_agent() {
+  standalone_smoke_agent_arguments
   standalone_smoke_agent_exec rm -f /run/evpn-node-agent/export-status.json \
     /run/evpn-node-agent/agent.sock
+  if [[ "${EVPN_STANDALONE_COHOST_SMOKE:-0}" == 1 ]]; then
+    standalone_smoke_agent_exec rm -f /run/evpn-node-agent/remote-status.json
+  fi
   standalone_smoke_capture_command standalone-agent-launch \
     standalone_smoke_agent_exec sh -ec \
     '/usr/local/bin/evpn-node-agent "$@" >>/run/evpn-node-agent/standalone-smoke/agent.log 2>&1 </dev/null & echo "$!" >/run/evpn-node-agent/standalone-smoke/agent.pid' \
-    standalone-agent \
-    --mode=real-ovn-ovs \
-    --network-backend=linux-veth \
-    --ovn-nb-endpoint=unix:/var/run/ovn/ovnnb_db.sock \
-    --ovsdb-endpoint=unix:/var/run/openvswitch/db.sock \
-    --ovn-sb-endpoint=unix:/var/run/ovn/ovnsb_db.sock \
-    --evpn-export-status=/run/evpn-node-agent/export-status.json \
-    --evpn-export-interval=1s \
-    --evpn-export-timeout=3s \
-    --standalone-evpn-export-config=/run/evpn-node-agent/standalone-smoke/runtime.json
+    standalone-agent "${STANDALONE_AGENT_ARGUMENTS[@]}"
   for _ in $(seq 1 120); do
+    if ! standalone_smoke_agent_exec sh -ec \
+      'kill -0 "$(cat /run/evpn-node-agent/standalone-smoke/agent.pid)"'; then
+      standalone_smoke_agent_exec cat /run/evpn-node-agent/standalone-smoke/agent.log >&2
+      echo "standalone Node-Agent exited during startup" >&2
+      return 1
+    fi
     if standalone_smoke_read_status; then
       return 0
     fi
@@ -248,6 +261,27 @@ standalone_smoke_start_agent() {
   standalone_smoke_agent_exec tail -100 \
     /run/evpn-node-agent/standalone-smoke/agent.log >&2 || true
   return 1
+}
+
+standalone_smoke_agent_arguments() {
+  STANDALONE_AGENT_ARGUMENTS=(
+    --mode=real-ovn-ovs \
+    --network-backend=linux-veth \
+    "--ovn-nb-endpoint=${STANDALONE_NB_ENDPOINT:-unix:/var/run/ovn/ovnnb_db.sock}" \
+    --ovsdb-endpoint=unix:/var/run/openvswitch/db.sock \
+    "--ovn-sb-endpoint=${STANDALONE_SB_ENDPOINT:-unix:/var/run/ovn/ovnsb_db.sock}" \
+    --evpn-export-status=/run/evpn-node-agent/export-status.json \
+    --evpn-export-interval=1s \
+    --evpn-export-timeout=3s \
+    --standalone-evpn-export-config=/run/evpn-node-agent/standalone-smoke/runtime.json
+  )
+  if [[ "${EVPN_STANDALONE_COHOST_SMOKE:-0}" == 1 ]]; then
+    STANDALONE_AGENT_ARGUMENTS+=(
+      --evpn-remote-config=/run/evpn-node-agent/standalone-smoke/import-config.json
+      --evpn-remote-status=/run/evpn-node-agent/remote-status.json
+      --evpn-remote-interval=1s --evpn-remote-timeout=3s
+    )
+  fi
 }
 
 standalone_smoke_stop_agent() {
@@ -289,6 +323,149 @@ os.chmod(path,0o600)
 PY
 }
 
+standalone_cohost_configure() {
+  python3 - "${EVIDENCE_DIR}" <<'PY'
+import json,pathlib,sys
+p=pathlib.Path(sys.argv[1])
+runtime=json.loads((p/"standalone-runtime.json").read_text())
+runtime["enableRemoteImport"]=True
+export=json.loads((p/"standalone-export-config.json").read_text())
+remote=json.loads((p/"remote-config.json").read_text())
+remote["GRPCEndpoint"]=export["GRPCEndpoint"]
+remote["AttestationConfigPath"]=export["AttestationConfigPath"]
+remote["Netlink"]["StateDirectory"]="/run/evpn-node-agent/standalone-smoke/import-receipts"
+remote["Netlink"]["Recovery"]={"Domain":{
+    "InstallationUID":runtime["installationUID"],"NodeUID":runtime["nodeUID"]}}
+if __import__("os").environ.get("EVPN_STANDALONE_MULTICHASSIS_SMOKE")=="1":
+    remote["Import"]["Networks"][0]["AllowedVTEPs"].append("198.18.0.5")
+assert remote["ASN"]==export["ASN"] and remote["RouterID"]==export["RouterID"]
+assert len({runtime["authorizationFenceDirectory"],export["Recovery"]["StateDirectory"],
+            remote["Netlink"]["StateDirectory"]})==3
+for n in remote["Netlink"]["Networks"]:
+    assert any(e["Enabled"] and (e["NetworkID"],e["LogicalSwitch"],e["VNI"])==
+               (n["NetworkID"],n["LogicalSwitch"],n["VNI"]) for e in export["Networks"])
+(p/"standalone-runtime.json").write_text(json.dumps(runtime)+"\n")
+(p/"standalone-import-config.json").write_text(json.dumps(remote)+"\n")
+PY
+  standalone_smoke_copy_to_agent "${EVIDENCE_DIR}/standalone-runtime.json" \
+    /run/evpn-node-agent/standalone-smoke/runtime.json
+  standalone_smoke_copy_to_agent "${EVIDENCE_DIR}/standalone-import-config.json" \
+    /run/evpn-node-agent/standalone-smoke/import-config.json
+  standalone_smoke_agent_exec install -d -m 700 -o root -g root \
+    /run/evpn-node-agent/standalone-smoke/import-receipts
+}
+
+standalone_cohost_snapshot() {
+  local label="$1" local_count="$2"
+  interop_wait_import_count 1 "cohost-${label}" standalone
+  interop_wait_rib_route "${REMOTE_MAC}" "${REMOTE_IP}" present "cohost-${label}-remote"
+  standalone_smoke_capture_command "cohost-${label}-export-status" \
+    standalone_smoke_agent_exec cat /run/evpn-node-agent/export-status.json
+  standalone_smoke_capture_command "cohost-${label}-export-journal" \
+    standalone_smoke_agent_exec cat /run/evpn-node-agent/standalone-smoke/export-receipts/journal.json
+  standalone_smoke_capture_command "cohost-${label}-import-journal" \
+    standalone_smoke_agent_exec cat /run/evpn-node-agent/standalone-smoke/import-receipts/receipts-v1/journal.json
+  standalone_smoke_capture_command "cohost-${label}-fdb" \
+    standalone_smoke_agent_exec bridge -j fdb show dev "${VXLAN_DEVICE}"
+  standalone_smoke_capture_command "cohost-${label}-neighbor" \
+    standalone_smoke_agent_exec ip -4 -j neigh show nud all dev "${BRIDGE_DEVICE}"
+  standalone_smoke_capture_command "cohost-${label}-links" \
+    standalone_smoke_agent_exec ip -d -j link show
+  standalone_smoke_capture_command "cohost-${label}-ovn-switch" \
+    standalone_smoke_agent_exec ovn-nbctl --format=json --columns=_uuid,name,other_config list Logical_Switch
+  standalone_smoke_capture_command "cohost-${label}-ovs" \
+    standalone_smoke_agent_exec ovs-vsctl show
+  standalone_smoke_capture_command "cohost-${label}-flows" \
+    standalone_smoke_agent_exec ovs-ofctl dump-flows br-int
+  standalone_smoke_capture_command "cohost-${label}-gobgp" \
+    provider_exec gobgp global rib -a evpn -j
+  standalone_smoke_capture_command "cohost-${label}-agent" \
+    standalone_smoke_agent_exec sh -ec \
+    'pid=$(cat /run/evpn-node-agent/standalone-smoke/agent.pid); kill -0 "$pid"; cat "/proc/$pid/status"; tr "\000" " " <"/proc/$pid/cmdline"; test ! -S /run/evpn-node-agent/agent.sock'
+  python3 - "${EVIDENCE_DIR}" "${label}" "${local_count}" "${REMOTE_MAC}" "${REMOTE_IP}" "${FRR_VTEP}" \
+    "${VXLAN_DEVICE}" "${BRIDGE_DEVICE}" "${VNI}" <<'PY'
+import json,pathlib,sys
+p=pathlib.Path(sys.argv[1]);label=sys.argv[2];count=int(sys.argv[3])
+mac,ip,vtep,vxlan,bridge,vni=sys.argv[4:]
+def read(name): return json.loads((p/f"cohost-{label}-{name}.stdout").read_text())
+status=read("export-status");remote=json.loads((p/f"remote-status-cohost-{label}.json").read_text())
+assert not status.get("Error") and not remote.get("Error"),(status,remote)
+assert remote["Snapshot"]["Authoritative"] and remote["RecoveryState"]=="RUNNING",remote
+assert status["Result"]["RecoveryState"]=="RUNNING",status
+assert status["SpeakerProcess"]["PID"]>0 and status["SpeakerProcess"]["StartTicks"],status
+exports=read("export-journal")["Record"];imports=read("import-journal")["Record"]
+assert exports["Pending"] is None and imports["Pending"] is None
+assert not imports["State"]["Quarantine"]
+receipts=exports["State"]["Receipts"] or []
+assert len(receipts)==count and len(status["Result"]["Applied"] or [])==count
+if count:
+    uuid=(p/"standalone-owned-route-uuid.txt").read_text().strip()
+    assert receipts[0]["Owned"]["PathUUID"]==uuid
+    assert status["Result"]["Applied"][0]["PathUUID"]==uuid
+assert len(imports["State"]["Receipts"])==len(remote["Receipts"])==1
+r=next(iter(imports["State"]["Receipts"].values()))
+assert (r["Endpoint"]["MAC"],r["Endpoint"]["IP"],r["Endpoint"]["RemoteVTEP"])==(mac,ip,vtep),r
+assert all(x["Route"]["Classification"]=="remote" and x["Route"]["Source"]["NeighborIP"]=="198.18.0.3"
+           for x in r["Endpoint"]["Routes"]),r
+assert r["FDB"]["ACK"] and r["FDB"]["Status"]=="confirmed",r
+assert r["Neighbor"]["ACK"] and r["Neighbor"]["Status"]=="confirmed",r
+assert r["Controller"]==imports["State"]["Controller"]==remote["Receipts"][0]["Controller"]
+assert all(x["Owned"]["Endpoint"]["MACAddress"]!=mac for x in receipts),receipts
+fdb=read("fdb");neighbors=read("neighbor");links=read("links")
+assert any(x.get("mac")==mac and x.get("dst")==vtep and x.get("state")=="permanent" and
+           {"self","extern_learn"}<=set(x.get("flags",[])) for x in fdb),fdb
+assert any(x.get("dst")==ip and x.get("lladdr")==mac and
+           "NOARP" in x.get("state",[]) for x in neighbors),neighbors
+vx=next(x for x in links if x["ifname"]==vxlan)
+assert vx["linkinfo"]["info_kind"]=="vxlan" and vx["linkinfo"]["info_data"]["id"]==int(vni),vx
+assert vx["master"]==bridge,vx
+ovs=read("ovn-switch");columns=ovs["headings"]
+switch=next(dict(zip(columns,row)) for row in ovs["data"] if row[columns.index("name")]=="ls24b")
+mapping=dict(switch["other_config"][1])
+assert (mapping["dynamic-routing-vni"],mapping["dynamic-routing-bridge-ifname"],
+        mapping["dynamic-routing-vxlan-ifname"])==(vni,bridge,vxlan),mapping
+rib=read("gobgp")
+assert any(mac in key and ip in key for key in rib)
+assert any("0a:58:f0:00:00:0a" in key for key in rib)==bool(count),rib
+agent=(p/f"cohost-{label}-agent.stdout").read_text()
+assert "--standalone-evpn-export-config=" in agent and "--evpn-remote-config=" in agent
+print(f"cohost-{label}: exact export receipts, independent importer ownership, actual mapped FDB/neighbor, single attested agent without CNI=PASS")
+PY
+}
+
+standalone_cohost_assert_progress() {
+  python3 - "${EVIDENCE_DIR}" "$1" "$2" <<'PY'
+import json,pathlib,sys
+p=pathlib.Path(sys.argv[1]);before,after=sys.argv[2:]
+def get(label,name):return json.loads((p/f"cohost-{label}-{name}.stdout").read_text())
+assert get(after,"export-status")["Time"]>get(before,"export-status")["Time"]
+r=[json.loads((p/f"remote-status-cohost-{x}.json").read_text()) for x in (before,after)]
+assert r[1]["Time"]>r[0]["Time"] and r[1]["RecoveryState"]=="RUNNING"
+assert get(before,"import-journal")["Record"]["State"]["Controller"]==get(after,"import-journal")["Record"]["State"]["Controller"]
+assert r[0]["Receipts"][0]["Devices"]==r[1]["Receipts"][0]["Devices"]
+print("simultaneous reconciliation progressed without changing importer ownership/device identity=PASS")
+PY
+}
+
+standalone_cohost_failure_isolation() {
+  standalone_smoke_stop_agent
+  standalone_smoke_agent_arguments
+  local rc=0
+  standalone_smoke_capture_command standalone-cohost-failed-runtime \
+    timeout --kill-after=2s 20s \
+    kubectl --kubeconfig "${KUBECONFIG}" --context "kind-${KIND_CLUSTER}" \
+    -n cni-test exec "${OVN_POD}" -c ovn-ovs -- /usr/local/bin/evpn-node-agent \
+    "${STANDALONE_AGENT_ARGUMENTS[@]}" --evpn-remote-interval=0s </dev/null || rc=$?
+  [[ "${rc}" == 1 ]]
+  grep -F "remote import interval and timeout must be positive" \
+    "${EVIDENCE_DIR}/standalone-cohost-failed-runtime.stderr"
+  grep -F 'standalone-evpn-export ' "${EVIDENCE_DIR}/standalone-cohost-failed-runtime.stderr" |
+    grep -F 'operation was canceled'
+  standalone_smoke_start_agent
+  standalone_smoke_wait_status withdrawn
+  standalone_cohost_snapshot failure-recovered 0
+}
+
 standalone_export_smoke() {
   local gobgp_pid gobgp_config
   local local_route_uuid
@@ -312,6 +489,14 @@ PY
     sleep 1
   done
   standalone_smoke_assert_cni_export_dry_run
+  if [[ "${EVPN_STANDALONE_COHOST_SMOKE:-0}" == 1 ]]; then
+    # Drain through the original owner; a new journal must never adopt its
+    # existing kernel entries merely because the tuples happen to match.
+    docker exec "${FRR_CONTAINER}" ip netns del evpnwork
+    interop_wait_rib_route "${REMOTE_MAC}" "${REMOTE_IP}" absent standalone-owner-handoff
+    interop_wait_import_count 0 standalone-owner-handoff
+    interop_assert_remote_kernel_withdrawal
+  fi
   sleep 2
   create_pod a
   k -n cni-test wait --for=condition=Ready pod/pod-a --timeout=180s
@@ -396,6 +581,216 @@ PY
     echo "expected exactly one pinned standalone gobgpd process, found: ${gobgp_pid}" >&2
     return 1
   }
+  standalone_smoke_attest_speaker
+  standalone_smoke_write_policy 1 yes
+  standalone_smoke_copy_to_agent "${EVIDENCE_DIR}/standalone-export-config.json" \
+    /run/evpn-node-agent/standalone-smoke/export-config.json
+  standalone_smoke_copy_to_agent "${EVIDENCE_DIR}/standalone-speaker.json" \
+    /run/evpn-node-agent/standalone-smoke/speaker.json
+  standalone_smoke_copy_to_agent "${EVIDENCE_DIR}/standalone-policy-1.json" \
+    /run/evpn-node-agent/standalone-smoke/authorization.json
+  cat >"${EVIDENCE_DIR}/standalone-runtime.json" <<EOF
+{"enabled":true,"installationUID":"${INSTALLATION_UID}","nodeUID":"${NODE_UID}","localChassis":"${LOCAL_CHASSIS}","exporterConfigPath":"/run/evpn-node-agent/standalone-smoke/export-config.json","authorizationPolicyPath":"/run/evpn-node-agent/standalone-smoke/authorization.json","authorizationFenceDirectory":"/run/evpn-node-agent/standalone-smoke/authorization-fence"}
+EOF
+  standalone_smoke_copy_to_agent "${EVIDENCE_DIR}/standalone-runtime.json" \
+    /run/evpn-node-agent/standalone-smoke/runtime.json
+  if [[ "${EVPN_STANDALONE_COHOST_SMOKE:-0}" == 1 ]]; then
+    standalone_cohost_configure
+  fi
+  standalone_smoke_start_agent
+  standalone_smoke_capture_command standalone-cni-socket-absent-startup \
+    standalone_smoke_agent_exec test \
+    ! -S /run/evpn-node-agent/agent.sock
+  interop_wait_rib_route 0a:58:f0:00:00:0a 10.244.240.10 present standalone-advertised
+  standalone_smoke_wait_status advertised
+  standalone_smoke_wait_fence_revision 1
+  python3 - "${EVIDENCE_DIR}/standalone-export-status.json" \
+    >"${EVIDENCE_DIR}/standalone-owned-route-uuid.txt" <<'PY'
+import json,sys
+status=json.load(open(sys.argv[1]))
+applied=(status.get("Result") or {}).get("Applied") or []
+assert len(applied)==1,applied
+uuid=applied[0].get("PathUUID","")
+assert uuid,applied
+print(uuid)
+PY
+  local_route_uuid="$(cat "${EVIDENCE_DIR}/standalone-owned-route-uuid.txt")"
+  [[ "${local_route_uuid}" =~ ^[0-9a-fA-F-]{36}$ ]]
+  standalone_smoke_agent_exec cat \
+    /run/evpn-node-agent/standalone-smoke/export-receipts/journal.json \
+    >"${EVIDENCE_DIR}/standalone-export-journal-advertised.json"
+  python3 - "${EVIDENCE_DIR}/standalone-export-journal-advertised.json" \
+    "${local_route_uuid}" <<'PY'
+import json,sys
+record=json.load(open(sys.argv[1]))["Record"]
+assert record["Pending"] is None,record
+receipts=record["State"]["Receipts"]
+assert len(receipts)==1,receipts
+assert receipts[0]["Owned"]["PathUUID"]==sys.argv[2],receipts
+print("advertised-exact-owned-path-receipt=PASS")
+PY
+  standalone_smoke_agent_exec cat \
+    /run/evpn-node-agent/standalone-smoke/agent.log |
+    tee "${EVIDENCE_DIR}/standalone-agent-advertised.log" >/dev/null
+  provider_exec gobgp global rib -a evpn -j |
+    tee "${EVIDENCE_DIR}/standalone-gobgp-rib-advertised.json" >/dev/null
+  if [[ "${EVPN_STANDALONE_COHOST_SMOKE:-0}" == 1 ]]; then
+    ACTIVE_CASE=standalone_remote_import
+    interop_create_remote_workload
+    docker exec "${FRR_CONTAINER}" ip netns exec evpnwork ping -I frr-work0 -c 2 -W 2 10.244.240.1
+    standalone_cohost_snapshot advertised 1
+    case_status standalone_remote_import PASS "FRR Type-2 accepted, durable FDB/neighbor ACKs and actual OVN-mapped kernel installation"
+    ACTIVE_CASE=standalone_simultaneous
+    sleep 4
+    standalone_cohost_snapshot simultaneous 1
+    standalone_cohost_assert_progress advertised simultaneous
+    case_status standalone_simultaneous PASS "both authoritative loops advanced; exporter UUID and importer ownership controller stable"
+    if [[ "${EVPN_STANDALONE_MULTICHASSIS_SMOKE:-0}" == 1 ]]; then
+      standalone_multichassis
+    fi
+  fi
+  interop_wait_rib_route "${REMOTE_MAC}" "${REMOTE_IP}" present standalone-foreign-survivor-before
+  ACTIVE_CASE=standalone_export_advertise
+  case_status standalone_export_advertise PASS \
+    "durable policy revision 1, authorized OVN LSP ${SMOKE_LSP_UUID}, owned path ${local_route_uuid}, external peer RIB"
+
+  ACTIVE_CASE=standalone_export_revoke
+  local revoke_revision
+  standalone_smoke_agent_exec cat /run/evpn-node-agent/standalone-smoke/authorization-fence/journal.json \
+    >"${EVIDENCE_DIR}/standalone-before-revoke-fence.json"
+  revoke_revision="$(python3 - "${EVIDENCE_DIR}/standalone-before-revoke-fence.json" <<'PY'
+import json,sys
+print(json.load(open(sys.argv[1]))["Record"]["State"]["revision"]+1)
+PY
+)"
+  standalone_smoke_write_policy "${revoke_revision}" no
+  standalone_smoke_copy_to_agent "${EVIDENCE_DIR}/standalone-policy-${revoke_revision}.json" \
+    /run/evpn-node-agent/standalone-smoke/authorization.json
+  standalone_smoke_wait_fence_revision "${revoke_revision}"
+  standalone_smoke_wait_status withdrawn
+  interop_wait_rib_route 0a:58:f0:00:00:0a 10.244.240.10 absent standalone-revoked
+  interop_wait_rib_route "${REMOTE_MAC}" "${REMOTE_IP}" present standalone-foreign-survivor-after
+  standalone_smoke_agent_exec cat \
+    /run/evpn-node-agent/standalone-smoke/export-receipts/journal.json \
+    >"${EVIDENCE_DIR}/standalone-export-journal-revoked.json"
+  provider_exec gobgp global rib -a evpn -j \
+    >"${EVIDENCE_DIR}/standalone-gobgp-rib-revoked.json"
+  python3 - "${EVIDENCE_DIR}/standalone-export-journal-revoked.json" \
+    "${local_route_uuid}" <<'PY'
+import json,sys
+j=json.load(open(sys.argv[1]))
+record=j.get("Record") or {}
+state=record.get("State") or {}
+assert record.get("Pending") is None,record
+receipts=state.get("Receipts") or []
+assert all((r.get("Owned") or {}).get("PathUUID")!=sys.argv[2] for r in receipts),receipts
+print("revoked-owned-path-receipt-removed=PASS")
+PY
+  ACTIVE_CASE=standalone_export_revoke
+  case_status standalone_export_revoke PASS \
+    "policy revision ${revoke_revision} durably accepted; exact UUID ${local_route_uuid} absent at GoBGP/FRR; remote route preserved"
+  if [[ "${EVPN_STANDALONE_COHOST_SMOKE:-0}" == 1 ]]; then
+    standalone_cohost_snapshot revoked 0
+  fi
+
+  ACTIVE_CASE=standalone_export_restart
+  standalone_smoke_stop_agent
+  standalone_smoke_start_agent
+  standalone_smoke_capture_command standalone-cni-socket-absent-restart \
+    standalone_smoke_agent_exec test \
+    ! -S /run/evpn-node-agent/agent.sock
+  standalone_smoke_assert_fence_revision "${revoke_revision}"
+  standalone_smoke_agent_exec cat \
+    /run/evpn-node-agent/standalone-smoke/agent.log |
+    tee "${EVIDENCE_DIR}/standalone-agent-recovered.log" >/dev/null
+  standalone_smoke_wait_status withdrawn
+  standalone_smoke_agent_exec cat \
+    /run/evpn-node-agent/standalone-smoke/export-receipts/journal.json \
+    >"${EVIDENCE_DIR}/standalone-export-journal-recovered.json"
+  python3 - "${EVIDENCE_DIR}/standalone-export-journal-recovered.json" <<'PY'
+import json,sys
+record=json.load(open(sys.argv[1]))["Record"]
+assert record["Pending"] is None,record
+assert not record["State"]["Receipts"],record
+print("recovered-route-journal-without-revoked-receipt=PASS")
+PY
+  interop_wait_rib_route 0a:58:f0:00:00:0a 10.244.240.10 absent standalone-recovered
+  interop_wait_rib_route "${REMOTE_MAC}" "${REMOTE_IP}" present standalone-foreign-survivor-recovered
+  provider_exec gobgp global rib -a evpn -j |
+    tee "${EVIDENCE_DIR}/standalone-gobgp-rib-recovered.json" >/dev/null
+  case_status standalone_export_restart PASS \
+    "Node-Agent restarted with recovered authorization fence and route journal; revoked route remained absent"
+  if [[ "${EVPN_STANDALONE_COHOST_SMOKE:-0}" == 1 ]]; then
+    ACTIVE_CASE=standalone_cohost_recovery
+    standalone_cohost_snapshot recovered 0
+    standalone_cohost_assert_progress revoked recovered
+    case_status standalone_cohost_recovery PASS "exporter and importer journals recovered; local route absent and remote FDB/neighbor ownership retained"
+    ACTIVE_CASE=standalone_failure_isolation
+    standalone_cohost_failure_isolation
+    case_status standalone_failure_isolation PASS "invalid importer interval failed the real child runtime; parent exited and joined exporter; journals reopened on healthy restart"
+  fi
+  standalone_smoke_capture_diagnostics
+  ACTIVE_CASE=standalone_restore
+  if [[ "${EVPN_STANDALONE_COHOST_SMOKE:-0}" == 1 ]]; then
+    docker exec "${FRR_CONTAINER}" ip netns del evpnwork
+    interop_wait_rib_route "${REMOTE_MAC}" "${REMOTE_IP}" absent standalone-restore-drain
+    interop_wait_import_count 0 standalone-restore-drain standalone
+    interop_assert_remote_kernel_withdrawal
+  fi
+  standalone_smoke_stop_agent
+  standalone_smoke_agent_exec kill -TERM "${gobgp_pid}"
+  for _ in $(seq 1 30); do
+    if ! standalone_smoke_agent_exec kill -0 "${gobgp_pid}" 2>/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+
+  # Restore the operator-managed CNI agent and its original exporter config so
+  # the ordinary DEL invocation and runner cleanup continue through their
+  # existing authenticated path.
+  docker exec -i "${WORKER}" sh -ec \
+    'cat > /run/evpn-node-agent/export-config.json.next && chown root:root /run/evpn-node-agent/export-config.json.next && chmod 600 /run/evpn-node-agent/export-config.json.next && mv /run/evpn-node-agent/export-config.json.next /run/evpn-node-agent/export-config.json' \
+    <"${EVIDENCE_DIR}/export-config.json"
+  STANDALONE_GOBGP_POD=""
+  local restore_selector
+  restore_selector="$(python3 - "${EVIDENCE_DIR}/k8gobgp-daemonset-before-smoke.json" <<'PY'
+import json,sys
+spec=json.load(open(sys.argv[1]))["spec"]["template"]["spec"]
+print(json.dumps([{"op":"replace","path":"/spec/template/spec/nodeSelector",
+                  "value":spec["nodeSelector"]}]))
+PY
+)"
+  k -n k8gobgp-system patch ds k8gobgp --type=json -p "${restore_selector}"
+  k -n k8gobgp-system rollout status ds/k8gobgp --timeout=180s
+  PROVIDER_POD="$(k -n k8gobgp-system get pod -l app.kubernetes.io/name=k8gobgp \
+    -o jsonpath='{.items[0].metadata.name}')"
+  [[ -n "${PROVIDER_POD}" ]]
+  k -n cni-test patch evpncore/type2 --type=merge -p '{"spec":{"nodeAgent":{"enabled":true}}}'
+  local restore_deadline=$((SECONDS+120))
+  until k -n cni-test get ds evpn-node-agent >/dev/null 2>&1; do
+    (( SECONDS < restore_deadline )) || {
+      echo "operator Node-Agent DaemonSet was not restored" >&2
+      return 1
+    }
+    sleep 1
+  done
+  k -n cni-test rollout status ds/evpn-node-agent --timeout=180s
+  AGENT_POD="$(k -n cni-test get pod -l app=evpn-node-agent -o jsonpath='{.items[0].metadata.name}')"
+  ag nc -z -U /run/evpn-node-agent/agent.sock
+  if [[ "${EVPN_STANDALONE_COHOST_SMOKE:-0}" == 1 ]]; then
+    interop_create_remote_workload
+    docker exec "${FRR_CONTAINER}" ip netns exec evpnwork ping -I frr-work0 -c 2 -W 2 10.244.240.1
+    interop_wait_import_count 1 standalone-operator-restored
+  fi
+  k -n cni-test delete pod pod-a --wait=true --timeout=90s
+  case_status standalone_restore PASS "operator-managed speaker and authenticated CNI runtime restored"
+}
+
+standalone_smoke_attest_speaker() {
+  local gobgp_pid gobgp_config
+  gobgp_pid="$(standalone_smoke_agent_exec cat /run/gobgp/gobgpd.pid)"
+  [[ "${gobgp_pid}" =~ ^[0-9]+$ ]]
   standalone_smoke_agent_exec cat "/proc/${gobgp_pid}/cmdline" \
     >"${EVIDENCE_DIR}/standalone-gobgpd-cmdline.bin"
   standalone_smoke_agent_exec cat "/proc/${gobgp_pid}/cgroup" \
@@ -454,158 +849,4 @@ attestation={"mode":"standalone","standalone":{
     "goBGPConfigSHA256":cfg_hash,"asn":64512,"routerID":router}}
 p.joinpath("standalone-speaker.json").write_text(json.dumps(attestation,separators=(",",":"))+"\n")
 PY
-  standalone_smoke_write_policy 1 yes
-  standalone_smoke_copy_to_agent "${EVIDENCE_DIR}/standalone-export-config.json" \
-    /run/evpn-node-agent/standalone-smoke/export-config.json
-  standalone_smoke_copy_to_agent "${EVIDENCE_DIR}/standalone-speaker.json" \
-    /run/evpn-node-agent/standalone-smoke/speaker.json
-  standalone_smoke_copy_to_agent "${EVIDENCE_DIR}/standalone-policy-1.json" \
-    /run/evpn-node-agent/standalone-smoke/authorization.json
-  cat >"${EVIDENCE_DIR}/standalone-runtime.json" <<EOF
-{"enabled":true,"installationUID":"${INSTALLATION_UID}","nodeUID":"${NODE_UID}","localChassis":"${LOCAL_CHASSIS}","exporterConfigPath":"/run/evpn-node-agent/standalone-smoke/export-config.json","authorizationPolicyPath":"/run/evpn-node-agent/standalone-smoke/authorization.json","authorizationFenceDirectory":"/run/evpn-node-agent/standalone-smoke/authorization-fence"}
-EOF
-  standalone_smoke_copy_to_agent "${EVIDENCE_DIR}/standalone-runtime.json" \
-    /run/evpn-node-agent/standalone-smoke/runtime.json
-  standalone_smoke_start_agent
-  standalone_smoke_capture_command standalone-cni-socket-absent-startup \
-    standalone_smoke_agent_exec test \
-    ! -S /run/evpn-node-agent/agent.sock
-  interop_wait_rib_route 0a:58:f0:00:00:0a 10.244.240.10 present standalone-advertised
-  standalone_smoke_wait_status advertised
-  standalone_smoke_wait_fence_revision 1
-  python3 - "${EVIDENCE_DIR}/standalone-export-status.json" \
-    >"${EVIDENCE_DIR}/standalone-owned-route-uuid.txt" <<'PY'
-import json,sys
-status=json.load(open(sys.argv[1]))
-applied=(status.get("Result") or {}).get("Applied") or []
-assert len(applied)==1,applied
-uuid=applied[0].get("PathUUID","")
-assert uuid,applied
-print(uuid)
-PY
-  local_route_uuid="$(cat "${EVIDENCE_DIR}/standalone-owned-route-uuid.txt")"
-  [[ "${local_route_uuid}" =~ ^[0-9a-fA-F-]{36}$ ]]
-  standalone_smoke_agent_exec cat \
-    /run/evpn-node-agent/standalone-smoke/export-receipts/journal.json \
-    >"${EVIDENCE_DIR}/standalone-export-journal-advertised.json"
-  python3 - "${EVIDENCE_DIR}/standalone-export-journal-advertised.json" \
-    "${local_route_uuid}" <<'PY'
-import json,sys
-record=json.load(open(sys.argv[1]))["Record"]
-assert record["Pending"] is None,record
-receipts=record["State"]["Receipts"]
-assert len(receipts)==1,receipts
-assert receipts[0]["Owned"]["PathUUID"]==sys.argv[2],receipts
-print("advertised-exact-owned-path-receipt=PASS")
-PY
-  standalone_smoke_agent_exec cat \
-    /run/evpn-node-agent/standalone-smoke/agent.log |
-    tee "${EVIDENCE_DIR}/standalone-agent-advertised.log" >/dev/null
-  provider_exec gobgp global rib -a evpn -j |
-    tee "${EVIDENCE_DIR}/standalone-gobgp-rib-advertised.json" >/dev/null
-  interop_wait_rib_route "${REMOTE_MAC}" "${REMOTE_IP}" present standalone-foreign-survivor-before
-  ACTIVE_CASE=standalone_export_advertise
-  case_status standalone_export_advertise PASS \
-    "durable policy revision 1, authorized OVN LSP ${SMOKE_LSP_UUID}, owned path ${local_route_uuid}, external peer RIB"
-
-  ACTIVE_CASE=standalone_export_revoke
-  standalone_smoke_write_policy 2 no
-  standalone_smoke_copy_to_agent "${EVIDENCE_DIR}/standalone-policy-2.json" \
-    /run/evpn-node-agent/standalone-smoke/authorization.json
-  standalone_smoke_wait_fence_revision 2
-  standalone_smoke_wait_status withdrawn
-  interop_wait_rib_route 0a:58:f0:00:00:0a 10.244.240.10 absent standalone-revoked
-  interop_wait_rib_route "${REMOTE_MAC}" "${REMOTE_IP}" present standalone-foreign-survivor-after
-  standalone_smoke_agent_exec cat \
-    /run/evpn-node-agent/standalone-smoke/export-receipts/journal.json \
-    >"${EVIDENCE_DIR}/standalone-export-journal-revoked.json"
-  provider_exec gobgp global rib -a evpn -j \
-    >"${EVIDENCE_DIR}/standalone-gobgp-rib-revoked.json"
-  python3 - "${EVIDENCE_DIR}/standalone-export-journal-revoked.json" \
-    "${local_route_uuid}" <<'PY'
-import json,sys
-j=json.load(open(sys.argv[1]))
-record=j.get("Record") or {}
-state=record.get("State") or {}
-assert record.get("Pending") is None,record
-receipts=state.get("Receipts") or []
-assert all((r.get("Owned") or {}).get("PathUUID")!=sys.argv[2] for r in receipts),receipts
-print("revoked-owned-path-receipt-removed=PASS")
-PY
-  ACTIVE_CASE=standalone_export_revoke
-  case_status standalone_export_revoke PASS \
-    "policy revision 2 durably accepted; exact UUID ${local_route_uuid} absent at GoBGP/FRR; remote route preserved"
-
-  ACTIVE_CASE=standalone_export_restart
-  standalone_smoke_stop_agent
-  standalone_smoke_start_agent
-  standalone_smoke_capture_command standalone-cni-socket-absent-restart \
-    standalone_smoke_agent_exec test \
-    ! -S /run/evpn-node-agent/agent.sock
-  standalone_smoke_assert_fence_revision 2
-  standalone_smoke_agent_exec cat \
-    /run/evpn-node-agent/standalone-smoke/agent.log |
-    tee "${EVIDENCE_DIR}/standalone-agent-recovered.log" >/dev/null
-  standalone_smoke_wait_status withdrawn
-  standalone_smoke_agent_exec cat \
-    /run/evpn-node-agent/standalone-smoke/export-receipts/journal.json \
-    >"${EVIDENCE_DIR}/standalone-export-journal-recovered.json"
-  python3 - "${EVIDENCE_DIR}/standalone-export-journal-recovered.json" <<'PY'
-import json,sys
-record=json.load(open(sys.argv[1]))["Record"]
-assert record["Pending"] is None,record
-assert not record["State"]["Receipts"],record
-print("recovered-route-journal-without-revoked-receipt=PASS")
-PY
-  interop_wait_rib_route 0a:58:f0:00:00:0a 10.244.240.10 absent standalone-recovered
-  interop_wait_rib_route "${REMOTE_MAC}" "${REMOTE_IP}" present standalone-foreign-survivor-recovered
-  provider_exec gobgp global rib -a evpn -j |
-    tee "${EVIDENCE_DIR}/standalone-gobgp-rib-recovered.json" >/dev/null
-  case_status standalone_export_restart PASS \
-    "Node-Agent restarted with recovered authorization fence and route journal; revoked route remained absent"
-  standalone_smoke_capture_diagnostics
-  ACTIVE_CASE=standalone_restore
-  standalone_smoke_stop_agent
-  standalone_smoke_agent_exec kill -TERM "${gobgp_pid}"
-  for _ in $(seq 1 30); do
-    if ! standalone_smoke_agent_exec kill -0 "${gobgp_pid}" 2>/dev/null; then
-      break
-    fi
-    sleep 1
-  done
-
-  # Restore the operator-managed CNI agent and its original exporter config so
-  # the ordinary DEL invocation and runner cleanup continue through their
-  # existing authenticated path.
-  docker exec -i "${WORKER}" sh -ec \
-    'cat > /run/evpn-node-agent/export-config.json.next && chown root:root /run/evpn-node-agent/export-config.json.next && chmod 600 /run/evpn-node-agent/export-config.json.next && mv /run/evpn-node-agent/export-config.json.next /run/evpn-node-agent/export-config.json' \
-    <"${EVIDENCE_DIR}/export-config.json"
-  STANDALONE_GOBGP_POD=""
-  local restore_selector
-  restore_selector="$(python3 - "${EVIDENCE_DIR}/k8gobgp-daemonset-before-smoke.json" <<'PY'
-import json,sys
-spec=json.load(open(sys.argv[1]))["spec"]["template"]["spec"]
-print(json.dumps([{"op":"replace","path":"/spec/template/spec/nodeSelector",
-                  "value":spec["nodeSelector"]}]))
-PY
-)"
-  k -n k8gobgp-system patch ds k8gobgp --type=json -p "${restore_selector}"
-  k -n k8gobgp-system rollout status ds/k8gobgp --timeout=180s
-  PROVIDER_POD="$(k -n k8gobgp-system get pod -l app.kubernetes.io/name=k8gobgp \
-    -o jsonpath='{.items[0].metadata.name}')"
-  [[ -n "${PROVIDER_POD}" ]]
-  k -n cni-test patch evpncore/type2 --type=merge -p '{"spec":{"nodeAgent":{"enabled":true}}}'
-  local restore_deadline=$((SECONDS+120))
-  until k -n cni-test get ds evpn-node-agent >/dev/null 2>&1; do
-    (( SECONDS < restore_deadline )) || {
-      echo "operator Node-Agent DaemonSet was not restored" >&2
-      return 1
-    }
-    sleep 1
-  done
-  k -n cni-test rollout status ds/evpn-node-agent --timeout=180s
-  AGENT_POD="$(k -n cni-test get pod -l app=evpn-node-agent -o jsonpath='{.items[0].metadata.name}')"
-  ag nc -z -U /run/evpn-node-agent/agent.sock
-  k -n cni-test delete pod pod-a --wait=true --timeout=90s
-  case_status standalone_restore PASS "operator-managed speaker and authenticated CNI runtime restored"
 }

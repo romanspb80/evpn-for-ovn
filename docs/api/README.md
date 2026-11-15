@@ -1,4 +1,4 @@
-# Framework and application APIs
+# Framework and integration APIs
 
 This is a source-grounded reference, not a claim that every declared RPC is
 implemented or production-supported. The checked-in `.proto` and generated

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/osrg/gobgp/v4/api"
+	"github.com/romanspb80/evpn-for-ovn/pkg/evpn"
 	"google.golang.org/grpc"
 )
 
@@ -59,7 +60,7 @@ func TestGoBGPSpeakerReadinessUsesGoBGPIdentity(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := (goBGPSpeakerReadiness{
+			err := (evpn.GoBGPIdentityReadiness{
 				Client: tt.client, ASN: 64512, RouterID: "192.0.2.10",
 			}).Check(context.Background())
 			if (err != nil) != tt.wantErr {

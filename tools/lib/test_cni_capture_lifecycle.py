@@ -99,6 +99,22 @@ class CaptureLifecycleTests(unittest.TestCase):
     def setUp(self):
         self.source = HELPER.read_text()
 
+    def test_capture_runtime_rejects_unbounded_or_invalid_values(self):
+        for value in ("0", "301", "unlimited", "001"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                result = subprocess.run(
+                    ["bash", "-ec", f"""
+KIND_CLUSTER=capture-limit-test
+EVIDENCE_DIR={shlex.quote(directory)}
+source {shlex.quote(str(HELPER))}
+interop_capture_start_one test 1 lo icmp {shlex.quote(value)}
+"""],
+                    text=True, capture_output=True, check=False,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("1..300 seconds", result.stderr)
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
     def run_status_writer(self, evidence, *, exit_code, cleanup_code, original_code, values):
         assignments = "\n".join(
             f"{name}={shlex.quote(value)}" for name, value in values.items()

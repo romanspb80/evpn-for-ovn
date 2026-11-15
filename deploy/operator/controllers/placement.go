@@ -14,6 +14,9 @@ import (
 )
 
 func configurePlacement(obj *unstructured.Unstructured, spec evpnv1.EvpnCoreSpec) error {
+	if dataplaneMode(spec) == "external-ovn" {
+		return nil
+	}
 	unstructured.RemoveNestedField(obj.Object, "spec", "template", "spec", "nodeSelector")
 	affinity := corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
 		RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
@@ -46,6 +49,9 @@ func configurePlacement(obj *unstructured.Unstructured, spec evpnv1.EvpnCoreSpec
 }
 
 func (r *EvpnCoreReconciler) placementAvailable(ctx context.Context, spec evpnv1.EvpnCoreSpec) (bool, string, error) {
+	if dataplaneMode(spec) == "external-ovn" {
+		return true, "", nil
+	}
 	var node corev1.Node
 	if err := r.reader().Get(ctx, client.ObjectKey{Name: spec.DataplaneNode}, &node); err != nil {
 		if apierrors.IsNotFound(err) {

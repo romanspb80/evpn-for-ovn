@@ -21,13 +21,13 @@ import (
 	nbdb "github.com/romanspb80/evpn-for-ovn/services/ovsdb_mgmt/ovnnb"
 )
 
-type model1TestDB struct {
+type ovsdbTestDB struct {
 	client   client.Client
 	database dbase.Database
 	name     string
 }
 
-func startModel1TestDB(t *testing.T, dbModel model.ClientDBModel, schema ovsdb.DatabaseSchema) *model1TestDB {
+func startOVSDBTestDB(t *testing.T, dbModel model.ClientDBModel, schema ovsdb.DatabaseSchema) *ovsdbTestDB {
 	t.Helper()
 	logger := logr.Discard()
 	databaseModel, problems := model.NewDatabaseModel(schema, dbModel)
@@ -39,7 +39,7 @@ func startModel1TestDB(t *testing.T, dbModel model.ClientDBModel, schema ovsdb.D
 	if err != nil {
 		t.Fatalf("create in-memory %s server: %v", dbModel.Name(), err)
 	}
-	socket := filepath.Join(os.TempDir(), fmt.Sprintf("m1-%s.sock", uuid.NewString()[:8]))
+	socket := filepath.Join(os.TempDir(), fmt.Sprintf("ovsdb-%s.sock", uuid.NewString()[:8]))
 	if err := os.Remove(socket); err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("remove stale test socket %s: %v", socket, err)
 	}
@@ -69,10 +69,10 @@ func startModel1TestDB(t *testing.T, dbModel model.ClientDBModel, schema ovsdb.D
 		t.Fatalf("monitor %s test database: %v", dbModel.Name(), err)
 	}
 	t.Cleanup(ovsClient.Close)
-	return &model1TestDB{client: ovsClient, database: database, name: dbModel.Name()}
+	return &ovsdbTestDB{client: ovsClient, database: database, name: dbModel.Name()}
 }
 
-func model1TestDatabases(t *testing.T) (*model1TestDB, *model1TestDB) {
+func ovsdbTestDatabases(t *testing.T) (*ovsdbTestDB, *ovsdbTestDB) {
 	t.Helper()
 	nbModel, err := nbdb.FullDatabaseModel()
 	if err != nil {
@@ -82,12 +82,12 @@ func model1TestDatabases(t *testing.T) (*model1TestDB, *model1TestDB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nb := startModel1TestDB(t, nbModel, nbdb.Schema())
-	ovs := startModel1TestDB(t, ovsModel, vswitch.Schema())
+	nb := startOVSDBTestDB(t, nbModel, nbdb.Schema())
+	ovs := startOVSDBTestDB(t, ovsModel, vswitch.Schema())
 	return nb, ovs
 }
 
-func seedModel1Row(t *testing.T, ctx context.Context, db client.Client, row model.Model) {
+func seedOVSDBRow(t *testing.T, ctx context.Context, db client.Client, row model.Model) {
 	t.Helper()
 	ops, err := db.Create(row)
 	if err != nil {
@@ -104,28 +104,28 @@ func seedModel1Row(t *testing.T, ctx context.Context, db client.Client, row mode
 	}
 }
 
-func seedModel1Topology(t *testing.T, ctx context.Context, nb, ovs client.Client) {
+func seedOVSDBTopology(t *testing.T, ctx context.Context, nb, ovs client.Client) {
 	t.Helper()
-	seedModel1Row(t, ctx, nb, &nbdb.LogicalSwitch{
-		UUID: uuid.NewString(), Name: "ls-model1",
+	seedOVSDBRow(t, ctx, nb, &nbdb.LogicalSwitch{
+		UUID: uuid.NewString(), Name: "ls-ovsdb",
 		ExternalIDs: map[string]string{"unrelated": "preserve-nb"},
 	})
-	seedModel1Root(t, ctx, ovs)
+	seedOVSDBRoot(t, ctx, ovs)
 }
 
-func seedModel1Root(t *testing.T, ctx context.Context, ovs client.Client) {
+func seedOVSDBRoot(t *testing.T, ctx context.Context, ovs client.Client) {
 	t.Helper()
 	root := &vswitch.OpenvSwitch{
 		UUID: uuid.NewString(),
 		ExternalIDs: map[string]string{
-			"unrelated":             "preserve-openvswitch",
-			model1BridgeMappingsKey: "other-physnet:br-other",
+			"unrelated":            "preserve-openvswitch",
+			ovsdbBridgeMappingsKey: "other-physnet:br-other",
 		},
 	}
-	seedModel1Row(t, ctx, ovs, root)
+	seedOVSDBRow(t, ctx, ovs, root)
 }
 
-func waitForModel1Row(t *testing.T, name string, check func() (bool, error)) {
+func waitForOVSDBRow(t *testing.T, name string, check func() (bool, error)) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	var lastErr error
@@ -142,26 +142,26 @@ func waitForModel1Row(t *testing.T, name string, check func() (bool, error)) {
 	t.Fatalf("%s did not become visible: %v", name, lastErr)
 }
 
-func model1DatabaseTunnel() Model1Tunnel {
+func ovsdbDatabaseTunnel() Model1Tunnel {
 	key := Model1TunnelKey{
-		NetworkID: "test-network", LogicalSwitch: "ls-model1",
+		NetworkID: "test-network", LogicalSwitch: "ls-ovsdb",
 		VNI: 1000, RemoteVTEP: "192.0.2.90",
 	}
 	return Model1Tunnel{
-		Key: key, Name: model1TunnelName(key),
+		Key: key, Name: ovsdbTunnelName(key),
 		Addresses: []string{"02:00:00:00:00:01 198.51.100.10"},
-		UDPPort:   4789, Bridge: "br-model1",
+		UDPPort:   4789, Bridge: "br-ovsdb",
 	}
 }
 
-func model1DatabaseNetwork() Model1Network {
+func ovsdbDatabaseNetwork() Model1Network {
 	return Model1Network{
-		NetworkID: "test-network", LogicalSwitch: "ls-model1",
-		PhysicalNetwork: "m1-physnet", ProviderBridge: "br-model1", VNI: 1000,
+		NetworkID: "test-network", LogicalSwitch: "ls-ovsdb",
+		PhysicalNetwork: "ovsdb-physnet", ProviderBridge: "br-ovsdb", VNI: 1000,
 	}
 }
 
-func updateModel1BridgeMappings(t *testing.T, ctx context.Context, ovs client.Client, mappings string) {
+func updateOVSDBBridgeMappings(t *testing.T, ctx context.Context, ovs client.Client, mappings string) {
 	t.Helper()
 	var roots []vswitch.OpenvSwitch
 	if err := ovs.List(ctx, &roots); err != nil {
@@ -172,28 +172,28 @@ func updateModel1BridgeMappings(t *testing.T, ctx context.Context, ovs client.Cl
 	}
 	root := roots[0]
 	root.ExternalIDs = copyStringMap(root.ExternalIDs)
-	root.ExternalIDs[model1BridgeMappingsKey] = mappings
+	root.ExternalIDs[ovsdbBridgeMappingsKey] = mappings
 	ops, err := ovs.Where(&vswitch.OpenvSwitch{UUID: root.UUID}).Update(&root, &root.ExternalIDs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := transactModel1(ctx, ovs, ops...); err != nil {
+	if err := transactOVSDB(ctx, ovs, ops...); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestOVSDBProgrammedLibovsdbTransactionsAreOwnedIdempotentAndWithdrawalSafe(t *testing.T) {
 	ctx := context.Background()
-	nbDB, ovsDB := model1TestDatabases(t)
+	nbDB, ovsDB := ovsdbTestDatabases(t)
 	nb, ovs := nbDB.client, ovsDB.client
-	seedModel1Topology(t, ctx, nb, ovs)
+	seedOVSDBTopology(t, ctx, nb, ovs)
 	programmer, err := NewLibovsdbModel1Programmer(nb, ovs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tunnel := model1DatabaseTunnel()
+	tunnel := ovsdbDatabaseTunnel()
 	tunnel.Addresses = append(tunnel.Addresses, "02:00:00:00:00:02 198.51.100.11")
-	network := model1DatabaseNetwork()
+	network := ovsdbDatabaseNetwork()
 	if err := programmer.EnsureModel1Network(ctx, network); err != nil {
 		t.Fatal(err)
 	}
@@ -217,12 +217,12 @@ func TestOVSDBProgrammedLibovsdbTransactionsAreOwnedIdempotentAndWithdrawalSafe(
 	if len(logicalSwitches) != 1 || logicalSwitches[0].ExternalIDs["unrelated"] != "preserve-nb" {
 		t.Fatalf("unrelated NBDB state changed: %+v", logicalSwitches)
 	}
-	if len(logicalPorts) != 1 || logicalPorts[0].Name != model1NetworkPortName(network) ||
-		logicalPorts[0].Type != "localnet" || !sameModel1Addresses(logicalPorts[0].Addresses, []string{"unknown"}) ||
-		!model1MapsEqual(logicalPorts[0].Options, model1LocalnetOptions(network)) ||
+	if len(logicalPorts) != 1 || logicalPorts[0].Name != ovsdbNetworkPortName(network) ||
+		logicalPorts[0].Type != "localnet" || !sameOVSDBAddresses(logicalPorts[0].Addresses, []string{"unknown"}) ||
+		!ovsdbMapsEqual(logicalPorts[0].Options, ovsdbLocalnetOptions(network)) ||
 		logicalPorts[0].Tag != nil ||
-		!model1IDsMatch(logicalPorts[0].ExternalIDs, model1NetworkExternalIDs(network)) ||
-		!model1Contains(logicalSwitches[0].Ports, logicalPorts[0].UUID) {
+		!ovsdbIDsMatch(logicalPorts[0].ExternalIDs, ovsdbNetworkExternalIDs(network)) ||
+		!ovsdbContains(logicalSwitches[0].Ports, logicalPorts[0].UUID) {
 		t.Fatalf("unexpected owned NBDB localnet LSP state: switches=%+v ports=%+v", logicalSwitches, logicalPorts)
 	}
 
@@ -238,14 +238,14 @@ func TestOVSDBProgrammedLibovsdbTransactionsAreOwnedIdempotentAndWithdrawalSafe(
 	if err := ovs.List(ctx, &ports); err != nil {
 		t.Fatal(err)
 	}
-	if len(bridges) != 1 || !model1IDsMatch(bridges[0].ExternalIDs, model1ProviderBridgeExternalIDs(network)) {
+	if len(bridges) != 1 || !ovsdbIDsMatch(bridges[0].ExternalIDs, ovsdbProviderBridgeExternalIDs(network)) {
 		t.Fatalf("provider bridge was not created with owned identity: %+v", bridges)
 	}
 	var roots []vswitch.OpenvSwitch
 	if err := ovs.List(ctx, &roots); err != nil {
 		t.Fatal(err)
 	}
-	if len(roots) != 1 || !model1Contains(roots[0].Bridges, bridges[0].UUID) {
+	if len(roots) != 1 || !ovsdbContains(roots[0].Bridges, bridges[0].UUID) {
 		t.Fatalf("provider bridge is not referenced by Open_vSwitch: roots=%+v bridges=%+v", roots, bridges)
 	}
 	if len(interfaces) != 2 {
@@ -258,7 +258,7 @@ func TestOVSDBProgrammedLibovsdbTransactionsAreOwnedIdempotentAndWithdrawalSafe(
 		}
 	}
 	if vxlanInterface == nil || vxlanInterface.Type != "vxlan" ||
-		!model1MapsEqual(vxlanInterface.Options, model1VXLANOptions(tunnel)) ||
+		!ovsdbMapsEqual(vxlanInterface.Options, ovsdbVXLANOptions(tunnel)) ||
 		vxlanInterface.ExternalIDs["iface-id"] != "" {
 		t.Fatalf("unexpected static VXLAN Interface: %+v", interfaces)
 	}
@@ -272,7 +272,7 @@ func TestOVSDBProgrammedLibovsdbTransactionsAreOwnedIdempotentAndWithdrawalSafe(
 		}
 	}
 	if vxlanPort == nil || len(vxlanPort.Interfaces) != 1 ||
-		vxlanPort.Interfaces[0] != vxlanInterface.UUID || !model1Contains(bridges[0].Ports, vxlanPort.UUID) {
+		vxlanPort.Interfaces[0] != vxlanInterface.UUID || !ovsdbContains(bridges[0].Ports, vxlanPort.UUID) {
 		t.Fatalf("unexpected OVS VXLAN Port/bridge membership: ports=%+v bridges=%+v", ports, bridges)
 	}
 	if err := programmer.DeleteModel1Network(ctx, network); err == nil {
@@ -305,7 +305,7 @@ func TestOVSDBProgrammedLibovsdbTransactionsAreOwnedIdempotentAndWithdrawalSafe(
 	if err := programmer.DeleteModel1ProviderBridge(ctx, network); err != nil {
 		t.Fatalf("repeat provider-bridge withdrawal should be idempotent: %v", err)
 	}
-	waitForModel1Row(t, "withdrawn NBDB and OVSDB rows", func() (bool, error) {
+	waitForOVSDBRow(t, "withdrawn NBDB and OVSDB rows", func() (bool, error) {
 		nbRows, err := nbDB.database.List(nbDB.name, "Logical_Switch_Port")
 		if err != nil {
 			return false, err
@@ -358,7 +358,7 @@ func TestOVSDBProgrammedLibovsdbTransactionsAreOwnedIdempotentAndWithdrawalSafe(
 		cleanRoot = row.(*vswitch.OpenvSwitch)
 	}
 	if cleanRoot.ExternalIDs["unrelated"] != "preserve-openvswitch" ||
-		cleanRoot.ExternalIDs[model1BridgeMappingsKey] != "other-physnet:br-other" ||
+		cleanRoot.ExternalIDs[ovsdbBridgeMappingsKey] != "other-physnet:br-other" ||
 		len(cleanRoot.Bridges) != 0 {
 		t.Fatalf("provider-network cleanup changed unrelated bridge mappings: %+v", cleanRoot)
 	}
@@ -367,14 +367,14 @@ func TestOVSDBProgrammedLibovsdbTransactionsAreOwnedIdempotentAndWithdrawalSafe(
 func TestOVSDBProgrammedProviderMappingRejectsConflictsAndBorrowsMatchingMappings(t *testing.T) {
 	ctx := context.Background()
 	t.Run("conflicting-bridge", func(t *testing.T) {
-		nbDB, ovsDB := model1TestDatabases(t)
-		seedModel1Topology(t, ctx, nbDB.client, ovsDB.client)
-		updateModel1BridgeMappings(t, ctx, ovsDB.client, "m1-physnet:br-other,other-physnet:br-other")
+		nbDB, ovsDB := ovsdbTestDatabases(t)
+		seedOVSDBTopology(t, ctx, nbDB.client, ovsDB.client)
+		updateOVSDBBridgeMappings(t, ctx, ovsDB.client, "ovsdb-physnet:br-other,other-physnet:br-other")
 		programmer, err := NewLibovsdbModel1Programmer(nbDB.client, ovsDB.client)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := programmer.EnsureModel1Network(ctx, model1DatabaseNetwork()); err == nil {
+		if err := programmer.EnsureModel1Network(ctx, ovsdbDatabaseNetwork()); err == nil {
 			t.Fatal("conflicting physical-network bridge mapping was accepted")
 		}
 		var ports []nbdb.LogicalSwitchPort
@@ -387,27 +387,27 @@ func TestOVSDBProgrammedProviderMappingRejectsConflictsAndBorrowsMatchingMapping
 	})
 
 	t.Run("provider-bridge-already-mapped", func(t *testing.T) {
-		nbDB, ovsDB := model1TestDatabases(t)
-		seedModel1Topology(t, ctx, nbDB.client, ovsDB.client)
-		updateModel1BridgeMappings(t, ctx, ovsDB.client, "other-physnet:br-model1")
+		nbDB, ovsDB := ovsdbTestDatabases(t)
+		seedOVSDBTopology(t, ctx, nbDB.client, ovsDB.client)
+		updateOVSDBBridgeMappings(t, ctx, ovsDB.client, "other-physnet:br-ovsdb")
 		programmer, err := NewLibovsdbModel1Programmer(nbDB.client, ovsDB.client)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := programmer.EnsureModel1Network(ctx, model1DatabaseNetwork()); err == nil {
+		if err := programmer.EnsureModel1Network(ctx, ovsdbDatabaseNetwork()); err == nil {
 			t.Fatal("provider bridge shared by another physical network was accepted")
 		}
 	})
 
 	t.Run("matching-mapping-is-borrowed", func(t *testing.T) {
-		nbDB, ovsDB := model1TestDatabases(t)
-		seedModel1Topology(t, ctx, nbDB.client, ovsDB.client)
-		updateModel1BridgeMappings(t, ctx, ovsDB.client, "m1-physnet:br-model1,other-physnet:br-other")
+		nbDB, ovsDB := ovsdbTestDatabases(t)
+		seedOVSDBTopology(t, ctx, nbDB.client, ovsDB.client)
+		updateOVSDBBridgeMappings(t, ctx, ovsDB.client, "ovsdb-physnet:br-ovsdb,other-physnet:br-other")
 		programmer, err := NewLibovsdbModel1Programmer(nbDB.client, ovsDB.client)
 		if err != nil {
 			t.Fatal(err)
 		}
-		network := model1DatabaseNetwork()
+		network := ovsdbDatabaseNetwork()
 		if err := programmer.EnsureModel1Network(ctx, network); err != nil {
 			t.Fatal(err)
 		}
@@ -418,11 +418,11 @@ func TestOVSDBProgrammedProviderMappingRejectsConflictsAndBorrowsMatchingMapping
 		if err := ovsDB.client.List(ctx, &roots); err != nil {
 			t.Fatal(err)
 		}
-		if len(roots) != 1 || roots[0].ExternalIDs[model1BridgeMappingsKey] !=
-			"m1-physnet:br-model1,other-physnet:br-other" {
+		if len(roots) != 1 || roots[0].ExternalIDs[ovsdbBridgeMappingsKey] !=
+			"ovsdb-physnet:br-ovsdb,other-physnet:br-other" {
 			t.Fatalf("cleanup removed or changed a borrowed mapping: %+v", roots)
 		}
-		if _, owned := roots[0].ExternalIDs[model1BridgeMappingOwnerKey(network.PhysicalNetwork)]; owned {
+		if _, owned := roots[0].ExternalIDs[ovsdbBridgeMappingOwnerKey(network.PhysicalNetwork)]; owned {
 			t.Fatalf("cleanup left OVSDB-Programmed ownership metadata for a borrowed mapping: %+v", roots[0].ExternalIDs)
 		}
 		if err := programmer.DeleteModel1ProviderBridge(ctx, network); err == nil {
@@ -442,7 +442,7 @@ func TestOVSDBProgrammedProviderNetworkRequiresStandaloneBridgeWithoutController
 			bridge: func() *vswitch.Bridge {
 				failMode := vswitch.BridgeFailModeStandalone
 				return &vswitch.Bridge{
-					UUID: uuid.NewString(), Name: "br-model1", FailMode: &failMode,
+					UUID: uuid.NewString(), Name: "br-ovsdb", FailMode: &failMode,
 					ExternalIDs: map[string]string{"owner": "someone-else"},
 				}
 			}(),
@@ -450,17 +450,17 @@ func TestOVSDBProgrammedProviderNetworkRequiresStandaloneBridgeWithoutController
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			nbDB, ovsDB := model1TestDatabases(t)
-			seedModel1Row(t, ctx, nbDB.client, &nbdb.LogicalSwitch{
-				UUID: uuid.NewString(), Name: "ls-model1",
+			nbDB, ovsDB := ovsdbTestDatabases(t)
+			seedOVSDBRow(t, ctx, nbDB.client, &nbdb.LogicalSwitch{
+				UUID: uuid.NewString(), Name: "ls-ovsdb",
 			})
 			root := &vswitch.OpenvSwitch{
 				UUID: uuid.NewString(),
 				ExternalIDs: map[string]string{
-					model1BridgeMappingsKey: "other-physnet:br-other",
+					ovsdbBridgeMappingsKey: "other-physnet:br-other",
 				},
 			}
-			seedModel1Row(t, ctx, ovsDB.client, root)
+			seedOVSDBRow(t, ctx, ovsDB.client, root)
 			if tt.bridge != nil {
 				ops, err := ovsDB.client.Create(tt.bridge)
 				if err != nil {
@@ -472,7 +472,7 @@ func TestOVSDBProgrammedProviderNetworkRequiresStandaloneBridgeWithoutController
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := transactModel1(ctx, ovsDB.client, append(ops, mutate...)...); err != nil {
+				if err := transactOVSDB(ctx, ovsDB.client, append(ops, mutate...)...); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -480,7 +480,7 @@ func TestOVSDBProgrammedProviderNetworkRequiresStandaloneBridgeWithoutController
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := programmer.EnsureModel1Network(ctx, model1DatabaseNetwork()); err == nil {
+			if err := programmer.EnsureModel1Network(ctx, ovsdbDatabaseNetwork()); err == nil {
 				t.Fatal("invalid provider bridge configuration was accepted")
 			}
 			var ports []nbdb.LogicalSwitchPort
@@ -494,7 +494,7 @@ func TestOVSDBProgrammedProviderNetworkRequiresStandaloneBridgeWithoutController
 			if err := ovsDB.client.List(ctx, &roots); err != nil {
 				t.Fatal(err)
 			}
-			if len(roots) != 1 || roots[0].ExternalIDs[model1BridgeMappingsKey] != "other-physnet:br-other" {
+			if len(roots) != 1 || roots[0].ExternalIDs[ovsdbBridgeMappingsKey] != "other-physnet:br-other" {
 				t.Fatalf("invalid bridge configuration changed bridge mappings: %+v", roots)
 			}
 		})
@@ -503,13 +503,13 @@ func TestOVSDBProgrammedProviderNetworkRequiresStandaloneBridgeWithoutController
 
 func TestOVSDBProgrammedProviderBridgeCleanupProtectsForeignPorts(t *testing.T) {
 	ctx := context.Background()
-	nbDB, ovsDB := model1TestDatabases(t)
-	seedModel1Topology(t, ctx, nbDB.client, ovsDB.client)
+	nbDB, ovsDB := ovsdbTestDatabases(t)
+	seedOVSDBTopology(t, ctx, nbDB.client, ovsDB.client)
 	programmer, err := NewLibovsdbModel1Programmer(nbDB.client, ovsDB.client)
 	if err != nil {
 		t.Fatal(err)
 	}
-	network := model1DatabaseNetwork()
+	network := ovsdbDatabaseNetwork()
 	if err := programmer.EnsureModel1Network(ctx, network); err != nil {
 		t.Fatal(err)
 	}
@@ -546,7 +546,7 @@ func TestOVSDBProgrammedProviderBridgeCleanupProtectsForeignPorts(t *testing.T) 
 	}
 	ops := append(createInterface, createPort...)
 	ops = append(ops, attach...)
-	if err := transactModel1(ctx, ovsDB.client, ops...); err != nil {
+	if err := transactOVSDB(ctx, ovsDB.client, ops...); err != nil {
 		t.Fatal(err)
 	}
 	if err := programmer.DeleteModel1Network(ctx, network); err != nil {
@@ -570,14 +570,14 @@ func TestOVSDBProgrammedProviderBridgeCleanupProtectsForeignPorts(t *testing.T) 
 
 func TestOVSDBProgrammedPartialApplyReportsRetryRecovery(t *testing.T) {
 	ctx := context.Background()
-	nbDB, ovsDB := model1TestDatabases(t)
+	nbDB, ovsDB := ovsdbTestDatabases(t)
 	nb, ovs := nbDB.client, ovsDB.client
-	seedModel1Root(t, ctx, ovs)
+	seedOVSDBRoot(t, ctx, ovs)
 	programmer, err := NewLibovsdbModel1Programmer(nb, ovs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	network := model1DatabaseNetwork()
+	network := ovsdbDatabaseNetwork()
 	err = programmer.EnsureModel1Network(ctx, network)
 	var partial *Model1PartialOperationError
 	if !errors.As(err, &partial) || partial.Operation != "ensure provider network" ||
@@ -585,7 +585,7 @@ func TestOVSDBProgrammedPartialApplyReportsRetryRecovery(t *testing.T) {
 		partial.Recovery != "retry EnsureModel1Network with the same network specification" {
 		t.Fatalf("expected explicit recoverable cross-database failure, got %T %v", err, err)
 	}
-	seedModel1Row(t, ctx, nb, &nbdb.LogicalSwitch{UUID: uuid.NewString(), Name: "ls-model1"})
+	seedOVSDBRow(t, ctx, nb, &nbdb.LogicalSwitch{UUID: uuid.NewString(), Name: "ls-ovsdb"})
 	if err := programmer.EnsureModel1Network(ctx, network); err != nil {
 		t.Fatalf("retry did not complete prior partial network ensure: %v", err)
 	}
@@ -593,11 +593,11 @@ func TestOVSDBProgrammedPartialApplyReportsRetryRecovery(t *testing.T) {
 	if err := nb.List(ctx, &logicalPorts); err != nil {
 		t.Fatal(err)
 	}
-	if len(logicalPorts) != 1 || logicalPorts[0].Name != model1NetworkPortName(network) ||
+	if len(logicalPorts) != 1 || logicalPorts[0].Name != ovsdbNetworkPortName(network) ||
 		logicalPorts[0].Type != "localnet" {
 		t.Fatalf("retry did not preserve a single localnet LSP: %+v", logicalPorts)
 	}
-	tunnel := model1DatabaseTunnel()
+	tunnel := ovsdbDatabaseTunnel()
 	if err := programmer.EnsureModel1Tunnel(ctx, tunnel); err != nil {
 		t.Fatalf("ensure static tunnel: %v", err)
 	}
@@ -622,7 +622,7 @@ func TestOVSDBProgrammedPartialApplyReportsRetryRecovery(t *testing.T) {
 func TestOVSDBProgrammedDatabaseStepFailureIsExplicitAndPreservesCause(t *testing.T) {
 	want := errors.New("injected second database failure")
 	var completed []string
-	err := runModel1DatabaseSteps("withdraw", "NBDB", "OVSDB", "retry delete",
+	err := runOVSDBDatabaseSteps("withdraw", "NBDB", "OVSDB", "retry delete",
 		func() error { completed = append(completed, "NBDB"); return nil },
 		func() error { completed = append(completed, "OVSDB"); return want })
 	var partial *Model1PartialOperationError

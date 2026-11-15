@@ -49,28 +49,6 @@ type networkConfig struct {
 	ProviderBridge  string `json:"provider_bridge"`
 }
 
-type goBGPSpeakerReadiness struct {
-	Client   api.GoBgpServiceClient
-	ASN      uint32
-	RouterID string
-}
-
-func (r goBGPSpeakerReadiness) Check(ctx context.Context) error {
-	if r.Client == nil {
-		return fmt.Errorf("GoBGP readiness client is required")
-	}
-	response, err := r.Client.GetBgp(ctx, &api.GetBgpRequest{})
-	if err != nil {
-		return fmt.Errorf("read GoBGP speaker identity: %w", err)
-	}
-	global := response.GetGlobal()
-	if global == nil || global.Asn != r.ASN || global.RouterId != r.RouterID {
-		return fmt.Errorf("GoBGP speaker identity mismatch: expected ASN=%d routerID=%s, got %v",
-			r.ASN, r.RouterID, global)
-	}
-	return nil
-}
-
 func (c standaloneFileConfig) validate() (time.Duration, evpn.Model1Network, evpn.RemoteImportConfig, error) {
 	required := map[string]string{
 		"GoBGP endpoint": c.GoBGP.Endpoint, "OVN NBDB endpoint": c.OVNNBEndpoint,
@@ -100,10 +78,10 @@ func (c standaloneFileConfig) validate() (time.Duration, evpn.Model1Network, evp
 		PhysicalNetwork: c.Network.PhysicalNetwork, ProviderBridge: c.Network.ProviderBridge,
 		VNI: c.Network.VNI,
 	}
-	modelConfig := evpn.Model1Config{
+	ovsdbConfig := evpn.Model1Config{
 		Networks: []evpn.Model1Network{network}, UDPPort: c.UDPPort, ExclusiveWriter: true,
 	}
-	if err := modelConfig.Validate(); err != nil {
+	if err := ovsdbConfig.Validate(); err != nil {
 		return 0, evpn.Model1Network{}, evpn.RemoteImportConfig{}, err
 	}
 	if len(c.AllowedRemoteVTEPs) != 1 {
@@ -211,11 +189,11 @@ func run(
 	gobgpClient := api.NewGoBgpServiceClient(gobgpConn)
 	ribSource := &evpn.GoBGPRemoteRIBSource{
 		Client: gobgpClient,
-		Gate: goBGPSpeakerReadiness{
+		Gate: evpn.GoBGPIdentityReadiness{
 			Client: gobgpClient, ASN: config.GoBGP.ASN, RouterID: config.GoBGP.RouterID,
 		},
 	}
-	importer, err := evpn.NewReadOnlyType2Importer(ribSource, importerConfig)
+	importer, err := evpn.NewReadOnlyType2ImporterFromSnapshot(ribSource, importerConfig)
 	if err != nil {
 		return fmt.Errorf("create validated Type-2 importer: %w", err)
 	}

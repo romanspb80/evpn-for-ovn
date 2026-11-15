@@ -1,0 +1,27 @@
+@startuml
+title Proposed / Future | independent OVN domains with GoBGP Type-2
+top to bottom direction
+skinparam backgroundColor #FCFCFD
+skinparam defaultFontName DejaVu Sans
+skinparam defaultFontSize 14
+skinparam shadowing false
+skinparam ArrowColor #475569
+skinparam rectangleBackgroundColor #F1F5F9
+skinparam rectangleBorderColor #64748B
+
+rectangle "Domain A | independent OVN control plane\nNBDB / northd / SBDB A\nNode-Agent A + GoBGP A\novn-controller / OVS A + endpoint A" as a
+rectangle "Domain B | independent OVN control plane\nNBDB / northd / SBDB B\nNode-Agent B + GoBGP B\novn-controller / OVS B + endpoint B" as b
+
+a -[#2563EB,dashed]- b : BGP EVPN Type-2 control
+a -[#15803D,dashed]- b : proposed external VXLAN packet path
+
+legend bottom
+  Proposed topology; no independent-domain end-to-end validation.
+  Blue: BGP Type-2 control | Green: workload packets
+  No shared OVN NBDB / SBDB is assumed.
+  Importer owns only its exact Linux FDB / neighbor state.
+  ovn-controller observes it and programs OVS.
+  Exact route and imported-state ownership stay local.
+  Shared-OVN results do not validate this inter-domain packet path.
+endlegend
+@enduml

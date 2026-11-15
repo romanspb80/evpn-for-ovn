@@ -194,6 +194,33 @@ func TestStandaloneCLIChild(t *testing.T) {
 	t.Fatal("missing CLI subprocess arguments")
 }
 
+func TestCohostedCLIRejectsDifferentSpeakersBeforeStartup(t *testing.T) {
+	dir := t.TempDir()
+	export := filepath.Join(dir, "export.json")
+	importer := filepath.Join(dir, "import.json")
+	if err := os.WriteFile(export, []byte(`{"Enabled":true,"NodeName":"node-a","LocalChassis":"chassis-a",
+		"GRPCEndpoint":"unix:///run/gobgp.sock","ASN":64512,"RouterID":"192.0.2.1",
+		"Networks":[{"Enabled":true,"NetworkID":"n","LogicalSwitch":"ls","VNI":100,
+		"LocalVTEP":"192.0.2.1","RouteDistinguisher":"64512:100","RouteTargets":["64512:100"]}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(importer, []byte(`{"Enabled":true,"GRPCEndpoint":"unix:///run/gobgp.sock",
+		"ASN":64512,"RouterID":"192.0.2.2",
+		"Import":{"LocalVTEP":"192.0.2.1","Networks":[{"NetworkID":"n","VNI":100,
+		"ImportRouteTargets":["64512:100"],"AllowedVTEPs":["192.0.2.3"]}]},
+		"Netlink":{"Enabled":true,"ExclusiveWriter":true,"StateDirectory":"/tmp/remote",
+		"Networks":[{"NetworkID":"n","LogicalSwitch":"ls","VNI":100,"BridgeDevice":"br1","VXLANDevice":"vx1"}]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestStandaloneCLIChild$", "--",
+		"--evpn-export-config="+export, "--evpn-remote-config="+importer)
+	cmd.Env = append(os.Environ(), "EVPN_STANDALONE_CLI_CHILD=1")
+	output, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "invalid co-hosted EVPN configuration") {
+		t.Fatalf("mismatched speakers not rejected before startup: %v: %s", err, output)
+	}
+}
+
 func TestValidateStandaloneImportOnly(t *testing.T) {
 	validRemote := nodeagent.RemoteRuntimeConfig{
 		Enabled:               true,

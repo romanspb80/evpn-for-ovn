@@ -1,5 +1,12 @@
 # Operator-managed EVPN Type-2 acceptance
 
+> **Historical engineering record:** results apply to the stated fixtures
+> and source inputs, not automatically to the current tree. Local artifact
+> paths are provenance and may be unavailable. For current status and
+> reproducible entry points, see the
+> [capability matrix](../project/capability-matrix.md) and
+> [Testing Guide](../../TESTING_GUIDE.md).
+
 This is a disposable integration suite, not a production-readiness claim.
 It uses the actual operator, CNI, Node-Agent, OVN/OVS and independently managed
 k8gobgp speaker. It does not replace the specialized CNI, OVSDB, continuity
@@ -37,9 +44,9 @@ FRR -> GoBGP RIB -> actual Node-Agent importer
 ```
 
 The remote dataplane is **FRR/Linux, not a second OVN installation**.
-No multi-node EvpnCore behavior is introduced. There is one control-plane
-Node and one worker; both operator-managed OVN/OVS and Node-Agent are pinned
-to that worker through `spec.dataplaneNode`.
+This historical one-chassis acceptance introduces no multi-node EvpnCore
+behavior. It has one control-plane Node and one worker; both operator-managed
+OVN/OVS and Node-Agent are pinned to that worker through `spec.dataplaneNode`.
 
 | Responsibility | Implementation |
 |---|---|
@@ -62,7 +69,7 @@ Its authenticated transport also checks administrator-pinned executable/image,
 Node/DaemonSet/Pod/container identities and independently queried containerd
 process membership. The provider keeps its independent lifecycle.
 
-The compatibility `evpn-mgmt`/advertisement applications also run from the
+The compatibility `evpn-mgmt`/advertisement services also run from the
 operator's YAML. A separately owned test-only TCP-to-Unix byte-stream proxy
 provides their legacy gRPC endpoint. **It neither implements BGP nor writes
 BGPConfiguration, and it is not the Node-Agent's export/import path.**
@@ -137,8 +144,8 @@ ownership records and removes only the test-owned image reference.
 Raw evidence contains administrative kubeconfig/CNI credentials: the
 run directory is mode 0700, must remain private, and must not be committed.
 
-Default evidence root: `/tmp/evpn-operator-type2-e2e/attempt-<UTC>-<random>`.
-Override only the root with `EVPN_OPERATOR_TYPE2_EVIDENCE_ROOT`.
+The runner writes each attempt to a private per-run evidence directory.
+`EVPN_OPERATOR_TYPE2_EVIDENCE_ROOT` overrides the base directory.
 
 `result.json` and `cases.tsv` distinguish PASS, FAIL, BLOCKED and NOT TESTED.
 Exit 0 requires all cases PASS and successful cleanup. An assertion/setup
@@ -164,15 +171,16 @@ the test requires an unchanged journal and no attachment or route. Successful
 replacement ADD then uses a real kubelet/containerd/Multus-created Pod. This
 does not claim that a fabricated sandbox is an authenticated rollback/retry.
 
-### Current Phase D validation boundary
+<a id="combined-recovery-validation"></a>
+### Historical combined recovery validation
 
 The SO_PEERPIDFD ownership correction passes both complete real suites:
 
-| Run | Evidence directory | Result |
+| Run | Evidence access | Result |
 |---|---|---|
-| Normal agent rollout and speaker replacement | `/tmp/evpn-operator-type2-e2e/attempt-20261106T095441Z-4497c78a` | PASS, testExit=0, cleanupExit=0 |
-| Additional forced agent SIGKILL and speaker replacement | `/tmp/evpn-operator-type2-e2e/attempt-20261106T101056Z-77e1d7c7` | PASS, testExit=0, cleanupExit=0 |
-| Independent operator lifecycle regression | `/tmp/evpn-operator-e2e/attempt-20261106T092145Z-7fd6e2ca` | PASS, test-exit=0, cleanup-exit=0 |
+| Normal agent rollout and speaker replacement | Private historical bundle unavailable | PASS, testExit=0, cleanupExit=0 |
+| Additional forced agent SIGKILL and speaker replacement | Private historical bundle unavailable | PASS, testExit=0, cleanupExit=0 |
+| Independent operator lifecycle regression | Private historical bundle unavailable | PASS, test-exit=0, cleanup-exit=0 |
 
 Both Type-2 runs pass all 18 reported cases, including authenticated real CNI
 activation, actual GoBGP/FRR exchange, bidirectional packet captures, importer
@@ -185,18 +193,15 @@ restart in `forced-agent-crash.txt` and `forced-agent-replacement.json`.
 
 The confirmed defect and descriptor audit are described in
 [CNI peer descriptor ownership](type2-restart-ownership.md#cni-peer-descriptor-ownership).
-The payload-free causal trace is
-`/tmp/evpn-rpc-boundary-20261106T0712/replacement-fd.strace`:
+The historical payload-free causal trace, which is not retained publicly,
+recorded:
 SO_PEERPIDFD on incoming CNI fd 41 failed with EINVAL at 07:31:06.110027;
 CNI cleanup incorrectly closed the active GoBGP fd 0 at 07:31:06.143988.
 No provider, RPC deadline, reconnect policy or GoBGP API change is part of
 this correction.
 
-Focused evidence is in `/tmp/evpn-pidfd-fix-20261106/`:
-`race.log`, `vet-all.log`, `root.log`, `root-continuity.log`,
-`receipts-root.log`, `importer-root.log`, `journal-root.log`,
-`operator-lifecycle.log`, `type2-acceptance.log` and
-`type2-crash-acceptance.log`. Subprocess regressions cover error-zero ownership,
+The private focused-test bundle is unavailable publicly. It included
+subprocess regressions covering error-zero ownership,
 an active unrelated Unix connection on fd zero, valid pidfd zero, exactly-once
 cleanup and independent concurrent GetBgp RPCs. Root exporter SIGKILL tests
 exercise all six add/delete intent/execution/acknowledgement boundaries,
@@ -219,10 +224,8 @@ still invokes the actual CNI CLI against the test server's fake backends;
 it does not replace authenticated real-runtime acceptance.
 
 Final stabilization's unfiltered root Node-Agent suite and both root/non-root
-interop race regressions pass. Evidence is in
-`/tmp/evpn-phase-d-stabilization-20261106/`: `interop-nonroot.log`,
-`interop-root.log`, `nodeagent-root.log`, `race.jsonl`, `all-tests.jsonl`,
-`vet.log`, `evpn-root.log` and `ownership-root.log`.
+interop race regressions were reported passing. Their private evidence bundle
+is unavailable publicly.
 Environment-gated tests are listed separately in the corresponding
 `*-skips.txt` files. Seven live/disposable-runtime Node-Agent tests and
 disposable-runtime importer kernel crash tests remain skipped in host-focused
@@ -234,9 +237,8 @@ production code and real acceptance semantics are unchanged. The two complete
 real runs above are therefore retained evidence, not newly rerun E2Es.
 The stabilization pass also runs `go test -race -count=1 ./...`,
 `go test -count=1 ./...`, `go vet ./...` and the unfiltered compiled root
-Node-Agent suite. The full changed-file inventory relative to main HEAD is
-`/tmp/evpn-phase-d-stabilization-20261106/changed-files.txt` (87 files,
-including preserved earlier uncommitted changes).
+Node-Agent suite. The full changed-file inventory relative to main HEAD was recorded privately
+and is unavailable for independent review.
 
 Retained unacknowledged AddPath, invalid provider identity, foreign ownership,
 missing/corrupted journals and fabricated creation requests remain fail-closed.
@@ -248,13 +250,13 @@ Commands used for this correction:
 ```text
 go test -race -count=1 ./pkg/nodeagent ./pkg/evpn ./pkg/ownership ./deploy/operator/... ./cmd/evpn-cni ./cmd/evpn-node-agent
 go vet ./...
-go test -race -c ./pkg/nodeagent -o /tmp/evpn-pidfd-nodeagent-continuity-20261106.test
-(cd pkg/nodeagent && sudo /tmp/evpn-pidfd-nodeagent-continuity-20261106.test -test.run 'TestCNI|TestAgentAuthority|TestProvider|TestSpeaker|TestExporterAuthority' -test.v)
-go test -race -c ./pkg/evpn -o /tmp/evpn-pidfd-evpn-root-20261106.test
-sudo /tmp/evpn-pidfd-evpn-root-20261106.test -test.run 'TestExportRecovery|TestRemoteRecovery' -test.v
-sudo /tmp/evpn-pidfd-evpn-root-20261106.test -test.run 'TestImporterRecovery' -test.v
-go test -race -c ./pkg/ownership -o /tmp/evpn-pidfd-journal-root-20261106.test
-sudo /tmp/evpn-pidfd-journal-root-20261106.test -test.v
+go test -race -c ./pkg/nodeagent -o /tmp/evpn-nodeagent-continuity.test
+(cd pkg/nodeagent && sudo /tmp/evpn-nodeagent-continuity.test -test.run 'TestCNI|TestAgentAuthority|TestProvider|TestSpeaker|TestExporterAuthority' -test.v)
+go test -race -c ./pkg/evpn -o /tmp/evpn-evpn-root.test
+sudo /tmp/evpn-evpn-root.test -test.run 'TestExportRecovery|TestRemoteRecovery' -test.v
+sudo /tmp/evpn-evpn-root.test -test.run 'TestImporterRecovery' -test.v
+go test -race -c ./pkg/ownership -o /tmp/evpn-journal-root.test
+sudo /tmp/evpn-journal-root.test -test.v
 bash tools/run-operator-e2e.sh
 bash tools/run-operator-type2-e2e.sh
 EVPN_OPERATOR_TYPE2_FORCE_AGENT_CRASH=1 bash tools/run-operator-type2-e2e.sh
@@ -278,85 +280,33 @@ docs/architecture/operator-type2-acceptance.md
 
 ### Historical pre-correction attempts
 
-The earlier retained-implementation attempt
-`/tmp/evpn-operator-type2-e2e/attempt-20261105T225857Z-578a9f97`
-passed real CNI identity activation, exported/imported Type-2, MP-BGP,
+An earlier retained-implementation attempt passed real CNI identity activation,
+exported/imported Type-2, MP-BGP,
 bidirectional VXLAN, operator/importer restarts and live-endpoint Node-Agent
 restart without CNI replay. Replacement exporter evidence independently shows
 RUNNING with four fresh UUIDs and a changed attested speaker incarnation.
 Importer observation after replacement did not regain authoritative RIB
 convergence before the descriptor correction. Final withdrawal, later
 CNI lifecycle/outage lanes and final foreign-resource assertions were not
-reached. The subsequent attempt
-`/tmp/evpn-operator-type2-e2e/attempt-20261105T230718Z-2eb2c4c1`
-also failed speaker recovery; its unsuccessful transport-retry experiment was
+reached. The subsequent attempt also failed speaker recovery; its unsuccessful
+transport-retry experiment was
 reverted. See the exact [creation trust model and task inventory](cni-creation-authority.md).
 
-Historically, the attempt `/tmp/evpn-operator-type2-e2e/attempt-20261105T213913Z-a7308ffe`
-passed installation ownership and independently attested importer restart,
+Another historical attempt passed installation ownership and independently
+attested importer restart,
 but failed live CNI Pod creation. The containerd v2.0.3 creation-time
 inspector reported that the new sandbox ID was not yet present in the
 `k8s.io` container store. The agent correctly refused unverified endpoint
 creation. Cleanup passed. Local exporter, live-endpoint Node-Agent restart,
 speaker restart and post-recovery packet/withdrawal assertions were **not
-tested** in this attempt; this evidence is not full Phase D acceptance.
+tested** in this attempt; this evidence is not full combined acceptance.
 
-The earlier operator lifecycle suite passed at
-`/tmp/evpn-operator-e2e/attempt-20261105T231712Z-44d0ab3c`.
+The earlier operator lifecycle suite was also reported passing.
 Focused exporter crash/race, provider attestation and CNI continuity tests
 did not substitute for the subsequently completed combined acceptance above.
 
-### Phase D file inventory
-
-The following paths were changed for this recovery phase; other dirty paths
-belong to preserved earlier operator/Phase B/Phase C work.
-
-```text
-TESTING_GUIDE.md
-go.mod
-go.sum
-cmd/evpn-node-agent/main.go
-deploy/operator/api/v1alpha1/evpncore_types.go
-deploy/operator/controllers/manifest.go
-deploy/operator/controllers/provider_attestation_test.go
-deploy/operator/core-resources.yaml
-deploy/operator/manifests/operator.yaml
-deploy/operator/manifests/provider-attestation.yaml
-docs/architecture/cni-endpoint-continuity.md
-docs/architecture/operator-type2-acceptance.md
-docs/architecture/type2-restart-ownership.md
-pkg/evpn/export_recovery.go
-pkg/evpn/export_recovery_test.go
-pkg/evpn/exporter.go
-pkg/evpn/remote_type2.go
-pkg/evpn/type2_gobgp.go
-pkg/evpn/type2_gobgp_test.go
-pkg/evpn/type2_lifecycle.go
-pkg/nodeagent/cni_continuity.go
-pkg/nodeagent/cni_continuity_attestation_test.go
-pkg/nodeagent/cni_continuity_cri_linux.go
-pkg/nodeagent/cni_continuity_cri_linux_test.go
-pkg/nodeagent/cni_continuity_delete.go
-pkg/nodeagent/cni_continuity_export.go
-pkg/nodeagent/cni_continuity_multus_test.go
-pkg/nodeagent/cni_continuity_runtime.go
-pkg/nodeagent/cni_continuity_sandbox.go
-pkg/nodeagent/cni_continuity_sandbox_test.go
-pkg/nodeagent/cni_continuity_test.go
-pkg/nodeagent/export_continuity.go
-pkg/nodeagent/export_runtime.go
-pkg/nodeagent/network_backend.go
-pkg/nodeagent/provider_attestation_linux.go
-pkg/nodeagent/provider_attestation_linux_test.go
-pkg/nodeagent/provider_containerd_linux.go
-pkg/nodeagent/provider_transport.go
-pkg/nodeagent/remote_runtime.go
-pkg/nodeagent/server.go
-pkg/nodeagent/speaker_continuity_integration_test.go
-pkg/nodeagent/speaker_continuity_linux.go
-pkg/nodeagent/speaker_continuity_linux_test.go
-tools/run-operator-type2-e2e.sh
-```
+<a id="acceptance-observations"></a>
+### Acceptance observations
 
 The suite independently records:
 
@@ -417,7 +367,7 @@ replay. Provider BGPConfiguration UID/spec/generation must remain unchanged.
 Subsequent lifecycle assertions verify actual withdrawal and foreign survivors.
 
 These are bounded safe scenarios, not universal restart recovery.
-The [Phase D API investigation](type2-restart-ownership.md#phase-d-api-investigation-unresolved-addpath)
+The [AddPath recovery limitation](type2-restart-ownership.md#addpath-ownership-limitation)
 verified that the actual provider fork cannot recover an AddPath UUID lost
 before durable acknowledgement. A retained ambiguous AddPath stays blocked.
 Focused exporter SIGKILL tests verify both safe recovery and that expected
@@ -436,4 +386,99 @@ long-duration churn testing, reproducible public runtime images, and
 operational/security hardening. Privileged/root, host networking, host PID,
 host sockets and admin-equivalent EvpnCore authoring remain trust boundaries.
 No Type-5, multihoming, DCI, standalone provider, tenant-safe delegation,
-multi-node operator or remote OVN acceptance is claimed.
+general multi-node operator lifecycle or remote OVN acceptance is claimed by
+this historical one-chassis record. The separate attempt-8 scope follows.
+
+## Attempt 8: inventory-gated two-worker Type-2 forwarding
+
+**Result: PASS within the exact scenario boundary.** This is a separate
+acceptance from the one-chassis lifecycle and recovery runs above. It validates
+the initial inventory-gated Type-2 export/import and workload-to-external-peer
+forwarding path on two workers. It does not extend the earlier lifecycle
+results to this topology.
+
+### Provenance and source identity
+
+| Item | Verified value |
+|---|---|
+| Scenario / attempt | `operator-inventory-type2-two-worker`, VM attempt 8 |
+| Scenario result | `OPERATOR_INVENTORY_TWO_WORKER_PASS`; Type-2 `PASS`; recovery `NOT_TESTED` |
+| Guest evidence archive SHA-256 | `69fb968cdf9ab62b712f554ecec68ccc437d0fd7168988f8fb7f8a4de694f7ef` |
+| Source archive SHA-256 | `0d05c1ec554f9f6f4fb5e1f9f8c5558b371589df8a7c4b66cd9b98ba25504cc7` |
+| Pinned OVN container SHA-256 | `304216c90562dc1c0e2a6a458cab62e13a90a7a2614a52bfa6ce171b689e54fa` |
+| Pinned GoBGP executable SHA-256 | `cb1db57e29555aef67a5d6c0bdfb7809243fffc7a8a201a55aeb93a57722a15f` |
+
+The complete guest archive checksum was verified locally. In the historical
+pre-edit comparison, all 468 files in the source archive matched the checkout
+as it existed at that time, byte-for-byte; the 44 then-current files absent
+from the archive were ignored Vagrant runtime artifacts or Python bytecode
+caches. That comparison describes only that historical checkout, not the
+current integrated revision. The comparison record also
+identified the local variable rename `modelConfig` to `ovsdbConfig` in
+`cmd/evpn-ovsdb/main.go` as a subsequent non-behavioral source edit at that
+time. The archive does not record a Git commit SHA.
+The first attempt-8 invocation stopped before scenario execution because the
+guest checkout had not been transferred. After transferring the source and
+pinned inputs, the same scenario command completed with the PASS result above.
+
+### Verified topology and Type-2 assertions
+
+The two workers were `cni-sec-e9022d22-worker` and
+`cni-sec-e9022d22-worker2`, with distinct Kubernetes Node UIDs and OVN chassis.
+They shared the OVN NB/SB Service at `10.96.105.156` (ports 6641/6642).
+Each worker had an independently attested GoBGP speaker: distinct process IDs
+and PID namespaces, router IDs `198.18.30.2` and `198.18.30.3`, and executable
+hashes matching the pinned GoBGP binary. Both Node-Agent container
+`SO_PEERPIDFD` probes succeeded. Inventory revision 1 was durably accepted on
+each worker at sequence 1, with no pending operation and
+`LOCAL_FENCES_MATCH`.
+
+Both workers exported their own local MAC/IP Type-2 route:
+
+| Worker | RD | MAC / IP | VNI | Next hop |
+|---|---|---|---:|---|
+| `cni-sec-e9022d22-worker` | `198.18.30.2:1000` | `02:00:00:00:00:11` / `10.244.240.11` | 1000 | `198.18.30.2` |
+| `cni-sec-e9022d22-worker2` | `198.18.30.3:1000` | `02:00:00:00:00:12` / `10.244.240.12` | 1000 | `198.18.30.3` |
+
+Both exports carried route target `64512:1000`.
+Each worker's authoritative import snapshot contained the external FRR
+Type-2 route with RD `198.18.30.4:1000`, MAC `02:00:00:00:00:30`, IP
+`10.244.240.30`, VNI 1000, route target `64512:1000`, and next hop
+`198.18.30.4`. Captures and route/flow observations verified the expected
+VTEPs and VNI 1000.
+
+The workload on each worker and the external FRR/Linux endpoint passed IPv4
+connectivity **3/3 in each direction**. Per-worker observed counter deltas
+were:
+
+| Counter | RX | TX |
+|---|---:|---:|
+| OVS tunnel packets | 6 | 8 |
+| Linux VXLAN packets | 14 | 12 |
+| Workload interface packets | 15 | 13 |
+
+The remote-Type-2 flow delta was 6 on each worker; observed errors and drops
+were zero. These counters and captures apply only to this run and topology.
+
+### Verification boundary
+
+The result demonstrates two distinct Kubernetes workers/chassis, independent
+GoBGP speaker identities, durable inventory acceptance on both workers,
+Type-2 local export and external route import, and bidirectional forwarding
+between each worker workload and the external endpoint. It does **not** test
+direct workload-A-to-workload-B forwarding, arbitrary multi-chassis
+topologies, or complete Operator runtime health.
+
+The following remain **NOT TESTED** by attempt 8: Node-Agent restart, GoBGP
+restart, exact withdrawal lifecycle, adoption/recovery after restart, and
+failure convergence. Foreign-resource preservation was not an assertion of
+this scenario. Generalized multi-chassis support and production readiness remain
+**UNCONFIRMED**. The archived scenario result does not itself establish cleanup
+or the execution report's focused-test claims. During the earlier consolidation,
+the then-current checkout reran the 68 focused Python tests, focused Go package
+tests, Python syntax compilation, shell syntax validation and `git diff --check`;
+these historical offline checks are not expanded E2E coverage or validation of
+the current integrated revision. In particular, the prior report
+states that attempt-8's VM was removed and its dedicated pool was empty while
+the task-owned pool and network were retained; this cleanup state is not
+independently verified here.

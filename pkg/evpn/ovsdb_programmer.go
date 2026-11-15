@@ -20,10 +20,10 @@ import (
 )
 
 const (
-	model1ManagedByKey = "evpn4ovn-managed-by"
-	model1RoleKey      = "evpn4ovn-role"
-	model1Owner        = "model1-nbdb"
-	model1TunnelRole   = "tunnel"
+	ovsdbManagedByKey = "evpn4ovn-managed-by"
+	ovsdbRoleKey      = "evpn4ovn-role"
+	ovsdbOwner        = "model1-nbdb"
+	ovsdbTunnelRole   = "tunnel"
 )
 
 type Model1Network struct {
@@ -55,7 +55,7 @@ func (c Model1Config) Validate() error {
 	for _, network := range c.Networks {
 		if strings.TrimSpace(network.NetworkID) == "" ||
 			strings.TrimSpace(network.LogicalSwitch) == "" ||
-			!validModel1BridgeMapping(network.PhysicalNetwork, network.ProviderBridge) ||
+			!validOVSDBBridgeMapping(network.PhysicalNetwork, network.ProviderBridge) ||
 			network.VNI == 0 || network.VNI > 16777215 ||
 			networks[network.NetworkID] || switches[network.LogicalSwitch] ||
 			vnis[network.VNI] || physnets[network.PhysicalNetwork] {
@@ -82,6 +82,9 @@ type Model1Tunnel struct {
 	Bridge    string
 }
 
+// Model1TunnelProgrammer is a legacy exported API name for the experimental
+// OVSDB-Programmed integration. It is deliberately separate from
+// DataplaneBackend, which has a different programming contract.
 type Model1TunnelProgrammer interface {
 	DeleteModel1ProviderBridge(context.Context, Model1Network) error
 	EnsureModel1Network(context.Context, Model1Network) error
@@ -105,9 +108,9 @@ func (e *Model1PartialOperationError) Error() string {
 
 func (e *Model1PartialOperationError) Unwrap() error { return e.Err }
 
-// Model1Type2Handler is an additive, opt-in OVSDB Type-2 route consumer. It is
-// not part of the default deployment and requires an explicitly exclusive
-// writer selection.
+// Model1Type2Handler is a legacy exported API name for the additive, opt-in
+// OVSDB-Programmed Type-2 route consumer. It is not part of the default
+// deployment and requires an explicitly exclusive writer selection.
 type Model1Type2Handler struct {
 	mu         sync.Mutex
 	reader     *ReadOnlyType2Importer
@@ -217,11 +220,11 @@ func (h *Model1Type2Handler) ReconcileSnapshot(ctx context.Context, snapshot Rem
 			NetworkID: endpoint.NetworkID, LogicalSwitch: network.LogicalSwitch,
 			VNI: endpoint.VNI, RemoteVTEP: endpoint.RemoteVTEP,
 		}
-		tunnelID := model1TunnelID(key)
+		tunnelID := ovsdbTunnelID(key)
 		tunnel, exists := desired[tunnelID]
 		if !exists {
 			tunnel = Model1Tunnel{
-				Key: key, Name: model1TunnelName(key), UDPPort: h.config.UDPPort,
+				Key: key, Name: ovsdbTunnelName(key), UDPPort: h.config.UDPPort,
 				Bridge: network.ProviderBridge,
 			}
 		} else if tunnel.Key != key {
@@ -282,14 +285,14 @@ func (h *Model1Type2Handler) ReconcileSnapshot(ctx context.Context, snapshot Rem
 	return nil
 }
 
-func model1TunnelID(key Model1TunnelKey) string {
+func ovsdbTunnelID(key Model1TunnelKey) string {
 	sum := sha256.Sum256([]byte(key.NetworkID + "\x00" + key.LogicalSwitch + "\x00" +
 		strconv.FormatUint(uint64(key.VNI), 10) + "\x00" + key.RemoteVTEP))
 	return hex.EncodeToString(sum[:])
 }
 
-func model1TunnelName(key Model1TunnelKey) string {
-	return "m1-" + model1TunnelID(key)[:12]
+func ovsdbTunnelName(key Model1TunnelKey) string {
+	return "m1-" + ovsdbTunnelID(key)[:12]
 }
 
 func compactStrings(values []string) []string {
@@ -319,6 +322,8 @@ type LibovsdbModel1Programmer struct {
 	ovs client.Client
 }
 
+var _ Model1TunnelProgrammer = (*LibovsdbModel1Programmer)(nil)
+
 func NewLibovsdbModel1Programmer(nb, ovs client.Client) (*LibovsdbModel1Programmer, error) {
 	if nb == nil || ovs == nil {
 		return nil, fmt.Errorf("OVSDB-Programmed integration requires connected NBDB and OVSDB clients")
@@ -327,20 +332,20 @@ func NewLibovsdbModel1Programmer(nb, ovs client.Client) (*LibovsdbModel1Programm
 }
 
 func (p *LibovsdbModel1Programmer) EnsureModel1Tunnel(ctx context.Context, tunnel Model1Tunnel) error {
-	if err := validateModel1Tunnel(tunnel); err != nil {
+	if err := validateOVSDBTunnel(tunnel); err != nil {
 		return err
 	}
-	return p.ensureModel1OVSTunnel(ctx, tunnel)
+	return p.ensureOVSDBOVSTunnel(ctx, tunnel)
 }
 
 func (p *LibovsdbModel1Programmer) DeleteModel1Tunnel(ctx context.Context, tunnel Model1Tunnel) error {
-	if err := validateModel1Tunnel(tunnel); err != nil {
+	if err := validateOVSDBTunnel(tunnel); err != nil {
 		return err
 	}
-	return p.deleteModel1OVSTunnel(ctx, tunnel)
+	return p.deleteOVSDBOVSTunnel(ctx, tunnel)
 }
 
-func runModel1DatabaseSteps(operation, firstDatabase, secondDatabase, recovery string, first, second func() error) error {
+func runOVSDBDatabaseSteps(operation, firstDatabase, secondDatabase, recovery string, first, second func() error) error {
 	if err := first(); err != nil {
 		return fmt.Errorf("OVSDB-Programmed %s %s step: %w", operation, firstDatabase, err)
 	}
@@ -353,10 +358,10 @@ func runModel1DatabaseSteps(operation, firstDatabase, secondDatabase, recovery s
 	return nil
 }
 
-func validateModel1Tunnel(t Model1Tunnel) error {
+func validateOVSDBTunnel(t Model1Tunnel) error {
 	if strings.TrimSpace(t.Key.NetworkID) == "" || strings.TrimSpace(t.Key.LogicalSwitch) == "" ||
 		t.Key.VNI == 0 || t.Key.VNI > 16777215 || !unicastIPv4(t.Key.RemoteVTEP) ||
-		t.Name != model1TunnelName(t.Key) || t.UDPPort == 0 || strings.TrimSpace(t.Bridge) == "" {
+		t.Name != ovsdbTunnelName(t.Key) || t.UDPPort == 0 || strings.TrimSpace(t.Bridge) == "" {
 		return fmt.Errorf("invalid OVSDB-Programmed tunnel identity")
 	}
 	if len(t.Addresses) == 0 {
@@ -381,10 +386,10 @@ func validateModel1Tunnel(t Model1Tunnel) error {
 	return nil
 }
 
-func model1ExternalIDs(key Model1TunnelKey) map[string]string {
+func ovsdbExternalIDs(key Model1TunnelKey) map[string]string {
 	return map[string]string{
-		model1ManagedByKey:        model1Owner,
-		model1RoleKey:             model1TunnelRole,
+		ovsdbManagedByKey:         ovsdbOwner,
+		ovsdbRoleKey:              ovsdbTunnelRole,
 		"evpn4ovn-network-id":     key.NetworkID,
 		"evpn4ovn-vni":            strconv.FormatUint(uint64(key.VNI), 10),
 		"evpn4ovn-remote-vtep":    key.RemoteVTEP,
@@ -392,25 +397,25 @@ func model1ExternalIDs(key Model1TunnelKey) map[string]string {
 	}
 }
 
-func model1TunnelExternalIDs(tunnel Model1Tunnel) map[string]string {
-	ids := model1ExternalIDs(tunnel.Key)
+func ovsdbTunnelExternalIDs(tunnel Model1Tunnel) map[string]string {
+	ids := ovsdbExternalIDs(tunnel.Key)
 	addresses := append([]string(nil), tunnel.Addresses...)
 	sort.Strings(addresses)
 	ids["evpn4ovn-endpoints-sha256"] = remoteHash(addresses)
 	return ids
 }
 
-func model1ProviderBridgeMatchesTunnel(bridge vswitch.Bridge, tunnel Model1Tunnel) bool {
+func ovsdbProviderBridgeMatchesTunnel(bridge vswitch.Bridge, tunnel Model1Tunnel) bool {
 	ids := bridge.ExternalIDs
-	return ids[model1ManagedByKey] == model1Owner &&
-		ids[model1RoleKey] == model1BridgeRole &&
-		ids[model1NetworkIDKey] == tunnel.Key.NetworkID &&
-		ids[model1LogicalSwitchKey] == tunnel.Key.LogicalSwitch &&
+	return ids[ovsdbManagedByKey] == ovsdbOwner &&
+		ids[ovsdbRoleKey] == ovsdbBridgeRole &&
+		ids[ovsdbNetworkIDKey] == tunnel.Key.NetworkID &&
+		ids[ovsdbLogicalSwitchKey] == tunnel.Key.LogicalSwitch &&
 		ids["evpn4ovn-vni"] == strconv.FormatUint(uint64(tunnel.Key.VNI), 10) &&
-		ids[model1ProviderBridgeKey] == tunnel.Bridge
+		ids[ovsdbProviderBridgeKey] == tunnel.Bridge
 }
 
-func model1IDsMatch(actual, expected map[string]string) bool {
+func ovsdbIDsMatch(actual, expected map[string]string) bool {
 	for key, value := range expected {
 		if actual[key] != value {
 			return false
@@ -419,7 +424,7 @@ func model1IDsMatch(actual, expected map[string]string) bool {
 	return true
 }
 
-func model1MapsEqual(a, b map[string]string) bool {
+func ovsdbMapsEqual(a, b map[string]string) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -431,7 +436,7 @@ func model1MapsEqual(a, b map[string]string) bool {
 	return true
 }
 
-func mergeModel1IDs(actual, expected map[string]string) map[string]string {
+func mergeOVSDBIDs(actual, expected map[string]string) map[string]string {
 	result := make(map[string]string, len(actual)+len(expected))
 	for key, value := range actual {
 		result[key] = value
@@ -442,7 +447,7 @@ func mergeModel1IDs(actual, expected map[string]string) map[string]string {
 	return result
 }
 
-func (p *LibovsdbModel1Programmer) ensureModel1OVSTunnel(ctx context.Context, tunnel Model1Tunnel) error {
+func (p *LibovsdbModel1Programmer) ensureOVSDBOVSTunnel(ctx context.Context, tunnel Model1Tunnel) error {
 	var bridges []vswitch.Bridge
 	var interfaces []vswitch.Interface
 	var ports []vswitch.Port
@@ -467,11 +472,11 @@ func (p *LibovsdbModel1Programmer) ensureModel1OVSTunnel(ctx context.Context, tu
 	if bridge == nil {
 		return fmt.Errorf("OVS bridge %q not found", tunnel.Bridge)
 	}
-	if !model1ProviderBridgeMatchesTunnel(*bridge, tunnel) {
+	if !ovsdbProviderBridgeMatchesTunnel(*bridge, tunnel) {
 		return fmt.Errorf("OVS bridge %q is not the owned OVSDB-Programmed provider bridge for this network", bridge.Name)
 	}
-	expectedIDs := model1TunnelExternalIDs(tunnel)
-	expectedIdentityIDs := model1ExternalIDs(tunnel.Key)
+	expectedIDs := ovsdbTunnelExternalIDs(tunnel)
+	expectedIdentityIDs := ovsdbExternalIDs(tunnel.Key)
 	var iface *vswitch.Interface
 	for i := range interfaces {
 		if interfaces[i].Name == tunnel.Name {
@@ -481,15 +486,15 @@ func (p *LibovsdbModel1Programmer) ensureModel1OVSTunnel(ctx context.Context, tu
 			iface = &interfaces[i]
 		}
 	}
-	options := model1VXLANOptions(tunnel)
+	options := ovsdbVXLANOptions(tunnel)
 	if iface == nil {
-		iface = model1VXLANInterface(tunnel)
+		iface = ovsdbVXLANInterface(tunnel)
 	} else {
-		if !model1IDsMatch(iface.ExternalIDs, expectedIdentityIDs) {
+		if !ovsdbIDsMatch(iface.ExternalIDs, expectedIdentityIDs) {
 			return fmt.Errorf("OVS interface %q is not owned by the OVSDB-Programmed integration", tunnel.Name)
 		}
 		iface.Type, iface.Options = "vxlan", options
-		iface.ExternalIDs = mergeModel1IDs(iface.ExternalIDs, expectedIDs)
+		iface.ExternalIDs = mergeOVSDBIDs(iface.ExternalIDs, expectedIDs)
 	}
 	var port *vswitch.Port
 	for i := range ports {
@@ -501,7 +506,7 @@ func (p *LibovsdbModel1Programmer) ensureModel1OVSTunnel(ctx context.Context, tu
 		}
 	}
 	for i := range ports {
-		if !model1Contains(ports[i].Interfaces, iface.UUID) {
+		if !ovsdbContains(ports[i].Interfaces, iface.UUID) {
 			continue
 		}
 		if port == nil || ports[i].UUID != port.UUID {
@@ -509,17 +514,17 @@ func (p *LibovsdbModel1Programmer) ensureModel1OVSTunnel(ctx context.Context, tu
 		}
 	}
 	if port == nil {
-		port = model1VXLANPort(tunnel, iface.UUID)
+		port = ovsdbVXLANPort(tunnel, iface.UUID)
 	} else {
-		if !model1IDsMatch(port.ExternalIDs, expectedIdentityIDs) ||
+		if !ovsdbIDsMatch(port.ExternalIDs, expectedIdentityIDs) ||
 			len(port.Interfaces) != 1 || port.Interfaces[0] != iface.UUID {
 			return fmt.Errorf("OVS port %q is not the owned OVSDB-Programmed tunnel port", tunnel.Name)
 		}
-		port.ExternalIDs = mergeModel1IDs(port.ExternalIDs, expectedIDs)
+		port.ExternalIDs = mergeOVSDBIDs(port.ExternalIDs, expectedIDs)
 	}
 	bridgeOwners := 0
 	for i := range bridges {
-		if !model1Contains(bridges[i].Ports, port.UUID) {
+		if !ovsdbContains(bridges[i].Ports, port.UUID) {
 			continue
 		}
 		bridgeOwners++
@@ -554,7 +559,7 @@ func (p *LibovsdbModel1Programmer) ensureModel1OVSTunnel(ctx context.Context, tu
 			return err
 		}
 		ops = append(ops, updatePort...)
-		return transactModel1(ctx, p.ovs, ops...)
+		return transactOVSDB(ctx, p.ovs, ops...)
 	}
 	var ops []ovsdb.Operation
 	if interfaceUUIDExists(interfaces, iface.UUID) {
@@ -594,10 +599,10 @@ func (p *LibovsdbModel1Programmer) ensureModel1OVSTunnel(ctx context.Context, tu
 		return err
 	}
 	ops = append(ops, mutate...)
-	return transactModel1(ctx, p.ovs, ops...)
+	return transactOVSDB(ctx, p.ovs, ops...)
 }
 
-func model1VXLANOptions(tunnel Model1Tunnel) map[string]string {
+func ovsdbVXLANOptions(tunnel Model1Tunnel) map[string]string {
 	return map[string]string{
 		"remote_ip": tunnel.Key.RemoteVTEP,
 		"key":       strconv.FormatUint(uint64(tunnel.Key.VNI), 10),
@@ -605,22 +610,22 @@ func model1VXLANOptions(tunnel Model1Tunnel) map[string]string {
 	}
 }
 
-func model1VXLANInterface(tunnel Model1Tunnel) *vswitch.Interface {
+func ovsdbVXLANInterface(tunnel Model1Tunnel) *vswitch.Interface {
 	return &vswitch.Interface{
 		UUID: uuid.NewString(), Name: tunnel.Name, Type: "vxlan",
-		Options:     model1VXLANOptions(tunnel),
-		ExternalIDs: model1TunnelExternalIDs(tunnel),
+		Options:     ovsdbVXLANOptions(tunnel),
+		ExternalIDs: ovsdbTunnelExternalIDs(tunnel),
 	}
 }
 
-func model1VXLANPort(tunnel Model1Tunnel, interfaceUUID string) *vswitch.Port {
+func ovsdbVXLANPort(tunnel Model1Tunnel, interfaceUUID string) *vswitch.Port {
 	return &vswitch.Port{
 		UUID: uuid.NewString(), Name: tunnel.Name,
-		Interfaces: []string{interfaceUUID}, ExternalIDs: model1TunnelExternalIDs(tunnel),
+		Interfaces: []string{interfaceUUID}, ExternalIDs: ovsdbTunnelExternalIDs(tunnel),
 	}
 }
 
-func (p *LibovsdbModel1Programmer) deleteModel1OVSTunnel(ctx context.Context, tunnel Model1Tunnel) error {
+func (p *LibovsdbModel1Programmer) deleteOVSDBOVSTunnel(ctx context.Context, tunnel Model1Tunnel) error {
 	var bridges []vswitch.Bridge
 	var interfaces []vswitch.Interface
 	var ports []vswitch.Port
@@ -633,7 +638,7 @@ func (p *LibovsdbModel1Programmer) deleteModel1OVSTunnel(ctx context.Context, tu
 	if err := p.ovs.List(ctx, &ports); err != nil {
 		return err
 	}
-	expectedIDs := model1TunnelExternalIDs(tunnel)
+	expectedIDs := ovsdbTunnelExternalIDs(tunnel)
 	var iface *vswitch.Interface
 	for i := range interfaces {
 		if interfaces[i].Name == tunnel.Name {
@@ -655,19 +660,19 @@ func (p *LibovsdbModel1Programmer) deleteModel1OVSTunnel(ctx context.Context, tu
 	if iface == nil && port == nil {
 		return nil
 	}
-	if iface == nil || !model1IDsMatch(iface.ExternalIDs, expectedIDs) {
+	if iface == nil || !ovsdbIDsMatch(iface.ExternalIDs, expectedIDs) {
 		return fmt.Errorf("refusing to delete unowned or incomplete OVS tunnel interface")
 	}
-	if iface.Type != "vxlan" || !model1MapsEqual(iface.Options, model1VXLANOptions(tunnel)) {
+	if iface.Type != "vxlan" || !ovsdbMapsEqual(iface.Options, ovsdbVXLANOptions(tunnel)) {
 		return fmt.Errorf("refusing to delete OVSDB-Programmed interface with changed VXLAN configuration")
 	}
-	if port != nil && (!model1IDsMatch(port.ExternalIDs, expectedIDs) ||
+	if port != nil && (!ovsdbIDsMatch(port.ExternalIDs, expectedIDs) ||
 		len(port.Interfaces) != 1 || port.Interfaces[0] != iface.UUID) {
 		return fmt.Errorf("refusing to delete unowned or mismatched OVS tunnel port")
 	}
 	if port == nil {
 		for i := range ports {
-			if model1Contains(ports[i].Interfaces, iface.UUID) {
+			if ovsdbContains(ports[i].Interfaces, iface.UUID) {
 				return fmt.Errorf("refusing to delete OVS interface still referenced by port %q", ports[i].Name)
 			}
 		}
@@ -676,13 +681,13 @@ func (p *LibovsdbModel1Programmer) deleteModel1OVSTunnel(ctx context.Context, tu
 	if port != nil {
 		bridgeOwners := 0
 		for i := range bridges {
-			if !model1Contains(bridges[i].Ports, port.UUID) {
+			if !ovsdbContains(bridges[i].Ports, port.UUID) {
 				continue
 			}
 			if bridges[i].Name != tunnel.Bridge {
 				return fmt.Errorf("refusing to detach OVS port from unexpected bridge %q", bridges[i].Name)
 			}
-			if !model1ProviderBridgeMatchesTunnel(bridges[i], tunnel) {
+			if !ovsdbProviderBridgeMatchesTunnel(bridges[i], tunnel) {
 				return fmt.Errorf("refusing to detach OVSDB-Programmed tunnel from an unowned provider bridge %q", bridges[i].Name)
 			}
 			bridgeOwners++
@@ -711,7 +716,7 @@ func (p *LibovsdbModel1Programmer) deleteModel1OVSTunnel(ctx context.Context, tu
 		}
 		ops = append(ops, deleteInterface...)
 	}
-	return transactModel1(ctx, p.ovs, ops...)
+	return transactOVSDB(ctx, p.ovs, ops...)
 }
 
 func interfaceUUIDExists(interfaces []vswitch.Interface, uuid string) bool {
@@ -732,7 +737,7 @@ func portExistsByUUID(ports []vswitch.Port, uuid string) bool {
 	return false
 }
 
-func model1Contains(values []string, wanted string) bool {
+func ovsdbContains(values []string, wanted string) bool {
 	for _, value := range values {
 		if value == wanted {
 			return true
@@ -741,7 +746,7 @@ func model1Contains(values []string, wanted string) bool {
 	return false
 }
 
-func sameModel1Addresses(a, b []string) bool {
+func sameOVSDBAddresses(a, b []string) bool {
 	a = append([]string(nil), a...)
 	b = append([]string(nil), b...)
 	sort.Strings(a)
@@ -757,7 +762,7 @@ func sameModel1Addresses(a, b []string) bool {
 	return true
 }
 
-func transactModel1(ctx context.Context, c client.Client, ops ...ovsdb.Operation) error {
+func transactOVSDB(ctx context.Context, c client.Client, ops ...ovsdb.Operation) error {
 	if len(ops) == 0 {
 		return nil
 	}

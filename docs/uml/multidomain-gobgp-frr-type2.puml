@@ -1,0 +1,41 @@
+@startuml
+title Validated — scoped E2E | GoBGP / FRR Type-2, one OVN chassis
+top to bottom direction
+skinparam backgroundColor #FCFCFD
+skinparam defaultFontName DejaVu Sans
+skinparam defaultFontSize 14
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam ArrowColor #475569
+skinparam componentBackgroundColor #FFFFFF
+
+node "Domain A | one OVN control plane" {
+  database "OVN NBDB / SBDB\n+ ovn-northd" as db
+  component "Node-Agent\nType-2 import / export" as agent
+  component "GoBGP\nBGP / EVPN control plane" as gobgp
+  component "Owned Linux Netlink\nFDB / neighbors" as kernel
+  component "ovn-controller" as controller
+  component "OVS / local endpoint\nworkload forwarding" as ovs
+  agent -[#2563EB]-> kernel : owned Netlink
+  kernel -[#2563EB]-> controller : observed
+  db -[#2563EB]-> controller : SB
+  controller -[#2563EB]-> ovs : flows
+  agent -[#2563EB]- gobgp : API / RIB
+}
+node "External peer | not an OVN domain" {
+  component "FRR / zebra" as frr
+  component "Linux bridge / VXLAN\n+ remote endpoint" as bridge
+  frr -[#2563EB]-> bridge
+}
+gobgp -[#2563EB]- frr : BGP EVPN Type-2
+ovs -[#15803D]- bridge : VXLAN packets
+
+legend bottom
+  Solid blue: control | Solid green: packet path
+  Validated boundary: one OVN chassis with external FRR/Linux peer.
+  Type-2 import/export, forwarding, withdrawal and cleanup are scoped
+  to the cited one-chassis acceptance; not multi-domain OVN validation.
+  Bare-speaker GoBGP/FRR fixture is control-plane only.
+  Geneve datapath keys are not EVPN/VXLAN VNIs.
+endlegend
+@enduml

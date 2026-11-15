@@ -1,9 +1,9 @@
 # Integration strategy and research goals
 
 The Framework uses GoBGP for EVPN and alternative Netlink-Programmed or
-OVSDB-Programmed adapters; OVN/OVS owns workload forwarding. CNI/Multus is a
-current application, not the Framework architecture. Reusable node-agent
-endpoint services are also exercised independently of CNI.
+OVSDB-Programmed adapters; OVN/OVS owns workload forwarding. The Kubernetes CNI
+solution is one integration using the Framework, not the Framework architecture.
+Reusable Node-Agent endpoint services are also exercised independently of CNI.
 
 Detailed future designs now live in the
 [integration index](integrations/README.md):

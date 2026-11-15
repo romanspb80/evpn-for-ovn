@@ -1,0 +1,13 @@
+global:
+  config:
+    as: 64512
+    router-id: "<VTEP>"
+    port: 179
+    local-address-list: ["<VTEP>"]
+neighbors:
+  - config:
+      neighbor-address: "192.0.2.30"
+      peer-as: 64512
+    afi-safis:
+      - config:
+          afi-safi-name: l2vpn-evpn

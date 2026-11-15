@@ -231,6 +231,9 @@ func TestRunStandaloneEndpointExporterStartup(t *testing.T) {
 		{name: "network mismatch", cohost: true, mutate: func(c *RemoteRuntimeConfig) {
 			c.Netlink.Networks[0].LogicalSwitch = "other-switch"
 		}, wantError: "exporter mapping"},
+		{name: "local vtep mismatch", cohost: true, mutate: func(c *RemoteRuntimeConfig) {
+			c.Import.LocalVTEP = "192.0.2.31"
+		}, wantError: "local VTEP differs"},
 		{name: "speaker mismatch", cohost: true, mutate: func(c *RemoteRuntimeConfig) {
 			c.ASN++
 		}, wantError: "same GoBGP"},

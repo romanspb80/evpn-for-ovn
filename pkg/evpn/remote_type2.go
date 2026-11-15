@@ -1,92 +1,19 @@
 package evpn
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/netip"
 	"sort"
 	"strings"
 	"sync"
 
-	"github.com/osrg/gobgp/v4/api"
-	"github.com/osrg/gobgp/v4/pkg/apiutil"
 	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
-	"google.golang.org/grpc"
-	"google.golang.org/protobuf/proto"
 )
-
-// RemotePathReader deliberately excludes every route/configuration mutation RPC.
-type RemotePathReader interface {
-	ListPath(context.Context, *api.ListPathRequest, ...grpc.CallOption) (grpc.ServerStreamingClient[api.ListPathResponse], error)
-}
-
-type RemoteRIBSnapshot struct {
-	Paths    []*api.Path
-	Complete bool
-}
-
-type RemoteRIBSource interface {
-	ReadRemoteRIB(context.Context) (RemoteRIBSnapshot, error)
-}
-
-type GoBGPRemoteRIBSource struct {
-	Client RemotePathReader
-	Gate   ReadinessGate
-}
-
-func (s *GoBGPRemoteRIBSource) ReadRemoteRIB(ctx context.Context) (RemoteRIBSnapshot, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	if s.Client == nil || s.Gate == nil {
-		return RemoteRIBSnapshot{}, fmt.Errorf("remote RIB reader and actual speaker readiness gate required")
-	}
-	if err := s.Gate.Check(ctx); err != nil {
-		return RemoteRIBSnapshot{}, err
-	}
-	stream, err := s.Client.ListPath(ctx, &api.ListPathRequest{
-		TableType:        api.TableType_TABLE_TYPE_GLOBAL,
-		Family:           &api.Family{Afi: api.Family_AFI_L2VPN, Safi: api.Family_SAFI_EVPN},
-		EnableOnlyBinary: true,
-	})
-	if err != nil {
-		return RemoteRIBSnapshot{}, err
-	}
-	if stream == nil {
-		return RemoteRIBSnapshot{}, fmt.Errorf("nil remote RIB stream")
-	}
-	result := RemoteRIBSnapshot{}
-	for {
-		res, err := stream.Recv()
-		if err == io.EOF {
-			if err := ctx.Err(); err != nil {
-				return RemoteRIBSnapshot{}, err
-			}
-			if err := s.Gate.Check(ctx); err != nil {
-				return RemoteRIBSnapshot{}, err
-			}
-			result.Complete = true
-			return result, nil
-		}
-		if err != nil {
-			return RemoteRIBSnapshot{}, fmt.Errorf("incomplete remote RIB stream: %w", err)
-		}
-		if res == nil || res.Destination == nil || len(res.Destination.Paths) == 0 {
-			return RemoteRIBSnapshot{}, fmt.Errorf("incomplete remote RIB destination")
-		}
-		for _, path := range res.Destination.Paths {
-			if path == nil {
-				return RemoteRIBSnapshot{}, fmt.Errorf("nil remote RIB path")
-			}
-			result.Paths = append(result.Paths, proto.Clone(path).(*api.Path))
-		}
-	}
-}
 
 type RemotePathIdentity struct {
 	Key             string
@@ -117,6 +44,26 @@ type DecodedRemoteType2 struct {
 	AttributeKey   string
 }
 
+// RemoteType2PathObservation is a provider-neutral decoded route observation.
+// DecodeError is retained in the snapshot so malformed paths make the whole
+// observation uncertain without exposing provider wire values to the importer.
+type RemoteType2PathObservation struct {
+	Route       DecodedRemoteType2
+	DecodeError error
+}
+
+// RemoteType2Snapshot is authoritative only when Complete is true.
+type RemoteType2Snapshot struct {
+	Paths    []RemoteType2PathObservation
+	Complete bool
+}
+
+// RemoteType2RIBSource returns decoded EVPN route observations. An error or an
+// incomplete snapshot must never be treated as an empty authoritative RIB.
+type RemoteType2RIBSource interface {
+	ReadRemoteType2RIB(context.Context) (RemoteType2Snapshot, error)
+}
+
 func remoteHash(value interface{}) string {
 	b, _ := json.Marshal(value)
 	sum := sha256.Sum256(b)
@@ -126,141 +73,6 @@ func remoteHash(value interface{}) string {
 func unicastIPv4(value string) bool {
 	ip, err := netip.ParseAddr(value)
 	return err == nil && ip.Is4() && ip.IsGlobalUnicast() && !ip.IsLoopback()
-}
-
-func DecodeRemoteType2(path *api.Path) (DecodedRemoteType2, error) {
-	r := DecodedRemoteType2{Classification: "invalid"}
-	if path == nil || path.Family.GetAfi() != api.Family_AFI_L2VPN || path.Family.GetSafi() != api.Family_SAFI_EVPN {
-		return r, fmt.Errorf("expected EVPN AFI/SAFI")
-	}
-	nlri, err := apiutil.GetNativeNlri(path)
-	if err != nil {
-		return r, fmt.Errorf("decode EVPN NLRI: %w", err)
-	}
-	n, ok := nlri.(*bgp.EVPNNLRI)
-	if !ok {
-		return r, fmt.Errorf("non-EVPN NLRI in EVPN table")
-	}
-	r.RouteType = n.RouteType
-	wire, err := n.Serialize()
-	if err != nil {
-		return r, err
-	}
-	r.Source = RemotePathIdentity{NeighborIP: path.NeighborIp, SourceID: path.SourceId, SourceASN: path.SourceAsn,
-		Identifier: path.Identifier, LocalIdentifier: path.LocalIdentifier}
-	r.Source.Key = remoteHash(struct {
-		NLRI   string
-		Source RemotePathIdentity
-	}{hex.EncodeToString(wire), r.Source})
-	r.Best, r.Stale, r.Filtered, r.NexthopInvalid = path.Best, path.Stale, path.Filtered, path.IsNexthopInvalid
-	switch {
-	case path.IsWithdraw:
-		r.Classification = "withdrawn"
-	case path.NeighborIp == "" && !path.IsFromExternal:
-		r.Classification = "local"
-	case net.ParseIP(path.NeighborIp) != nil && net.ParseIP(path.SourceId) != nil && path.SourceAsn != 0:
-		r.Classification = "remote"
-	default:
-		return r, fmt.Errorf("ambiguous route source")
-	}
-	if n.RouteType != bgp.EVPN_ROUTE_TYPE_MAC_IP_ADVERTISEMENT {
-		return r, nil
-	}
-	m, ok := n.RouteTypeData.(*bgp.EVPNMacIPAdvertisementRoute)
-	if !ok || m.RD == nil {
-		return r, fmt.Errorf("missing Type-2 route data or RD")
-	}
-	r.RD, r.MAC, r.EthernetTag = m.RD.String(), m.MacAddress.String(), m.ETag
-	if m.IPAddressLength != 0 {
-		r.IP = m.IPAddress.String()
-		if (m.IPAddressLength != 32 || !m.IPAddress.Is4()) && (m.IPAddressLength != 128 || !m.IPAddress.Is6()) {
-			return r, fmt.Errorf("inconsistent IP length")
-		}
-	}
-	if m.MacAddressLength != 48 || len(m.MacAddress) != 6 {
-		return r, fmt.Errorf("invalid MAC length")
-	}
-	esi, err := m.ESI.Serialize()
-	if err != nil {
-		return r, err
-	}
-	r.ESI, r.Labels = hex.EncodeToString(esi), append([]uint32(nil), m.Labels...)
-	if path.IsWithdraw || r.Classification == "local" {
-		return r, nil
-	}
-	for _, attr := range path.Pattrs {
-		if attr == nil {
-			return r, fmt.Errorf("nil path attribute")
-		}
-		if reach := attr.GetMpReach(); reach != nil && len(reach.NextHops) != 1 {
-			return r, fmt.Errorf("exactly one MP_REACH next-hop required")
-		}
-	}
-	attrs, err := apiutil.GetNativePathAttributes(path)
-	if err != nil {
-		return r, fmt.Errorf("decode path attributes: %w", err)
-	}
-	var attributeBytes []string
-	seen := map[bgp.BGPAttrType]bool{}
-	for _, attr := range attrs {
-		if seen[attr.GetType()] {
-			return r, fmt.Errorf("duplicate path attribute %d", attr.GetType())
-		}
-		seen[attr.GetType()] = true
-		b, err := attr.Serialize()
-		if err != nil {
-			return r, err
-		}
-		attributeBytes = append(attributeBytes, hex.EncodeToString(b))
-		switch a := attr.(type) {
-		case *bgp.PathAttributeOrigin:
-			if a.Value > bgp.BGP_ORIGIN_ATTR_TYPE_INCOMPLETE {
-				return r, fmt.Errorf("invalid origin")
-			}
-		case *bgp.PathAttributeMpReachNLRI:
-			if a.AFI != bgp.AFI_L2VPN || a.SAFI != bgp.SAFI_EVPN || a.LinkLocalNexthop.IsValid() {
-				return r, fmt.Errorf("unsupported MP_REACH family/next-hop")
-			}
-			if len(a.Value) != 1 || a.Value[0].NLRI == nil {
-				return r, fmt.Errorf("exactly one matching MP_REACH NLRI required")
-			}
-			reachWire, err := a.Value[0].NLRI.Serialize()
-			if err != nil || !bytes.Equal(wire, reachWire) {
-				return r, fmt.Errorf("MP_REACH NLRI differs from path NLRI")
-			}
-			r.NextHop = a.Nexthop.String()
-		case *bgp.PathAttributeNextHop:
-			return r, fmt.Errorf("EVPN requires MP_REACH next-hop")
-		case *bgp.PathAttributeExtendedCommunities:
-			for _, community := range a.Value {
-				typ, subtype := community.GetTypes()
-				if subtype == bgp.EC_SUBTYPE_ROUTE_TARGET && (typ == bgp.EC_TYPE_TRANSITIVE_TWO_OCTET_AS_SPECIFIC ||
-					typ == bgp.EC_TYPE_TRANSITIVE_IP4_SPECIFIC || typ == bgp.EC_TYPE_TRANSITIVE_FOUR_OCTET_AS_SPECIFIC) {
-					r.RouteTargets = append(r.RouteTargets, community.String())
-				} else if encap, ok := community.(*bgp.EncapExtended); ok {
-					r.Encapsulation = append(r.Encapsulation, encap.TunnelType.String())
-				} else {
-					return r, fmt.Errorf("unsupported extended community %s", community.String())
-				}
-			}
-		case *bgp.PathAttributeTunnelEncap:
-			return r, fmt.Errorf("tunnel encapsulation attribute unsupported; VXLAN extended community required")
-		case *bgp.PathAttributeAsPath, *bgp.PathAttributeMultiExitDisc, *bgp.PathAttributeLocalPref,
-			*bgp.PathAttributeAtomicAggregate, *bgp.PathAttributeAggregator, *bgp.PathAttributeCommunities,
-			*bgp.PathAttributeAs4Path, *bgp.PathAttributeAs4Aggregator:
-		default:
-			return r, fmt.Errorf("unsupported path attribute %d", attr.GetType())
-		}
-	}
-	if !seen[bgp.BGP_ATTR_TYPE_ORIGIN] || !seen[bgp.BGP_ATTR_TYPE_MP_REACH_NLRI] ||
-		!seen[bgp.BGP_ATTR_TYPE_EXTENDED_COMMUNITIES] {
-		return r, fmt.Errorf("missing required origin, MP_REACH or extended communities")
-	}
-	sort.Strings(attributeBytes)
-	r.AttributeKey = remoteHash(attributeBytes)
-	sort.Strings(r.RouteTargets)
-	sort.Strings(r.Encapsulation)
-	return r, nil
 }
 
 type RemoteImportNetwork struct {
@@ -382,15 +194,27 @@ type RemoteImportSnapshot struct {
 // Two equivalent complete observations are required before publishing changes.
 type ReadOnlyType2Importer struct {
 	mu        sync.Mutex
-	source    RemoteRIBSource
+	source    RemoteType2RIBSource
 	config    RemoteImportConfig
 	confirmed RemoteImportSnapshot
 	pending   string
 }
 
+// NewReadOnlyType2Importer adapts a legacy GoBGP-shaped source.
+//
+// Deprecated: use NewReadOnlyType2ImporterFromSnapshot.
 func NewReadOnlyType2Importer(source RemoteRIBSource, config RemoteImportConfig) (*ReadOnlyType2Importer, error) {
 	if source == nil {
 		return nil, fmt.Errorf("remote RIB source required")
+	}
+	return NewReadOnlyType2ImporterFromSnapshot(legacyRemoteType2RIBSource{source: source}, config)
+}
+
+// NewReadOnlyType2ImporterFromSnapshot composes the platform-neutral importer
+// with a provider that returns decoded route observations.
+func NewReadOnlyType2ImporterFromSnapshot(source RemoteType2RIBSource, config RemoteImportConfig) (*ReadOnlyType2Importer, error) {
+	if source == nil {
+		return nil, fmt.Errorf("remote Type-2 RIB source required")
 	}
 	if err := config.Validate(); err != nil {
 		return nil, err
@@ -407,10 +231,19 @@ func NewReadOnlyType2Importer(source RemoteRIBSource, config RemoteImportConfig)
 // RebindSource retains confirmed generations but requires two fresh complete
 // observations after a transport/provider incarnation change.
 func (i *ReadOnlyType2Importer) RebindSource(source RemoteRIBSource) error {
+	if source == nil {
+		return fmt.Errorf("remote RIB source required")
+	}
+	return i.RebindType2Source(legacyRemoteType2RIBSource{source: source})
+}
+
+// RebindType2Source retains confirmed generations but requires two fresh
+// complete observations after a provider or transport incarnation change.
+func (i *ReadOnlyType2Importer) RebindType2Source(source RemoteType2RIBSource) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if source == nil {
-		return fmt.Errorf("remote RIB source required")
+		return fmt.Errorf("remote Type-2 RIB source required")
 	}
 	i.source, i.pending = source, ""
 	i.confirmed.Authoritative = false
@@ -442,7 +275,7 @@ func (i *ReadOnlyType2Importer) Poll(ctx context.Context) (RemoteImportSnapshot,
 		s.Issues = append(s.Issues, issues...)
 		return s, err
 	}
-	raw, err := i.source.ReadRemoteRIB(ctx)
+	raw, err := i.source.ReadRemoteType2RIB(ctx)
 	if err != nil {
 		return uncertain(err, nil)
 	}
@@ -455,9 +288,10 @@ func (i *ReadOnlyType2Importer) Poll(ctx context.Context) (RemoteImportSnapshot,
 	macs, ips := map[string]string{}, map[string]string{}
 	var quarantined []DecodedRemoteType2
 	for _, path := range raw.Paths {
-		r, err := DecodeRemoteType2(path)
-		if err != nil {
-			return uncertain(fmt.Errorf("invalid raw BGP path: %w", err), []RemoteImportIssue{{PathKey: r.Source.Key, Reason: err.Error()}})
+		r := path.Route
+		if path.DecodeError != nil {
+			return uncertain(fmt.Errorf("invalid raw BGP path: %w", path.DecodeError),
+				[]RemoteImportIssue{{PathKey: r.Source.Key, Reason: path.DecodeError.Error()}})
 		}
 		if r.Classification == "local" || r.Classification == "withdrawn" {
 			continue

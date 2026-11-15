@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -95,11 +96,20 @@ func (r *EvpnCoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, r.editFinalizer(ctx, &core, false)
 	}
 	if !core.Spec.Enabled {
+		if err := r.invalidateInventoryConditions(ctx, &core); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{}, r.setStatus(ctx, &core, "Reconciling", "Disabled", "reconciliation paused; existing resources and installation lock are retained")
 	}
 	if err := validateSpec(core.Spec); err != nil {
 		r.event(&core, "ConfigurationInvalid", err.Error())
+		if statusErr := r.invalidateInventoryConditions(ctx, &core); statusErr != nil {
+			return ctrl.Result{}, statusErr
+		}
 		return ctrl.Result{}, r.setStatus(ctx, &core, "ConfigurationInvalid", "InvalidSpec", err.Error())
+	}
+	if err := r.recordDataplaneMode(ctx, &core); err != nil {
+		return r.failed(ctx, &core, err)
 	}
 	if core.Status.ObservedGeneration != core.Generation {
 		if err := r.setStatus(ctx, &core, "Reconciling", "NewGeneration", "evaluating current installation intent"); err != nil {
@@ -114,10 +124,17 @@ func (r *EvpnCoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return r.failed(ctx, &core, err)
 	}
 	if !available {
+		if err := r.invalidateInventoryConditions(ctx, &core); err != nil {
+			return ctrl.Result{}, err
+		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setStatus(ctx, &core, "Reconciling", "PlacementPending", message)
 	}
 	appNS, ovnNS := namespaces(core.Spec)
-	for _, ns := range []string{appNS, ovnNS} {
+	requiredNamespaces := []string{appNS}
+	if dataplaneMode(core.Spec) == "managed-single-node" {
+		requiredNamespaces = append(requiredNamespaces, ovnNS)
+	}
+	for _, ns := range requiredNamespaces {
 		if err := r.ensureNamespace(ctx, ns); err != nil {
 			return r.failed(ctx, &core, err)
 		}
@@ -134,8 +151,43 @@ func (r *EvpnCoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err != nil {
 		return r.failed(ctx, &core, err)
 	}
-	if err := r.checkNodeAgentConflict(ctx, &core); err != nil {
+	inventory, err := r.prepareWorkerInventory(ctx, &core)
+	if err != nil {
 		return r.failed(ctx, &core, err)
+	}
+	if inventory != nil {
+		if err := r.applyResource(ctx, &core, inventory); err != nil {
+			return r.failed(ctx, &core, err)
+		}
+		uid, err := r.publishedInventoryUID(ctx, &core)
+		if err != nil {
+			return r.failed(ctx, &core, err)
+		}
+		message, err := r.inventoryMigrationRequired(ctx, &core, uid)
+		if err != nil {
+			return r.failed(ctx, &core, err)
+		}
+		if message != "" {
+			if err := r.setInventoryConditions(ctx, &core, true, true, false); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setStatus(ctx, &core, "Degraded", "MigrationRequired", message)
+		}
+		if err := wireInventoryDaemonSet(objects, &core, uid); err != nil {
+			return r.failed(ctx, &core, err)
+		}
+		objects = append([]*unstructured.Unstructured{inventory}, objects...)
+	} else {
+		if err := r.checkNodeAgentConflict(ctx, &core); err != nil {
+			return r.failed(ctx, &core, err)
+		}
+		gated, err := r.rejectInventoryDisable(ctx, &core)
+		if err != nil {
+			return r.failed(ctx, &core, err)
+		}
+		if gated {
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, r.setStatus(ctx, &core, "Degraded", "MigrationRequired", "inventory enforcement cannot be removed from an existing Node-Agent without controlled ownership cleanup")
+		}
 	}
 	// Remove old namespace placements before launching replacements that share
 	// host sockets/ports. Applying first could briefly run two node agents.
@@ -155,15 +207,44 @@ func (r *EvpnCoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	if err != nil {
 		return r.failed(ctx, &core, err)
 	}
+	if inventory != nil {
+		if err := r.setInventoryConditions(ctx, &core, true, false, phase == "Ready"); err != nil {
+			return ctrl.Result{}, err
+		}
+		if phase == "Ready" {
+			phase, reason, message = "Reconciling", "InventoryAcceptanceUnconfirmed", "DaemonSet rollout complete; durable inventory acceptance and Type-2 runtime health are unconfirmed"
+		} else {
+			reason = "InventoryAcceptancePending"
+			message += "; durable inventory acceptance is unconfirmed"
+		}
+	}
 	if err := r.setStatus(ctx, &core, phase, reason, message); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
+func (r *EvpnCoreReconciler) recordDataplaneMode(ctx context.Context, core *evpnv1.EvpnCore) error {
+	wanted := dataplaneMode(core.Spec)
+	return r.editStatus(ctx, core, func(status *evpnv1.EvpnCoreStatus) error {
+		recorded := status.DataplaneMode
+		if recorded == "" && (contains(core.Finalizers, Finalizer) || len(status.ManagedResources) != 0) {
+			recorded = "managed-single-node"
+		}
+		if recorded != "" && recorded != wanted {
+			return &ownershipConflict{message: "dataplaneMode cannot change on an existing installation; drain and remove it before creating another"}
+		}
+		status.DataplaneMode = wanted
+		return nil
+	})
+}
+
 func (r *EvpnCoreReconciler) failed(ctx context.Context, core *evpnv1.EvpnCore, err error) (ctrl.Result, error) {
 	if errors.Is(err, errSnapshotChanged) {
 		return ctrl.Result{Requeue: true}, nil
+	}
+	if statusErr := r.invalidateInventoryConditions(ctx, core); statusErr != nil {
+		return ctrl.Result{}, errors.Join(err, statusErr)
 	}
 	var conflict *ownershipConflict
 	reason := "ReconcileFailed"

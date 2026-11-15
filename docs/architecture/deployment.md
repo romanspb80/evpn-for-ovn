@@ -1,9 +1,34 @@
-# Kind deployment
+# Kubernetes deployment and kind lab
+
+The standard Kubernetes CNI architecture is an `EvpnCore` configuration
+reconciled by the EVPN Operator into an Operator-managed Node-Agent DaemonSet.
+The node-local agent hosts the EVPN Core runtime; the Operator does not process
+routes or program endpoint state. The default mode selects one designated
+node; experimental `external-ovn` mode selects multiple prepared nodes using
+a Kubernetes label selector.
+The Operator and installation are experimental, not a production installer.
+In default mode the Operator also manages the OVN/OVS and compatibility
+workloads; external-OVN mode manages only the agent. It does not install or
+own upstream k8gobgp, Multus, or their CRs.
+See [Operator ownership and configuration](evpn-core-operator.md).
+
+Standalone framework operation outside Kubernetes does not require the
+Operator. Future OVN-Kubernetes and Neutron integrations do not imply this
+Operator or the current Node-Agent executable.
 
 The checked-in kind deployment is a lab and integration environment, not a
 production installer. Its source of truth is
 [`deploy/kind/k8s.yaml`](../../deploy/kind/k8s.yaml), the Containerlab
 topology, and the isolated E2E runners.
+
+The [Kubernetes runtime diagram](../uml/evpn-runtime-architecture.svg) is a
+logical view of the Operator, Node-Agent, optional Kubernetes integrations and
+OVN/OVS datapaths. It is not a manifest inventory or acceptance topology. The
+separate [attempt-8 diagram](../uml/operator-inventory-type2-two-worker.svg)
+shows the exact scope of that two-worker Type-2 forwarding result.
+
+The retained [runtime draft](../uml/drafts/kubernetes-runtime-draft.svg) is
+superseded by the canonical runtime view; it is not acceptance evidence.
 
 ## Runtime components
 
@@ -24,13 +49,17 @@ accepted runners use a Unix socket, not an assumed proxy sidecar. Applying
 this manifest alone is not the accepted suite's runtime installation.
 
 The standalone OVSDB route importer is an opt-in test/runtime component and is
-not part of the default deployment. CNI/Multus and the node-agent are created
-by their dedicated disposable E2E runner; the checked-in CNI examples are
-under [`deploy/kind/cni-multus-test/`](../../deploy/kind/cni-multus-test/).
-The optional operator now manages a configurable Node-Agent DaemonSet with
-singleton ownership, workload readiness and finalizer cleanup. See its
-[actual API/readiness/lifecycle boundaries](evpn-core-operator.md)
-and the [management API limitations](../api/README.md).
+not part of the default deployment. The Operator-managed Type-2 runner installs
+the Operator and creates the agent via an `EvpnCore`; other disposable runners
+create DaemonSets directly to isolate subsystems or exercise the multi-worker
+Geneve baseline. The distinct inventory-gated two-worker Type-2 attempt-8
+scenario uses the Operator; it does not establish general multi-node Operator
+lifecycle or runtime health. Direct DaemonSet creation also serves development
+and debugging, not a separate supported production installation mode. CNI,
+Multus and the example NetworkAttachmentDefinitions are installed separately
+by the fixtures; see
+[`deploy/kind/cni-multus-test/`](../../deploy/kind/cni-multus-test/) and
+the [management API limitations](../api/README.md).
 
 The active external peer is pinned to official FRR 10.7.1 on Quay. Upstream
 k8gobgp installation is pinned to the v0.2.8 release manifest, checksum and
@@ -54,8 +83,8 @@ resources. It refuses collisions and uses an exact topology/ownership receipt;
 pass `down` to remove only that laboratory. Use a disposable Linux host.
 
 For test-specific topology and cleanup boundaries, use the isolated
-[Framework E2E runners](../../TESTING_GUIDE.md#independent-framework-netlink-e2e)
-or [CNI lifecycle runner](../../TESTING_GUIDE.md#cni-full-lifecycle-acceptance).
+[Framework E2E runners](../../TESTING_GUIDE.md#framework-netlink-and-ovsdb-integration)
+or [CNI lifecycle runner](../../TESTING_GUIDE.md#kubernetes-cni-lifecycle).
 They invoke the same Containerlab coordinator themselves; do not pre-create
 their environments. Containerlab provisions test laboratories, not Framework
 runtime operations. User-managed Kubernetes and ordinary runtime deployment

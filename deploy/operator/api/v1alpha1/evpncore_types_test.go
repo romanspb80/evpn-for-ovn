@@ -107,8 +107,21 @@ func TestAdministrativeRBACBoundary(t *testing.T) {
 			}
 			for _, rule := range role.Rules {
 				for _, resource := range rule.Resources {
-					if resource == "leases" || resource == "pods" {
+					if resource == "leases" {
 						t.Fatalf("unneeded cluster-wide privilege: %+v", rule)
+					}
+					if resource == "pods" && (role.Name != "evpn-core-operator" || !reflect.DeepEqual(rule.Verbs, []string{"list"})) {
+						t.Fatalf("unexpected cluster-wide Pod privilege: %+v", rule)
+					}
+					if resource == "configmaps" && role.Name == "evpn-core-operator" {
+						for _, verb := range rule.Verbs {
+							if (verb == "update" || verb == "patch") && !reflect.DeepEqual(rule.ResourceNames, []string{"evpn-worker-inventory", "evpn-worker-reservations"}) {
+								t.Fatalf("unrestricted ConfigMap mutation: %+v", rule)
+							}
+							if verb == "delete" && !reflect.DeepEqual(rule.ResourceNames, []string{"evpn-worker-inventory"}) {
+								t.Fatalf("unrestricted ConfigMap deletion: %+v", rule)
+							}
+						}
 					}
 					if resource != "evpncores" {
 						continue

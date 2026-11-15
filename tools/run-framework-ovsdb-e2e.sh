@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KIND_CLUSTER="framework-ovsdb-e2e-c4l"
-EVIDENCE_ROOT="/tmp/framework-ovsdb-e2e-c4l-evidence"
+EVIDENCE_ROOT="${EVIDENCE_ROOT:-/tmp/framework-ovsdb-e2e-c4l-evidence}"
 RUN_SUFFIX="$(python3 -c 'import secrets; print(secrets.token_hex(4))')"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-${RUN_SUFFIX}"
 EVIDENCE_DIR="${EVIDENCE_ROOT}/attempt-${RUN_ID}"
@@ -41,6 +41,7 @@ GATES=(O1 O2 O3 O4 O5 O6 O7 O8 O9 O10 O11 O12 O13 O14)
 declare -A GATE_STATUS=()
 
 export KIND_CLUSTER EVIDENCE_DIR WORKER
+source "${ROOT}/tools/lib/e2e-artifact-cache.sh"
 source "${ROOT}/tools/lib/cni-agent-image-test.sh"
 source "${ROOT}/tools/lib/cni-evpn-export-test.sh"
 source "${ROOT}/tools/lib/cni-evpn-frr-interop-test.sh"
@@ -297,7 +298,7 @@ rt sh -ec 'ovn-nbctl --version; ovs-vsctl --version' | tee "${EVIDENCE_DIR}/data
 docker image inspect "${OVN_IMAGE}" >"${EVIDENCE_DIR}/dataplane-image.json"
 k version -o json | tee "${EVIDENCE_DIR}/kubernetes-version.json" >/dev/null
 rt ovs-vsctl set Open_vSwitch . "external_ids:ovn-evpn-local-ip=${LOCAL_VTEP}" external_ids:ovn-evpn-vxlan-ports=4789
-export_setup_provider
+interop_setup_provider
 cat >"${EVIDENCE_DIR}/provider-config.yaml" <<EOF
 apiVersion: bgp.purelb.io/v1
 kind: BGPConfiguration
@@ -322,6 +323,7 @@ k apply -f "${EVIDENCE_DIR}/provider-config.yaml"
 k -n k8gobgp-system rollout status ds/k8gobgp --timeout=240s
 PROVIDER_POD="$(k -n k8gobgp-system get pod -l app.kubernetes.io/name=k8gobgp -o jsonpath='{.items[0].metadata.name}')"
 export_record_provider
+interop_setup_provider_attestation framework-ovsdb-e2e "${NAMESPACE}"
 LOCAL_CHASSIS="$(rt ovs-vsctl --bare get Open_vSwitch . external_ids:system-id | tr -d '"')"
 [[ -n "${LOCAL_CHASSIS}" ]]
 gate O3
@@ -374,6 +376,13 @@ FRAMEWORK_E2E_ACTION=network fwtest 2>&1 | tee "${EVIDENCE_DIR}/framework-networ
 cat >"${EVIDENCE_DIR}/export-config.json" <<EOF
 {"Enabled":true,"DryRun":false,"ProcessContinuity":true,"NodeName":"${WORKER}","LocalChassis":"${LOCAL_CHASSIS}","GRPCEndpoint":"unix:///var/run/gobgp/gobgp.sock","ASN":64512,"RouterID":"${LOCAL_VTEP}","Networks":[{"NetworkID":"framework-ovsdb-e2e","LogicalSwitch":"${LOGICAL_SWITCH}","Enabled":true,"ExporterSource":"framework","VNI":${FRAMEWORK_VNI},"RouteDistinguisher":"${LOCAL_VTEP}:${FRAMEWORK_VNI}","RouteTargets":["64512:${FRAMEWORK_VNI}"],"LocalVTEP":"${LOCAL_VTEP}"}]}
 EOF
+python3 - "${EVIDENCE_DIR}/export-config.json" <<'PY'
+import json,pathlib,sys
+path=pathlib.Path(sys.argv[1])
+config=json.loads(path.read_text())
+config["AttestationConfigPath"]="/etc/evpn/provider-attestation/provider.json"
+path.write_text(json.dumps(config)+"\n")
+PY
 cat >"${EVIDENCE_DIR}/ovsdb-importer.yaml" <<EOF
 gobgp:
   endpoint: unix:///var/run/gobgp/gobgp.sock
@@ -411,6 +420,7 @@ spec:
     spec:
       hostNetwork: true
       hostPID: true
+${EXPORT_SERVICE_ACCOUNT}
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector: {kubernetes.io/hostname: "${WORKER}"}
       containers:
@@ -429,14 +439,14 @@ spec:
         - {name: evidence, mountPath: /framework-e2e-share}
         - {name: agent, mountPath: /run/evpn-node-agent}
         - {name: netns, mountPath: /run/netns, mountPropagation: HostToContainer}
-        - {name: gobgp, mountPath: /var/run/gobgp, readOnly: true}
+${EXPORT_MOUNTS}
       volumes:
       - {name: ovs, hostPath: {path: /run/openvswitch, type: DirectoryOrCreate}}
       - {name: ovn, hostPath: {path: /run/ovn, type: DirectoryOrCreate}}
       - {name: evidence, hostPath: {path: ${SHARED_DIR}, type: Directory}}
       - {name: agent, hostPath: {path: /run/evpn-node-agent, type: DirectoryOrCreate}}
       - {name: netns, hostPath: {path: /run/netns, type: DirectoryOrCreate}}
-      - {name: gobgp, hostPath: {path: /run/gobgp-export-test, type: DirectoryOrCreate}}
+${EXPORT_VOLUMES}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -536,9 +546,41 @@ docker exec "${FRR_CONTAINER}" vtysh -c "show bgp neighbor ${LOCAL_VTEP}" \
   | tee "${EVIDENCE_DIR}/frr-neighbor.txt"
 grep -qi Established "${EVIDENCE_DIR}/gobgp-neighbor.txt"
 grep -qi Established "${EVIDENCE_DIR}/frr-neighbor.txt"
+deadline=$((SECONDS+150))
+export_ready=0
+while (( SECONDS < deadline )); do
+  if ag cat /run/evpn-node-agent/export-status.json >"${EVIDENCE_DIR}/export-status-initial.json" &&
+     python3 - "${EVIDENCE_DIR}/export-status-initial.json" <<'PY'
+import json,sys
+s=json.load(open(sys.argv[1]))
+assert not s.get("Error"),s
+result=s.get("Result") or {}
+assert not result.get("OwnershipUnverified") and not result.get("RecoveryState"),s
+assert len(result.get("Desired") or [])==2,s
+applied=result.get("Applied") or []
+assert len(applied)==2 and all(e.get("PathUUID") for e in applied),s
+routes={(e["Endpoint"]["MACAddress"],tuple(e["Endpoint"]["IPAddresses"])) for e in applied}
+assert routes=={
+    ("0a:58:f0:01:00:0a",("10.244.240.10",)),
+    ("0a:58:f0:01:00:0b",("10.244.240.11",)),
+},routes
+PY
+  then
+    docker exec "${FRR_CONTAINER}" vtysh -c 'show bgp l2vpn evpn route type macip' \
+      >"${EVIDENCE_DIR}/frr-rib-initial.txt"
+    if grep -q '10.244.240.10' "${EVIDENCE_DIR}/frr-rib-initial.txt" &&
+       grep -q '10.244.240.11' "${EVIDENCE_DIR}/frr-rib-initial.txt"; then
+      export_ready=1
+      break
+    fi
+  fi
+  sleep 2
+done
+[[ "${export_ready}" == 1 ]] || { echo "authorized Framework export did not converge before O6" >&2; exit 1; }
 provider_exec gobgp global rib -a evpn | tee "${EVIDENCE_DIR}/gobgp-rib-initial.txt"
 docker exec "${FRR_CONTAINER}" vtysh -c 'show bgp l2vpn evpn route type macip' \
   | tee "${EVIDENCE_DIR}/frr-rib-initial.txt"
+ag cat /run/evpn-node-agent/export-status.json >"${EVIDENCE_DIR}/export-status-initial.json"
 grep -q '10.244.240.10' "${EVIDENCE_DIR}/frr-rib-initial.txt"
 grep -q '10.244.240.11' "${EVIDENCE_DIR}/frr-rib-initial.txt"
 gate O6

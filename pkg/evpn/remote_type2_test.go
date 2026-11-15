@@ -205,6 +205,19 @@ func (s *importTestSource) ReadRemoteRIB(context.Context) (RemoteRIBSnapshot, er
 	return s.snap, s.err
 }
 
+func importTestSourceFor(t *testing.T, importer *ReadOnlyType2Importer) *importTestSource {
+	t.Helper()
+	legacy, ok := importer.source.(legacyRemoteType2RIBSource)
+	if !ok {
+		t.Fatalf("unexpected Type-2 source adapter %T", importer.source)
+	}
+	source, ok := legacy.source.(*importTestSource)
+	if !ok {
+		t.Fatalf("unexpected legacy RIB source %T", legacy.source)
+	}
+	return source
+}
+
 func confirmedImport(t *testing.T, i *ReadOnlyType2Importer) RemoteImportSnapshot {
 	t.Helper()
 	if _, err := i.Poll(context.Background()); err != nil {
@@ -462,6 +475,13 @@ func TestGoBGPRemoteRIBCompleteStream(t *testing.T) {
 	backend.mu.Unlock()
 	if s, err := source.ReadRemoteRIB(ctx); err != nil || !s.Complete || len(s.Paths) != 1 {
 		t.Fatalf("%+v %v", s, err)
+	}
+	neutral, err := source.ReadRemoteType2RIB(ctx)
+	if err != nil || !neutral.Complete || len(neutral.Paths) != 1 ||
+		neutral.Paths[0].DecodeError != nil || neutral.Paths[0].Route.Classification != "remote" ||
+		neutral.Paths[0].Route.MAC != "aa:bb:cc:dd:ee:ff" ||
+		neutral.Paths[0].Route.RouteTargets[0] != "64512:100" {
+		t.Fatalf("GoBGP snapshot adapter returned an invalid provider-neutral observation: %+v %v", neutral, err)
 	}
 	source.Gate = &exportTestGate{err: io.ErrUnexpectedEOF}
 	if s, err := source.ReadRemoteRIB(ctx); err == nil || s.Complete {

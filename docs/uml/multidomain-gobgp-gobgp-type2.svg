@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" contentScriptType="application/ecmascript" contentStyleType="text/css" height="425px" preserveAspectRatio="none" style="width:509px;height:425px;background:#FCFCFD;" version="1.1" viewBox="0 0 509 425" width="509px" zoomAndPan="magnify"><defs/><g><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="462" x="27.5" y="12.9951">Proposed / Future | independent OVN domains with GoBGP Type-2</text><!--MD5=[f83ae91a690dfc657e1c5fbbd818f13d]
+entity a--><rect fill="#F1F5F9" height="85.1875" style="stroke: #64748B; stroke-width: 1.5;" width="316" x="6.5" y="24.2969"/><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="296" x="16.5" y="47.292">Domain A | independent OVN control plane</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="166" x="16.5" y="63.5889">NBDB / northd / SBDB A</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="179" x="16.5" y="79.8857">Node-Agent A + GoBGP A</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="245" x="16.5" y="96.1826">ovn-controller / OVS A + endpoint A</text><!--MD5=[5d12e840fb55afd9ed7b3559a638e8f7]
+entity b--><rect fill="#F1F5F9" height="85.1875" style="stroke: #64748B; stroke-width: 1.5;" width="317" x="6" y="187.2969"/><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="297" x="16" y="210.292">Domain B | independent OVN control plane</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="167" x="16" y="226.5889">NBDB / northd / SBDB B</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="181" x="16" y="242.8857">Node-Agent B + GoBGP B</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="247" x="16" y="259.1826">ovn-controller / OVS B + endpoint B</text><!--MD5=[a3deb68e4aebbeb113ddd128f6b25b58]
+link a to b--><path d="M78.9,109.4469 C68.73,117.9169 59.76,127.8269 53.5,139.2969 C43.43,157.7669 52.28,173.8469 68.6,187.0769 " fill="none" id="a-b" style="stroke: #2563EB; stroke-width: 1.0; stroke-dasharray: 7.0,7.0;"/><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="175" x="54.5" y="153.292">BGP EVPN Type-2 control</text><!--MD5=[a3deb68e4aebbeb113ddd128f6b25b58]
+link a to b--><path d="M215.44,109.5469 C223.21,118.4869 230.1,128.5169 234.5,139.2969 C241.51,156.4669 233.93,173.0969 221.53,187.2569 " fill="none" id="a-b-1" style="stroke: #15803D; stroke-width: 1.0; stroke-dasharray: 7.0,7.0;"/><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="260" x="237.5" y="153.292">proposed external VXLAN packet path</text><rect fill="#DDDDDD" height="124.0781" rx="5" ry="5" style="stroke: #000000; stroke-width: 1.0;" width="473" x="21.5" y="290.2969"/><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="461" x="27.5" y="308.292">Proposed topology; no independent-domain end-to-end validation.</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="360" x="27.5" y="324.5889">Blue: BGP Type-2 control | Green: workload packets</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="290" x="27.5" y="340.8857">No shared OVN NBDB / SBDB is assumed.</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="382" x="27.5" y="357.1826">Importer owns only its exact Linux FDB / neighbor state.</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="312" x="27.5" y="373.4795">ovn-controller observes it and programs OVS.</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="361" x="27.5" y="389.7764">Exact route and imported-state ownership stay local.</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="450" x="27.5" y="406.0732">Shared-OVN results do not validate this inter-domain packet path.</text><!--MD5=[7b79c3f270552cd50142c7b111b77080]
+@startuml
+title Proposed / Future | independent OVN domains with GoBGP Type-2
+top to bottom direction
+skinparam backgroundColor #FCFCFD
+skinparam defaultFontName DejaVu Sans
+skinparam defaultFontSize 14
+skinparam shadowing false
+skinparam ArrowColor #475569
+skinparam rectangleBackgroundColor #F1F5F9
+skinparam rectangleBorderColor #64748B
+
+rectangle "Domain A | independent OVN control plane\nNBDB / northd / SBDB A\nNode-Agent A + GoBGP A\novn-controller / OVS A + endpoint A" as a
+rectangle "Domain B | independent OVN control plane\nNBDB / northd / SBDB B\nNode-Agent B + GoBGP B\novn-controller / OVS B + endpoint B" as b
+
+a -[#2563EB,dashed]- b : BGP EVPN Type-2 control
+a -[#15803D,dashed]- b : proposed external VXLAN packet path
+
+legend bottom
+  Proposed topology; no independent-domain end-to-end validation.
+  Blue: BGP Type-2 control | Green: workload packets
+  No shared OVN NBDB / SBDB is assumed.
+  Importer owns only its exact Linux FDB / neighbor state.
+  ovn-controller observes it and programs OVS.
+  Exact route and imported-state ownership stay local.
+  Shared-OVN results do not validate this inter-domain packet path.
+endlegend
+@enduml
+
+PlantUML version 1.2020.02(Sun Mar 01 10:22:07 WET 2020)
+(GPL source distribution)
+Java Runtime: OpenJDK Runtime Environment
+JVM: OpenJDK 64-Bit Server VM
+Java Version: 21.0.13.0.3+1-1-24.04.1-Ubuntu
+Operating System: Linux
+Default Encoding: UTF-8
+Language: en
+Country: US
+--></g></svg>

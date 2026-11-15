@@ -106,7 +106,7 @@ Retained stack symbolization mentions `advertised_mac_binding_entry_find` /
 `advertised_mac_binding_add_with_mac`; no core proves a faulting value.
 Raw local runtime logs are not a distributed public evidence bundle.
 
-G.8 performed a preliminary OVN issue search; related northd reports were
+A preliminary OVN issue search found related northd reports; they were
 returned but no exact duplicate was established. Full issue/PR review and
 cross-version checks remain **pending**; no verified issue number or fix is
 assigned. Before submission, retain sanitized logs/core and exact source/build

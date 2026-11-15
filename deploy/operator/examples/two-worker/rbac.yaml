@@ -1,0 +1,39 @@
+# Replace NODE_A and NODE_B, and workload namespace if needed.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: evpn-provider-observer, namespace: evpn-system}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: evpn-worker-inventory-reader, namespace: evpn-system}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["evpn-worker-inventory"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: evpn-worker-inventory-reader, namespace: evpn-system}
+subjects:
+  - {kind: ServiceAccount, name: evpn-provider-observer, namespace: evpn-system}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: evpn-worker-inventory-reader}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: evpn-two-worker-node-observer}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    resourceNames: ["<NODE_A>", "<NODE_B>"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: evpn-two-worker-node-observer}
+subjects:
+  - {kind: ServiceAccount, name: evpn-provider-observer, namespace: evpn-system}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: evpn-two-worker-node-observer}

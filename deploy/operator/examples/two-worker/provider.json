@@ -1,0 +1,13 @@
+{
+  "mode": "standalone",
+  "standalone": {
+    "installationUID": "<INSTALLATION_UID>", "nodeUID": "<NODE_UID>",
+    "serviceUID": "<SERVICE_UID>", "expectedUID": 0,
+    "cgroupPath": "<SPEAKER_CGROUP>",
+    "executablePath": "/usr/local/bin/gobgpd", "executableSHA256": "<GOBGPD_SHA256>",
+    "arguments": ["/usr/local/bin/gobgpd", "-f", "/etc/evpn/gobgpd.yaml",
+      "--api-hosts", "unix:///run/gobgp/gobgp.sock"],
+    "goBGPConfigPath": "/etc/evpn/gobgpd.yaml", "goBGPConfigSHA256": "<GOBGP_CONFIG_SHA256>",
+    "asn": 64512, "routerID": "<VTEP>"
+  }
+}

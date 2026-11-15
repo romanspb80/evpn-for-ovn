@@ -1,0 +1,67 @@
+@startuml
+title External EVPN fabric - PLANNED / NOT EXECUTED
+skinparam backgroundColor #FCFCFD
+skinparam shadowing false
+skinparam roundcorner 12
+skinparam defaultFontName DejaVu Sans
+skinparam componentStyle rectangle
+skinparam ArrowColor #64748B
+skinparam nodeBackgroundColor #F3F4F6
+skinparam componentBackgroundColor #FAFAFA
+
+node "Local Kubernetes / OVN cluster" {
+  database "Shared OVN NB / SB" as DB
+  node "Worker Node A" {
+    component "Node-Agent A" as AA
+    component "GoBGP A" as GA
+    component "OVN / OVS\nVTEP A" as OA
+    component "Local endpoint A" as EA
+  }
+  node "Worker Node B" {
+    component "Node-Agent B" as AB
+    component "GoBGP B" as GB
+    component "OVN / OVS\nVTEP B" as OB
+    component "Local endpoint B" as EB
+  }
+}
+node "External Domain 1" {
+  component "FRR / zebra" as F
+  component "Linux bridge / VXLAN\nVTEP R1" as D1
+  component "External endpoint R1" as E1
+}
+node "External Domain 2" {
+  component "GoBGP Remote2" as G2
+  component "Test-only RIB projector" as P2
+  component "Linux bridge / VXLAN\nVTEP R2" as D2
+  component "External endpoint R2" as E2
+}
+
+DB -- AA
+DB -- AB
+DB -- OA
+DB -- OB
+AA -[#2563EB]-> GA : exact route operations
+AB -[#2563EB]-> GB : exact route operations
+AA --> OA : owned Netlink sync
+AB --> OB : owned Netlink sync
+GA <-[#2563EB]-> F : BGP EVPN / RT 64512:1000
+GB <-[#2563EB]-> G2 : BGP EVPN / RT 64513:2000
+F --> D1 : kernel programming
+G2 --> P2 : authoritative RIB
+P2 --> D2 : owned FDB / neighbor
+EA -- OA
+EB -- OB
+E1 -- D1
+E2 -- D2
+OA <-[#16A34A]-> D1 : VXLAN 4789 / VNI 1000
+OB <-[#16A34A]-> D2 : VXLAN 4789 / VNI 2000
+OA <-[#9CA3AF,dashed]-> OB : internal Geneve 6081
+
+legend bottom
+  Blue: control plane | Green: external packets
+  Gray dashed: local OVN overlay
+  Geneve baseline uses a separate shared logical switch.
+  Local Linux VXLAN 60100 is synchronization, not workload forwarding.
+  External domains do not share OVN NB/SB or transit each other.
+endlegend
+@enduml

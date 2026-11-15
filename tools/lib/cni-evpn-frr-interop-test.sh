@@ -26,6 +26,8 @@ INTEROP_CAPTURE_CGROUPS=()
 INTEROP_CAPTURE_STAGING_DIR=''
 INTEROP_CAPTURE_STOPPED=0
 INTEROP_CAPTURE_PHASE=initial
+INTEROP_CAPTURE_OUTPUT_NAMES=(pod-net1-peer worker-underlay frr-underlay frr-vxlan remote-workload-peer)
+INTEROP_CAPTURE_VERIFY_COMMAND=()
 INTEROP_CAPTURE_FAILURE=0
 INTEROP_CAPTURE_SHUTDOWN_FAILURE=0
 INTEROP_PACKET_VERIFICATION_FAILURE=0
@@ -102,7 +104,82 @@ interop_setup_provider() {
   EXPORT_HOST_PID='      hostPID: true'
   EXPORT_PROCESS_CONFIG='"ProcessContinuity":true,'
   export_setup_provider
+  # Attestation rechecks Kubernetes provider identity during reconciliation.
+  EXPORT_FLAGS='--evpn-export-config=/run/evpn-node-agent/export-config.json --evpn-export-status=/run/evpn-node-agent/export-status.json --evpn-export-interval=1s --evpn-export-timeout=90s'
+  EXPORT_SERVICE_ACCOUNT='      serviceAccountName: evpn-provider-observer
+      automountServiceAccountToken: true'
+  EXPORT_MOUNTS="${EXPORT_MOUNTS}
+        - {name: provider-attestation, mountPath: /etc/evpn/provider-attestation, readOnly: true}
+        - {name: provider-containerd, mountPath: /run/containerd, readOnly: true}
+        - {name: provider-ctr, mountPath: /usr/local/libexec/evpn-ctr, readOnly: true}"
+  EXPORT_VOLUMES="${EXPORT_VOLUMES}
+      - name: provider-attestation
+        hostPath: {path: /etc/evpn/provider-attestation, type: Directory}
+      - name: provider-containerd
+        hostPath: {path: /run/containerd, type: Directory}
+      - name: provider-ctr
+        hostPath: {path: /usr/local/libexec/evpn-ctr, type: File}"
   REMOTE_FLAGS='--evpn-remote-config=/run/evpn-node-agent/remote-config.json --evpn-remote-status=/run/evpn-node-agent/remote-status.json --evpn-remote-interval=1s --evpn-remote-timeout=3s'
+}
+
+interop_setup_provider_attestation() {
+  local config_name="${1:-cni-export}" observer_namespace="${2:-cni-test}"
+  local ctr_module ctr_source
+  local node_uid daemonset_uid gobgpd_sha ctr_sha
+  local provider_pin_container
+
+  node_uid="$(k get node "${WORKER}" -o jsonpath='{.metadata.uid}')"
+  daemonset_uid="$(k -n k8gobgp-system get ds/k8gobgp -o jsonpath='{.metadata.uid}')"
+  [[ -n "${node_uid}" && -n "${daemonset_uid}" ]]
+
+  provider_pin_container="$(docker create "${K8GOBGP_IMAGE}")"
+  docker cp "${provider_pin_container}:/usr/local/bin/gobgpd" "${EVIDENCE_DIR}/gobgpd-pin" ||
+    { docker rm "${provider_pin_container}" >/dev/null; return 1; }
+  docker rm "${provider_pin_container}" >/dev/null
+  gobgpd_sha="$(sha256sum "${EVIDENCE_DIR}/gobgpd-pin")"
+  gobgpd_sha="${gobgpd_sha%% *}"
+
+  docker exec "${WORKER}" ctr version | tee "${EVIDENCE_DIR}/containerd-version.txt"
+  CTR_VERSION="$(awk '/Version:/ && !seen++ {print $2}' "${EVIDENCE_DIR}/containerd-version.txt")"
+  [[ "${CTR_VERSION}" =~ ^v2\.[0-9]+\.[0-9]+$ ]]
+  ctr_module="github.com/containerd/containerd/v2@${CTR_VERSION}"
+  go mod download -json "${ctr_module}" | tee "${EVIDENCE_DIR}/ctr-source.json"
+  ctr_source="$(go list -m -f '{{.Dir}}' "${ctr_module}")"
+  (cd "${ctr_source}" && CGO_ENABLED=0 GOWORK=off go build -mod=readonly \
+    -o "${EVIDENCE_DIR}/build/ctr" ./cmd/ctr)
+
+  docker exec "${WORKER}" mkdir -p /etc/evpn/provider-attestation /usr/local/libexec
+  docker cp "${EVIDENCE_DIR}/build/ctr" "${WORKER}:/usr/local/libexec/evpn-ctr"
+  docker exec "${WORKER}" sh -ec \
+    'chown root:root /usr/local/libexec/evpn-ctr; chmod 755 /usr/local/libexec/evpn-ctr; chmod 600 /run/containerd/containerd.sock'
+  ctr_sha="$(docker exec "${WORKER}" sha256sum /usr/local/libexec/evpn-ctr)"
+  ctr_sha="${ctr_sha%% *}"
+
+  k -n k8gobgp-system get "bgpconfig/${config_name}" -o json |
+    tee "${EVIDENCE_DIR}/attested-provider-config.json" >/dev/null
+  sed -e "s/namespace: evpn-system/namespace: ${observer_namespace}/g" \
+    -e "s/\"cni-export\"/\"${config_name}\"/g" \
+    -e "s/evpn-lab-control-plane/${WORKER}/g" \
+    "${ROOT}/deploy/operator/manifests/provider-attestation.yaml" | k apply -f -
+  python3 - "${EVIDENCE_DIR}" "${WORKER}" "${node_uid}" "${daemonset_uid}" \
+    "${K8GOBGP_IMAGE}" "${gobgpd_sha}" "${ctr_sha}" <<'PY'
+import hashlib,json,pathlib,sys
+p=pathlib.Path(sys.argv[1])
+provider=json.loads((p/"attested-provider-config.json").read_text())
+spec=json.dumps(provider["spec"],sort_keys=True,separators=(",",":")).encode()
+attestation={"nodeName":sys.argv[2],"nodeUID":sys.argv[3],
+  "namespace":"k8gobgp-system","daemonSetName":"k8gobgp","daemonSetUID":sys.argv[4],
+  "containerName":"k8gobgp","image":sys.argv[5],"imageDigest":sys.argv[5].split("@")[1],
+  "expectedUID":0,"executableSHA256":sys.argv[6],"runtime":"containerd-ctr-v1",
+  "runtimeSocket":"/run/containerd/containerd.sock","ctrPath":"/usr/local/libexec/evpn-ctr","ctrSHA256":sys.argv[7],
+  "configNamespace":provider["metadata"]["namespace"],"configName":provider["metadata"]["name"],"configUID":provider["metadata"]["uid"],
+  "configDigest":hashlib.sha256(spec).hexdigest()}
+(p/"provider-attestation.json").write_text(json.dumps(attestation)+"\n")
+PY
+  docker exec -i "${WORKER}" sh -ec \
+    'umask 077; cat > /etc/evpn/provider-attestation/provider.json' \
+    <"${EVIDENCE_DIR}/provider-attestation.json"
+  echo "provider Unix peer attestation pinned to node=${WORKER} DaemonSet=k8gobgp config=${config_name}"
 }
 
 interop_setup_underlay() {
@@ -217,11 +294,12 @@ EOF
   k -n k8gobgp-system rollout status ds/k8gobgp --timeout=240s
   PROVIDER_POD="$(k -n k8gobgp-system get pod -l app.kubernetes.io/name=k8gobgp -o jsonpath='{.items[0].metadata.name}')"
   export_record_provider
+  interop_setup_provider_attestation
   cat > "${EVIDENCE_DIR}/export-config.json" <<EOF
-{"Enabled":true,"DryRun":false,"ProcessContinuity":true,"NodeName":"${WORKER}","LocalChassis":"${LOCAL_CHASSIS}","GRPCEndpoint":"unix:///var/run/gobgp/gobgp.sock","ASN":64512,"RouterID":"${LOCAL_VTEP}","Networks":[{"NetworkID":"n24","LogicalSwitch":"ls24b","Enabled":true,"ExporterSource":"ovn-netlink","BridgeDevice":"${BRIDGE_DEVICE}","VXLANDevice":"${VXLAN_DEVICE}","AdvertiseDevice":"${ADVERTISE_DEVICE}","VNI":${VNI},"RouteDistinguisher":"${LOCAL_VTEP}:${VNI}","RouteTargets":["64512:${VNI}"],"LocalVTEP":"${LOCAL_VTEP}"}]}
+{"Enabled":true,"DryRun":false,"ProcessContinuity":true,"AttestationConfigPath":"/etc/evpn/provider-attestation/provider.json","NodeName":"${WORKER}","LocalChassis":"${LOCAL_CHASSIS}","GRPCEndpoint":"unix:///var/run/gobgp/gobgp.sock","ASN":64512,"RouterID":"${LOCAL_VTEP}","Networks":[{"NetworkID":"n24","LogicalSwitch":"ls24b","Enabled":true,"ExporterSource":"ovn-netlink","BridgeDevice":"${BRIDGE_DEVICE}","VXLANDevice":"${VXLAN_DEVICE}","AdvertiseDevice":"${ADVERTISE_DEVICE}","VNI":${VNI},"RouteDistinguisher":"${LOCAL_VTEP}:${VNI}","RouteTargets":["64512:${VNI}"],"LocalVTEP":"${LOCAL_VTEP}"}]}
 EOF
   cat > "${EVIDENCE_DIR}/remote-config.json" <<EOF
-{"Enabled":true,"GRPCEndpoint":"unix:///var/run/gobgp/gobgp.sock","ASN":64512,"RouterID":"${LOCAL_VTEP}","Import":{"LocalVTEP":"${LOCAL_VTEP}","Networks":[{"NetworkID":"n24","VNI":${VNI},"ImportRouteTargets":["64512:${VNI}"],"AllowedVTEPs":["${FRR_VTEP}"]}]},"Netlink":{"Enabled":true,"ExclusiveWriter":true,"StateDirectory":"/run/evpn-node-agent/remote-state","Networks":[{"NetworkID":"n24","LogicalSwitch":"ls24b","VNI":${VNI},"BridgeDevice":"${BRIDGE_DEVICE}","VXLANDevice":"${VXLAN_DEVICE}"}]}}
+{"Enabled":true,"AttestationConfigPath":"/etc/evpn/provider-attestation/provider.json","GRPCEndpoint":"unix:///var/run/gobgp/gobgp.sock","ASN":64512,"RouterID":"${LOCAL_VTEP}","Import":{"LocalVTEP":"${LOCAL_VTEP}","Networks":[{"NetworkID":"n24","VNI":${VNI},"ImportRouteTargets":["64512:${VNI}"],"AllowedVTEPs":["${FRR_VTEP}"]}]},"Netlink":{"Enabled":true,"ExclusiveWriter":true,"StateDirectory":"/run/evpn-node-agent/remote-state","Networks":[{"NetworkID":"n24","LogicalSwitch":"ls24b","VNI":${VNI},"BridgeDevice":"${BRIDGE_DEVICE}","VXLANDevice":"${VXLAN_DEVICE}"}]}}
 EOF
   docker exec "${WORKER}" mkdir -p /run/evpn-node-agent/remote-state
   docker exec "${WORKER}" chmod 700 /run/evpn-node-agent/remote-state
@@ -441,7 +519,7 @@ interop_capture_discard_staging_dir() {
       rm -f -- "${path}" || failed=1
     fi
   done
-  for name in pod-net1-peer worker-underlay frr-underlay frr-vxlan remote-workload-peer; do
+  for name in "${INTEROP_CAPTURE_OUTPUT_NAMES[@]}"; do
     path="${INTEROP_CAPTURE_STAGING_DIR}/${prefix}${name}.pcap"
     if [[ -L "${path}" ]]; then
       echo "refusing symlink in capture staging directory: ${path}" >&2
@@ -670,7 +748,7 @@ interop_capture_publish_outputs() {
     return 1
   }
   expected_identity="$(getent passwd tcpdump | cut -d: -f3,4)"
-  for name in pod-net1-peer worker-underlay frr-underlay frr-vxlan remote-workload-peer; do
+  for name in "${INTEROP_CAPTURE_OUTPUT_NAMES[@]}"; do
     source="${INTEROP_CAPTURE_STAGING_DIR}/${prefix}${name}.pcap"
     destination="${EVIDENCE_DIR}/${prefix}${name}.pcap"
     if [[ ! -s "${source}" || -L "${source}" ]]; then
@@ -711,7 +789,7 @@ interop_capture_publish_outputs() {
 interop_capture_decode_outputs() {
   local phase="${1:-initial}" prefix="" name pcap failed=0
   [[ "${phase}" == initial ]] || prefix="${phase}-"
-  for name in pod-net1-peer worker-underlay frr-underlay frr-vxlan remote-workload-peer; do
+  for name in "${INTEROP_CAPTURE_OUTPUT_NAMES[@]}"; do
     pcap="${EVIDENCE_DIR}/${prefix}${name}.pcap"
     if [[ ! -s "${pcap}" ]]; then
       echo "missing or empty capture: ${pcap}" >&2
@@ -734,6 +812,11 @@ interop_capture_decode_outputs() {
 
 interop_capture_start_one() {
   local name="$1" namespace_pid="$2" interface="$3" filter="$4"
+  local runtime_limit="${5:-30}"
+  if [[ ! "${runtime_limit}" =~ ^[1-9][0-9]{0,2}$ ]] || (( runtime_limit > 300 )); then
+    echo "capture runtime must be an integer in 1..300 seconds" >&2
+    return 1
+  fi
   local pcap="${INTEROP_CAPTURE_STAGING_DIR}/${name}.pcap"
   local log="${EVIDENCE_DIR}/${name}-capture.log"
   local unit="cni-d22d-${KIND_CLUSTER}-${name}.service"
@@ -757,9 +840,9 @@ interop_capture_start_one() {
   INTEROP_CAPTURE_NAMES+=("${name}")
   INTEROP_CAPTURE_MAIN_PIDS+=("")
   INTEROP_CAPTURE_CGROUPS+=("")
-  printf '%s start unit=%s interface=%s namespace_pid=%s service_uid=0 capture_user=tcpdump output=%q publish=%q command=tcpdump -Z tcpdump -n -i %q -s 256 -U -w %q %q\n' \
+  printf '%s start unit=%s interface=%s namespace_pid=%s runtime_limit=%ss service_uid=0 capture_user=tcpdump output=%q publish=%q command=tcpdump -Z tcpdump -n -i %q -s 256 -U -w %q %q\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)" "${unit}" "${interface}" \
-    "${namespace_pid}" "${pcap}" "${EVIDENCE_DIR}/${name}.pcap" \
+    "${namespace_pid}" "${runtime_limit}" "${pcap}" "${EVIDENCE_DIR}/${name}.pcap" \
     "${interface}" "${pcap}" "${filter}" \
     >>"${EVIDENCE_DIR}/capture-process-lifecycle.log"
   if ! timeout --kill-after=2s 10s sudo -n systemd-run --system --quiet \
@@ -767,7 +850,7 @@ interop_capture_start_one() {
     --property=User=root \
     --property=Group=root \
     --property=UMask=0022 \
-    --property=RuntimeMaxSec=30s \
+    --property="RuntimeMaxSec=${runtime_limit}s" \
     --property=LimitFSIZE=69656 \
     --property=TimeoutStopSec=10s \
     --property=KillSignal=SIGINT \
@@ -775,7 +858,7 @@ interop_capture_start_one() {
     --property="StandardOutput=append:${log}" \
     --property="StandardError=append:${log}" \
     /usr/bin/nsenter --no-fork -t "${namespace_pid}" -n /usr/bin/tcpdump \
-      -Z tcpdump -n -i "${interface}" -s 256 -U -w "${pcap}" "${filter}"; then
+      -Z tcpdump --immediate-mode -n -i "${interface}" -s 256 -U -w "${pcap}" "${filter}"; then
     cat "${log}" >&2 || true
     printf '%s launch-failed unit=%s name=%s\n' \
       "$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)" "${unit}" "${name}" \
@@ -846,8 +929,8 @@ interop_capture_assert_active() {
       failed=1
     fi
   done
-  [[ "${#INTEROP_CAPTURE_UNITS[@]}" == 5 ]] || {
-    echo "expected five active capture processes, found ${#INTEROP_CAPTURE_UNITS[@]}" >&2
+  [[ "${#INTEROP_CAPTURE_UNITS[@]}" == "${#INTEROP_CAPTURE_OUTPUT_NAMES[@]}" ]] || {
+    echo "expected ${#INTEROP_CAPTURE_OUTPUT_NAMES[@]} active capture processes, found ${#INTEROP_CAPTURE_UNITS[@]}" >&2
     failed=1
   }
   return "${failed}"
@@ -1074,7 +1157,12 @@ PY
     manifest="${EVIDENCE_DIR}/packet-path-${INTEROP_CAPTURE_PHASE}-manifest.json"
     verification="${EVIDENCE_DIR}/packet-path-${INTEROP_CAPTURE_PHASE}-verification.json"
   fi
-  if [[ -s "${manifest}" ]]; then
+  if [[ "${#INTEROP_CAPTURE_VERIFY_COMMAND[@]}" != 0 ]]; then
+    if ! "${INTEROP_CAPTURE_VERIFY_COMMAND[@]}"; then
+      failed=1
+      verification_failed=1
+    fi
+  elif [[ -s "${manifest}" ]]; then
     if ! timeout --kill-after=2s 15s python3 "${ROOT}/tools/lib/cni-vxlan-pcap-verify.py" \
       --manifest "${manifest}" \
       --output "${verification}"; then
@@ -1256,8 +1344,10 @@ interop_cleanup() {
 
 interop_wait_import_count() {
   local expected="$1" label="$2" deadline=$((SECONDS+90)) status_file="${EVIDENCE_DIR}/remote-status-${2}.json"
+  local reader=interop_exec_worker
+  if [[ "${3:-}" == standalone ]]; then reader=standalone_smoke_agent_exec; fi
   while (( SECONDS < deadline )); do
-    if docker exec "${WORKER}" cat /run/evpn-node-agent/remote-status.json >"${status_file}" 2>/dev/null &&
+    if "${reader}" cat /run/evpn-node-agent/remote-status.json >"${status_file}" 2>"${status_file}.stderr" &&
       python3 - "${status_file}" "${expected}" "${REMOTE_MAC}" "${REMOTE_IP}" "${FRR_VTEP}" "${VNI}" <<'PY'
 import json,sys
 s=json.load(open(sys.argv[1]))

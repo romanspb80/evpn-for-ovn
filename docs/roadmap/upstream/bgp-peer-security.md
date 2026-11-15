@@ -61,5 +61,5 @@ speaker config and secrets; Node-Agent attests it, not reconciles remote peers.
 Reuse existing FRR/GoBGP fixtures for SEC-01 tests, retaining local attestation,
 endpoint authorization, UUID-only withdrawal and foreign-route checks during
 reconnect/rotation. Never downgrade from failed authentication to unauthenticated
-peering to make a test pass. G.7b.5a's Established session alone is not peer
+peering to make a test pass. An Established session alone is not peer
 security acceptance.

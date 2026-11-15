@@ -38,6 +38,7 @@ capture_running=0
 REMOTE_WORKLOAD_PID=""
 
 export KIND_CLUSTER EVIDENCE_DIR WORKER
+source "${ROOT}/tools/lib/e2e-artifact-cache.sh"
 source "${ROOT}/tools/lib/cni-agent-image-test.sh"
 source "${ROOT}/tools/lib/cni-evpn-export-test.sh"
 source "${ROOT}/tools/lib/cni-evpn-frr-interop-test.sh"
@@ -456,6 +457,7 @@ k apply -f "${EVIDENCE_DIR}/provider-config.yaml"
 k -n k8gobgp-system rollout status ds/k8gobgp --timeout=240s
 PROVIDER_POD="$(k -n k8gobgp-system get pod -l app.kubernetes.io/name=k8gobgp -o jsonpath='{.items[0].metadata.name}')"
 export_record_provider
+interop_setup_provider_attestation framework-netlink-e2e "${NAMESPACE}"
 
 LOCAL_CHASSIS="$(rt ovs-vsctl --bare get Open_vSwitch . external_ids:system-id | tr -d '"')"
 [[ -n "${LOCAL_CHASSIS}" ]]
@@ -465,6 +467,15 @@ EOF
 cat >"${EVIDENCE_DIR}/remote-config.json" <<EOF
 {"Enabled":true,"GRPCEndpoint":"unix:///var/run/gobgp/gobgp.sock","ASN":64512,"RouterID":"${LOCAL_VTEP}","Import":{"LocalVTEP":"${LOCAL_VTEP}","Networks":[{"NetworkID":"framework-netlink-e2e","VNI":${FRAMEWORK_VNI},"ImportRouteTargets":["64512:${FRAMEWORK_VNI}"],"AllowedVTEPs":["${FRR_VTEP}"]}]},"Netlink":{"Enabled":true,"ExclusiveWriter":true,"StateDirectory":"${REMOTE_STATE_DIR}","Networks":[{"NetworkID":"framework-netlink-e2e","LogicalSwitch":"${LOGICAL_SWITCH}","VNI":${FRAMEWORK_VNI},"BridgeDevice":"${FRAMEWORK_BRIDGE_DEVICE}","VXLANDevice":"${FRAMEWORK_VXLAN_DEVICE}"}]}}
 EOF
+python3 - "${EVIDENCE_DIR}" <<'PY'
+import json,pathlib,sys
+root=pathlib.Path(sys.argv[1])
+for name in ("export-config.json","remote-config.json"):
+    path=root/name
+    config=json.loads(path.read_text())
+    config["AttestationConfigPath"]="/etc/evpn/provider-attestation/provider.json"
+    path.write_text(json.dumps(config)+"\n")
+PY
 docker exec "${WORKER}" mkdir -p /run/evpn-node-agent
 docker exec "${WORKER}" chmod 700 /run/evpn-node-agent
 docker exec "${WORKER}" mkdir -m 700 "${REMOTE_STATE_DIR}"
@@ -541,6 +552,7 @@ spec:
     spec:
       hostNetwork: true
       hostPID: true
+${EXPORT_SERVICE_ACCOUNT}
       dnsPolicy: ClusterFirstWithHostNet
       nodeSelector: {kubernetes.io/hostname: "${WORKER}"}
       containers:
@@ -562,14 +574,14 @@ spec:
         - {name: evidence, mountPath: /framework-e2e-share}
         - {name: agent, mountPath: /run/evpn-node-agent}
         - {name: netns, mountPath: /run/netns, mountPropagation: HostToContainer}
-        - {name: gobgp, mountPath: /var/run/gobgp, readOnly: true}
+${EXPORT_MOUNTS}
       volumes:
       - {name: ovs, hostPath: {path: /run/openvswitch, type: DirectoryOrCreate}}
       - {name: ovn, hostPath: {path: /run/ovn, type: DirectoryOrCreate}}
       - {name: evidence, hostPath: {path: ${SHARED_DIR}, type: Directory}}
       - {name: agent, hostPath: {path: /run/evpn-node-agent, type: DirectoryOrCreate}}
       - {name: netns, hostPath: {path: /run/netns, type: DirectoryOrCreate}}
-      - {name: gobgp, hostPath: {path: /run/gobgp-export-test, type: DirectoryOrCreate}}
+${EXPORT_VOLUMES}
 EOF
 k apply -f "${EVIDENCE_DIR}/node-agent.yaml"
 k -n "${NAMESPACE}" rollout status ds/framework-node-agent --timeout=180s

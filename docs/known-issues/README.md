@@ -1,7 +1,7 @@
 # Known issues and upstream candidates
 
 This registry tracks evidence-backed runtime behavior, integration limits, and
-workarounds relevant to the current Framework and CNI application. It is not an
+workarounds relevant to the current Framework and Kubernetes CNI solution. It is not an
 upstream issue tracker; classifications describe the available evidence and
 do not establish an upstream root cause.
 

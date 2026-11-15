@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
+	"github.com/romanspb80/evpn-for-ovn/pkg/evpn/domain"
 )
 
 // RouteAction describes the lifecycle transition for a locally-owned EVPN Type-2 route.
@@ -52,13 +53,18 @@ type Type2NLRI struct {
 
 // Key is the Type-2 route prefix identity; labels are replacement attributes, not key fields.
 func (n Type2NLRI) Key() string {
-	return fmt.Sprintf("%q|%q|%d|%q|%q", n.RD, n.ESI, n.EthernetTag, n.MAC, n.IP)
+	return domain.RouteIdentity{
+		RD: n.RD, ESI: n.ESI, EthernetTag: n.EthernetTag, MAC: n.MAC, IP: n.IP,
+	}.Key()
 }
 
 // Equal compares the route prefix identity and intentionally ignores labels.
 func (n Type2NLRI) Equal(other Type2NLRI) bool {
-	return n.RD == other.RD && n.ESI == other.ESI && n.EthernetTag == other.EthernetTag &&
-		n.MAC == other.MAC && n.IP == other.IP
+	return domain.RouteIdentity{
+		RD: n.RD, ESI: n.ESI, EthernetTag: n.EthernetTag, MAC: n.MAC, IP: n.IP,
+	}.Equal(domain.RouteIdentity{
+		RD: other.RD, ESI: other.ESI, EthernetTag: other.EthernetTag, MAC: other.MAC, IP: other.IP,
+	})
 }
 
 func sameType2NLRIValue(lhs, rhs Type2NLRI) bool {
@@ -145,33 +151,24 @@ func NewRouteReconciler() *RouteReconciler {
 }
 
 func (ep LocalEndpoint) OwnershipKey() string {
-	return strings.TrimSpace(ep.EndpointID) + "/" + strings.TrimSpace(ep.Incarnation)
+	return endpointDomainValue(ep).OwnershipKey()
 }
 
 func (ep LocalEndpoint) RouteKey() string {
-	return strings.Join([]string{
-		strings.TrimSpace(ep.NetworkID),
-		strings.TrimSpace(ep.EndpointID),
-		strings.TrimSpace(ep.Incarnation),
-		strings.TrimSpace(ep.RouteDistinguisher),
-		strings.TrimSpace(ep.MACAddress),
-		primaryIP(ep.IPAddresses),
-		fmt.Sprintf("%d", ep.VNI),
-		strings.TrimSpace(ep.LocalVTEP),
-	}, "/")
+	return endpointDomainValue(ep).RouteKey()
 }
 
 func (ep LocalEndpoint) Equivalent(other LocalEndpoint) bool {
-	return ep.NetworkID == other.NetworkID &&
-		ep.EndpointID == other.EndpointID &&
-		ep.Incarnation == other.Incarnation &&
-		ep.RouteDistinguisher == other.RouteDistinguisher &&
-		ep.MACAddress == other.MACAddress &&
-		ep.VNI == other.VNI &&
-		ep.MACOnly == other.MACOnly &&
-		primaryIP(ep.IPAddresses) == primaryIP(other.IPAddresses) &&
-		ep.LocalVTEP == other.LocalVTEP &&
-		equalStringSet(ep.RouteTargets, other.RouteTargets)
+	return endpointDomainValue(ep).Equivalent(endpointDomainValue(other))
+}
+
+func endpointDomainValue(ep LocalEndpoint) domain.Endpoint {
+	return domain.Endpoint{
+		NetworkID: ep.NetworkID, EndpointID: ep.EndpointID, Incarnation: ep.Incarnation,
+		MACAddress: ep.MACAddress, IPAddresses: ep.IPAddresses, VNI: ep.VNI,
+		RouteDistinguisher: ep.RouteDistinguisher, RouteTargets: ep.RouteTargets,
+		LocalVTEP: ep.LocalVTEP, Advertise: ep.Advertise, MACOnly: ep.MACOnly,
+	}
 }
 
 func (ep LocalEndpoint) Validate() error {
@@ -224,22 +221,7 @@ func (ep LocalEndpoint) Validate() error {
 }
 
 func primaryIP(addresses []string) string {
-	for _, addr := range addresses {
-		trimmed := strings.TrimSpace(addr)
-		if trimmed == "" {
-			continue
-		}
-		if strings.Contains(trimmed, "/") {
-			ip, _, err := net.ParseCIDR(trimmed)
-			if err == nil {
-				return ip.String()
-			}
-		}
-		if parsed := net.ParseIP(trimmed); parsed != nil {
-			return parsed.String()
-		}
-	}
-	return ""
+	return domain.PrimaryIP(addresses)
 }
 
 func parseSelectedIP(addresses []string) (netip.Addr, error) {
@@ -285,11 +267,11 @@ func BuildType2Route(ep LocalEndpoint) (Type2Route, error) {
 	}
 	routeTargets = append(routeTargets, Type2ExtendedCommunity{Kind: Type2EncapsulationCommunity, Value: "vxlan"})
 
-	mac, err := net.ParseMAC(ep.MACAddress)
+	mac, err := domain.CanonicalMAC(ep.MACAddress)
 	if err != nil {
 		return Type2Route{}, err
 	}
-	nlri := Type2NLRI{RD: rd.String(), ESI: strings.Repeat("0", 20), MAC: mac.String(), Labels: []uint32{ep.VNI}}
+	nlri := Type2NLRI{RD: rd.String(), ESI: strings.Repeat("0", 20), MAC: mac, Labels: []uint32{ep.VNI}}
 	if !ep.MACOnly {
 		nlri.IP = ipAddr.String()
 	}
@@ -307,6 +289,7 @@ func (r *RouteReconciler) Reconcile(desired []LocalEndpoint) ([]Type2Route, erro
 	defer r.mu.Unlock()
 	r.pending = make(map[*routeOperation]bool)
 	desiredMap := make(map[string]LocalEndpoint, len(desired))
+	domainDesired := make([]domain.DesiredRoute, 0, len(desired))
 	for _, endpoint := range desired {
 		if !endpoint.Advertise {
 			continue
@@ -316,54 +299,42 @@ func (r *RouteReconciler) Reconcile(desired []LocalEndpoint) ([]Type2Route, erro
 			return nil, err
 		}
 		key := route.NLRI.Key()
-		if other, ok := desiredMap[key]; ok && !other.Equivalent(endpoint) {
-			return nil, fmt.Errorf("%w: conflicting desired owners or attributes for %s", ErrRouteOwnership, key)
-		}
-		if r.foreign[key] {
-			return nil, fmt.Errorf("%w: unclaimed local path for %s", ErrRouteOwnership, key)
-		}
 		desiredMap[key] = cloneLocalEndpoint(endpoint)
+		domainDesired = append(domainDesired, domain.DesiredRoute{Key: key, Endpoint: endpointDomainValue(endpoint)})
 	}
 
-	changes := make([]Type2Route, 0, len(desiredMap)+len(r.applied))
-	plan := func(action RouteAction, ep LocalEndpoint, key, uuid string) error {
-		route, err := BuildType2Route(cloneLocalEndpoint(ep))
-		if err != nil {
-			return err
+	domainApplied := make([]domain.OwnedRoute, 0, len(r.applied))
+	for key, existing := range r.applied {
+		domainApplied = append(domainApplied, domain.OwnedRoute{
+			Key: key, Endpoint: endpointDomainValue(existing.Endpoint), PathID: existing.PathUUID,
+		})
+	}
+	operations, err := domain.Plan(domainDesired, domainApplied, r.foreign)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrRouteOwnership, err)
+	}
+	changes := make([]Type2Route, 0, len(operations))
+	for _, operation := range operations {
+		var endpoint LocalEndpoint
+		switch RouteAction(operation.Action) {
+		case RouteWithdraw:
+			endpoint = r.applied[operation.Key].Endpoint
+		case RouteAdvertise:
+			endpoint = desiredMap[operation.Key]
+		default:
+			return nil, fmt.Errorf("unsupported route action %q", operation.Action)
 		}
-		op := &routeOperation{action: action, endpoint: cloneLocalEndpoint(ep), wireKey: key, pathUUID: uuid}
-		route.Action, route.operation = action, op
+		route, err := BuildType2Route(cloneLocalEndpoint(endpoint))
+		if err != nil {
+			return nil, err
+		}
+		op := &routeOperation{
+			action: RouteAction(operation.Action), endpoint: cloneLocalEndpoint(endpoint),
+			wireKey: operation.Key, pathUUID: operation.PathID,
+		}
+		route.Action, route.operation = op.action, op
 		r.pending[op] = true
 		changes = append(changes, route)
-		return nil
-	}
-	keys := make([]string, 0, len(r.applied))
-	for key := range r.applied {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		existing := r.applied[key]
-		if want, ok := desiredMap[key]; ok && existing.Endpoint.Equivalent(want) {
-			continue
-		}
-		if err := plan(RouteWithdraw, existing.Endpoint, key, existing.PathUUID); err != nil {
-			return nil, err
-		}
-	}
-	keys = keys[:0]
-	for key := range desiredMap {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		endpoint := desiredMap[key]
-		if existing, ok := r.applied[key]; ok && existing.Endpoint.Equivalent(endpoint) {
-			continue
-		}
-		if err := plan(RouteAdvertise, endpoint, key, ""); err != nil {
-			return nil, err
-		}
 	}
 	return changes, nil
 }

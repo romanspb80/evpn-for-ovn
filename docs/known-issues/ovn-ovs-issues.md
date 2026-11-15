@@ -1,7 +1,7 @@
 # OVN/OVS issue registry
 
 **Last reviewed:** 2026-11-08 (documentation/source reconciliation; no new OVN reproduction)
-**Scope:** evidence for the current Framework integrations and CNI application.
+**Scope:** evidence for the current Framework integrations and Kubernetes CNI solution.
 This is not an upstream issue tracker. No issue in this registry has been
 published upstream.
 
@@ -62,7 +62,7 @@ for exact configuration, versions, commands, observations, and evidence.
   the crash; confidence is low on source-level mechanism. No core proves the
   faulting object/value.
 - **Current workaround:** do not put a foreign sentinel on the
-  VNI-enabled/dynamic-routing switch. The CNI-R runner creates a separate
+  VNI-enabled/dynamic-routing switch. The CNI replacement-binding runner creates a separate
   non-dynamic switch and a valid MAC-only sentinel there. This is a
   test-configuration workaround, not an OVN fix.
 - **Limitations:** no version comparison, verified upstream duplicate/fix,
@@ -70,13 +70,13 @@ for exact configuration, versions, commands, observations, and evidence.
   is verified only for the recorded test topology/version.
 - **Regression coverage:** `test_foreign_sentinel_uses_valid_mac_on_separate_non_dynamic_switch`
   in `tools/lib/test_cni_replacement_binding.py` checks the configuration and
-  foreign-LSP preservation assertion offline. The successful CNI-R runtime
+  foreign-LSP preservation assertion offline. The successful CNI runtime
   also passed replacement binding, traffic, withdrawal, and cleanup.
 - **Upstream readiness:** keep the [draft](../issues/ovn-port-binding-upstream-draft.md)
   unpublished. The configuration is reproducible without CNI and is suitable
   for upstream triage, but exact source fault and cross-version behavior are
   missing. Do not label this a confirmed upstream defect.
-- **Duplicate review / next action:** preliminary OVN issue search in G.8 found
+- **Duplicate review / next action:** a preliminary OVN issue search found
   related northd reports but established no matching duplicate. Issue/PR review
   is pending. UP-01 requires a minimized source/build reproducer, symbolized
   core and sanitized retained evidence before submission.
@@ -118,7 +118,7 @@ for exact configuration, versions, commands, observations, and evidence.
   evidence. Tests should use exact-row, bounded state checks and record
   northd health; a bounded wait is diagnostic, not a fix. Do not write to
   northd-owned SB tables.
-- **Regression coverage:** the CNI-R runtime recorded the transient error,
+- **Regression coverage:** the CNI runtime recorded the transient error,
   then verified replacement `BOUND/up=true`; no deterministic offline
   regression for the upstream transaction race exists.
 - **Upstream readiness:** insufficient for a standalone issue. Missing
@@ -226,6 +226,6 @@ classified as OVN/OVS issues: Multus `CNI_ARGS` receipt-parser incompatibility,
 tcpdump/AppArmor evidence-directory denial, packet-capture drain/attribution
 gaps, and test-runner evidence ordering. Their first failures occurred in
 harness or host capture plumbing, not in OVN/OVS. The repaired runner moves
-tcpdump staging to a private `/tmp` directory and the latest CNI-R run passes
-its strict capture verifier. These historical diagnostics are not distributed
+tcpdump staging to a run-owned directory and its CNI replacement-binding
+scenario passes the strict capture verifier. These historical diagnostics are not distributed
 acceptance evidence for a new public snapshot.

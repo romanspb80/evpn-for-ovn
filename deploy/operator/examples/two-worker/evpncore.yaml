@@ -1,0 +1,55 @@
+# Template: see README before applying. Angle-bracket values are not identities.
+apiVersion: evpn.romanspb80.github.io/v1alpha1
+kind: EvpnCore
+metadata:
+  name: evpn-core
+  namespace: evpn-system
+spec:
+  enabled: true
+  dataplaneMode: external-ovn
+  bgp: {provider: k8gobgp}
+  nodeAgent:
+    enabled: true
+    image: <NODE_AGENT_IMAGE>
+    nodeSelector: {evpn.example.com/worker: "true"}
+    ovnNBEndpoint: tcp:<OVN_NB_HOST>:6641
+    ovnSBEndpoint: tcp:<OVN_SB_HOST>:6642
+    exportConfigPath: /run/evpn-node-agent/export.json
+    remoteConfigPath: /run/evpn-node-agent/import.json
+    cniContinuityConfigPath: /run/evpn-node-agent/cni.json
+    exportStatusPath: /run/evpn-node-agent/export-status.json
+    remoteStatusPath: /run/evpn-node-agent/import-status.json
+    providerAttestation: true
+    providerCTRHostPath: /opt/evpn/bin/ctr
+    gobgpHostPath: /run/gobgp
+    type2JournalHostPath: /var/lib/evpn-worker
+  workerInventory:
+    clusterUID: <CLUSTER_UID>
+    revision: 1
+    workers:
+      - nodeName: <NODE_A>
+        nodeUID: <NODE_A_UID>
+        chassis: <CHASSIS_A>
+        speakerRouterID: 192.0.2.11
+        speakerASN: 64512
+        speakerEndpoint: unix:///var/run/gobgp/gobgp.sock
+        localVTEP: 192.0.2.11
+        attestationPath: /etc/evpn/provider-attestation/provider.json
+        authorizationPath: /run/evpn-node-agent/cni.json
+        exportJournal: /var/lib/evpn-node-agent/export
+        importJournal: /var/lib/evpn-node-agent/import
+        continuityJournal: /var/lib/evpn-node-agent/cni
+        networks: [{id: tenant-a, logicalSwitch: tenant-a, vni: 1000}]
+      - nodeName: <NODE_B>
+        nodeUID: <NODE_B_UID>
+        chassis: <CHASSIS_B>
+        speakerRouterID: 192.0.2.12
+        speakerASN: 64512
+        speakerEndpoint: unix:///var/run/gobgp/gobgp.sock
+        localVTEP: 192.0.2.12
+        attestationPath: /etc/evpn/provider-attestation/provider.json
+        authorizationPath: /run/evpn-node-agent/cni.json
+        exportJournal: /var/lib/evpn-node-agent/export
+        importJournal: /var/lib/evpn-node-agent/import
+        continuityJournal: /var/lib/evpn-node-agent/cni
+        networks: [{id: tenant-a, logicalSwitch: tenant-a, vni: 1000}]

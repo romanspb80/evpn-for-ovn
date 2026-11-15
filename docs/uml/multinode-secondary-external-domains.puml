@@ -1,0 +1,58 @@
+@startdot
+digraph SharedOvnAndFixtures {
+  graph [rankdir=TB, bgcolor="#FCFCFD", pad="0.20", nodesep="0.28", ranksep="0.40",
+         splines=ortho, compound=true, newrank=true, outputorder=edgesfirst,
+         fontname="DejaVu Sans", labelloc=t,
+         label=<<FONT POINT-SIZE="16" COLOR="#172B4D"><B>Shared OVN Geneve | external EVPN fixtures are separate scenarios</B></FONT><BR/><FONT POINT-SIZE="9" COLOR="#64748B">The dashed external paths were not validated as one combined CNI topology</FONT>>];
+  node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=9,
+        fontcolor="#172B4D", color="#64748B", fillcolor="white", penwidth=1.1,
+        margin="0.13,0.09"];
+  edge [fontname="DejaVu Sans", fontsize=8, fontcolor="#475569",
+        color="#475569", penwidth=1.2, arrowsize=0.6];
+
+  subgraph cluster_ovn {
+    label="ONE KUBERNETES CLUSTER · SHARED OVN DOMAIN";
+    labelloc=t; fontsize=9; fontcolor="#35628F";
+    style="rounded,filled"; color="#A9C6E5"; fillcolor="#F3F8FF"; margin=12;
+    cni [label=<<B>Multus / EVPN CNI</B><BR/><FONT POINT-SIZE="8">ADD / CHECK / DEL</FONT>>, fillcolor="#FFF4DB"];
+    db [shape=cylinder, label=<<B>Shared NBDB / northd / SBDB</B>>, fillcolor="#FFF7E7", color="#D99A22"];
+    worker_a [label=<<B>Worker A / chassis A</B><BR/><FONT POINT-SIZE="8">Pod net1 · Node-Agent</FONT><BR/><FONT POINT-SIZE="8">ovn-controller · OVS</FONT>>];
+    worker_b [label=<<B>Worker B / chassis B</B><BR/><FONT POINT-SIZE="8">Pod net1 · Node-Agent</FONT><BR/><FONT POINT-SIZE="8">ovn-controller · OVS</FONT>>];
+    {rank=same; cni; db;}
+    {rank=same; worker_a; worker_b;}
+    cni -> worker_a [color="#2563EB", label="CNI RPC"];
+    cni -> worker_b [color="#2563EB"];
+    db -> worker_a [color="#64748B", label="SB state"];
+    db -> worker_b [color="#64748B"];
+    worker_a -> worker_b [dir=both, color="#15803D", label="OVN Geneve · UDP 6081"];
+  }
+
+  subgraph cluster_fixture_a {
+    label="EXTERNAL FIXTURE A · SEPARATE TEST";
+    labelloc=t; fontsize=8; fontcolor="#64748B";
+    style="rounded,filled"; color="#D8E2ED"; fillcolor="#F8FAFC"; margin=10;
+    frr [label=<<B>FRR peer</B><BR/><FONT POINT-SIZE="8">BGP EVPN Type-2</FONT>>];
+    vtep_a [label=<<B>Linux VTEP</B><BR/><FONT POINT-SIZE="8">external VXLAN packets</FONT>>];
+    {rank=same; frr; vtep_a;}
+  }
+  subgraph cluster_fixture_b {
+    label="EXTERNAL FIXTURE B · SEPARATE TEST";
+    labelloc=t; fontsize=8; fontcolor="#64748B";
+    style="rounded,filled"; color="#D8E2ED"; fillcolor="#F8FAFC"; margin=10;
+    gobgp [label=<<B>GoBGP peer</B><BR/><FONT POINT-SIZE="8">BGP EVPN Type-2</FONT>>];
+    vtep_b [label=<<B>Test-only Linux VTEP</B><BR/><FONT POINT-SIZE="8">external VXLAN packets</FONT>>];
+    {rank=same; gobgp; vtep_b;}
+  }
+
+  {rank=same; frr; gobgp;}
+  {rank=same; vtep_a; vtep_b;}
+  worker_a -> frr [style=dashed, color="#2563EB", label="Type-2 control"];
+  worker_a -> vtep_a [style=dashed, color="#15803D", label="VXLAN data path"];
+  worker_b -> gobgp [style=dashed, color="#2563EB", label="Type-2 control"];
+  worker_b -> vtep_b [style=dashed, color="#15803D", label="VXLAN data path"];
+
+  note [shape=note, style="filled", color="#D8E2ED", fillcolor="#F8FAFC", fontsize=8,
+        label="Solid Geneve: shared-OVN CNI baseline (including replayed CHECK).\nDashed EVPN paths: fixtures validated separately, not this combined topology.\nNo worker EVPN session; OVN datapath keys are not EVPN VNIs.\nAttempt-8 inventory-gated forwarding is documented separately; foreign-resource preservation was not tested."];
+  vtep_a -> note [style=invis];
+}
+@enddot

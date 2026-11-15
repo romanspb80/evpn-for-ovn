@@ -1,4 +1,4 @@
-# NodeAgentCNI application API
+# NodeAgentCNI plugin API
 
 Service: `node_agent_cni.NodeAgentCNI`. Contract:
 [`proto/node_agent_cni.proto`](../../proto/node_agent_cni.proto); descriptors:
@@ -7,7 +7,7 @@ handlers: [`pkg/nodeagent/server.go`](../../pkg/nodeagent/server.go).
 
 Main caller is [`cmd/evpn-cni`](../../cmd/evpn-cni/main.go), with direct
 unit/live test clients. All three methods have concrete handlers. This is
-the application-facing CNI service, not a universal Framework endpoint API.
+the CNI-plugin-facing service, not a universal Framework endpoint API.
 Reusable endpoint/network managers can also be called directly without CNI.
 
 | RPC | Request -> response | Side effects, dependencies and error behavior |

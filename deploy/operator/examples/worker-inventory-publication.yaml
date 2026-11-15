@@ -1,0 +1,59 @@
+# Inventory-gated Operator example. Replace every example identity and address.
+# Administrators must provision the node-local runtime, CNI and speaker
+# configuration, RBAC, reservation bootstrap and shared OVN independently.
+apiVersion: evpn.romanspb80.github.io/v1alpha1
+kind: EvpnCore
+metadata:
+  name: evpn-core
+  namespace: evpn-system
+spec:
+  enabled: true
+  dataplaneMode: external-ovn
+  nodeAgent:
+    enabled: true
+    nodeSelector:
+      example.com/evpn-ready: "true"
+    ovnNBEndpoint: tcp:ovn-nb.example.internal:6641
+    ovnSBEndpoint: tcp:ovn-sb.example.internal:6642
+    exportConfigPath: /run/evpn-node-agent/export.json
+    remoteConfigPath: /run/evpn-node-agent/import.json
+    cniContinuityConfigPath: /run/evpn-node-agent/cni.json
+    providerAttestation: true
+    providerCTRHostPath: /opt/evpn/bin/ctr
+    type2JournalHostPath: /var/lib/evpn-worker
+  workerInventory:
+    clusterUID: cccccccc-cccc-4ccc-8ccc-cccccccccccc
+    revision: 1
+    workers:
+      - nodeName: worker-a
+        nodeUID: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+        chassis: chassis-a
+        speakerRouterID: 192.0.2.11
+        speakerASN: 64512
+        speakerEndpoint: unix:///var/run/gobgp/api.sock
+        localVTEP: 192.0.2.21
+        attestationPath: /etc/evpn/provider-attestation/provider.json
+        authorizationPath: /run/evpn-node-agent/cni.json
+        exportJournal: /var/lib/evpn-node-agent/export
+        importJournal: /var/lib/evpn-node-agent/import
+        continuityJournal: /var/lib/evpn-node-agent/cni
+        networks:
+          - id: tenant-a
+            logicalSwitch: tenant-a
+            vni: 100
+      - nodeName: worker-b
+        nodeUID: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
+        chassis: chassis-b
+        speakerRouterID: 192.0.2.12
+        speakerASN: 64512
+        speakerEndpoint: unix:///var/run/gobgp/api.sock
+        localVTEP: 192.0.2.22
+        attestationPath: /etc/evpn/provider-attestation/provider.json
+        authorizationPath: /run/evpn-node-agent/cni.json
+        exportJournal: /var/lib/evpn-node-agent/export
+        importJournal: /var/lib/evpn-node-agent/import
+        continuityJournal: /var/lib/evpn-node-agent/cni
+        networks:
+          - id: tenant-a
+            logicalSwitch: tenant-a
+            vni: 100

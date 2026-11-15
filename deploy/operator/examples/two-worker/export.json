@@ -1,0 +1,12 @@
+{
+  "Enabled": true, "DryRun": false, "ProcessContinuity": true,
+  "NodeName": "<NODE>", "LocalChassis": "<CHASSIS>",
+  "GRPCEndpoint": "unix:///var/run/gobgp/gobgp.sock",
+  "ASN": 64512, "RouterID": "<VTEP>",
+  "AttestationConfigPath": "/etc/evpn/provider-attestation/provider.json",
+  "Recovery": {"StateDirectory": "/var/lib/evpn-node-agent/export",
+    "Domain": {"InstallationUID": "<INSTALLATION_UID>", "NodeUID": "<NODE_UID>"}},
+  "Networks": [{"NetworkID": "tenant-a", "LogicalSwitch": "tenant-a", "Enabled": true,
+    "ExporterSource": "cni", "VNI": 1000, "RouteDistinguisher": "<VTEP>:1000",
+    "RouteTargets": ["64512:1000"], "LocalVTEP": "<VTEP>"}]
+}

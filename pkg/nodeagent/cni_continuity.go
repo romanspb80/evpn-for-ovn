@@ -70,6 +70,7 @@ type cniACKState struct {
 
 type cniContinuity struct {
 	nodeName  string
+	domain    ownership.Domain
 	journal   cniJournal
 	workload  CNIWorkloadAttestor
 	observer  cniResourceObserver

@@ -519,7 +519,7 @@ spec:
 		fmt.Sprintf("ping -I br1000 -c 1 -W 1 %s >/dev/null 2>&1 || true", frrEndpointIP))
 	waitForFRRRoutePresent(t, frrEndpointMAC, frrEndpointIP, 25*time.Second)
 
-	importer := NewRemoteType2Importer(
+	importer := NewRemoteType2ImporterFromSnapshot(
 		&GoBGPServerSnapshotSource{Server: gobgp},
 		&Type2RouteValidator{LocalVTEP: localBGPIP,
 			Networks: []EVPNImportNetwork{{

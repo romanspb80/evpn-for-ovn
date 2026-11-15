@@ -1,0 +1,11 @@
+{
+  "JournalDirectory": "/var/lib/evpn-node-agent/cni", "Create": true,
+  "Domain": {"InstallationUID": "<INSTALLATION_UID>", "NodeUID": "<NODE_UID>",
+    "BootID": "<BOOT_ID>", "NetworkNamespace": "<HOST_NETNS>"},
+  "NodeName": "<NODE>", "Kubeconfig": "",
+  "CRIEndpoint": "unix:///run/containerd/containerd.sock",
+  "CTRPath": "/usr/local/libexec/evpn-ctr", "CTRSHA256": "<CTR_SHA256>",
+  "Networks": {"tenant-a": "tenant-a"},
+  "Admission": {"CNIExecutableSHA256": "<CNI_SHA256>",
+    "MultusExecutableSHA256": "<MULTUS_SHA256>", "RuntimeExecutableSHA256": "<RUNTIME_SHA256>"}
+}

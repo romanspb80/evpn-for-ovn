@@ -11,23 +11,26 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/romanspb80/evpn-for-ovn/pkg/ownership"
+	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
 
 // The generic journal version and this resource-specific version are separate.
 type remoteReceiptState struct {
-	Version    int
-	Controller string
-	Target     string
-	Networks   []RemoteNetlinkNetwork
-	Devices    map[string]RemoteDeviceIdentity
-	Receipts   map[string]*RemoteNetlinkReceipt
-	Latest     map[string]uint64
-	Snapshot   RemoteImportSnapshot
-	Quarantine string
+	Version     int
+	Controller  string
+	Target      string
+	Networks    []RemoteNetlinkNetwork
+	Devices     map[string]RemoteDeviceIdentity
+	Receipts    map[string]*RemoteNetlinkReceipt
+	Latest      map[string]uint64
+	Snapshot    RemoteImportSnapshot
+	Quarantine  string
+	Quarantines map[string]RemoteSlotQuarantine
 }
 
 func closeOwnershipJournal(j *ownership.Journal) error {
@@ -38,8 +41,13 @@ func closeOwnershipJournal(j *ownership.Journal) error {
 }
 
 func (s *ownedNetlinkState) durableState() remoteReceiptState {
-	return remoteReceiptState{1, s.controller, s.target, s.config.Networks,
-		s.devices, s.receipts, s.latest, s.snapshot, s.blocked}
+	if s.quarantines == nil {
+		s.quarantines = map[string]RemoteSlotQuarantine{}
+	}
+	return remoteReceiptState{Version: 2, Controller: s.controller, Target: s.target,
+		Networks: s.config.Networks, Devices: s.devices, Receipts: s.receipts,
+		Latest: s.latest, Snapshot: s.snapshot, Quarantine: s.blocked,
+		Quarantines: s.quarantines}
 }
 
 func (s *ownedNetlinkState) openRecovery(boot, namespace string) error {
@@ -76,6 +84,7 @@ func (s *ownedNetlinkState) openRecovery(boot, namespace string) error {
 		if markerErr == nil {
 			return fmt.Errorf("%w: marker exists without durable importer receipts", ownership.ErrBlocked)
 		}
+		s.quarantines = map[string]RemoteSlotQuarantine{}
 		return nil
 	}
 	var r remoteReceiptState
@@ -87,22 +96,43 @@ func (s *ownedNetlinkState) openRecovery(boot, namespace string) error {
 	if err := decoder.Decode(new(interface{})); err != io.EOF {
 		return fmt.Errorf("%w: trailing importer state", ownership.ErrBlocked)
 	}
-	if r.Quarantine != "" {
-		return fmt.Errorf("%w: durable importer quarantine: %s", ownership.ErrBlocked, r.Quarantine)
+	switch r.Version {
+	case 1:
+		if r.Quarantine != "" {
+			return fmt.Errorf("%w: durable importer quarantine: %s", ownership.ErrBlocked, r.Quarantine)
+		}
+		if r.Quarantines != nil {
+			return fmt.Errorf("%w: version 1 importer state contains version 2 slot quarantines", ownership.ErrBlocked)
+		}
+		r.Version = 2
+		r.Quarantines = map[string]RemoteSlotQuarantine{}
+		s.schemaMigration = true
+	case 2:
+		if r.Quarantine != "" {
+			return fmt.Errorf("%w: durable importer quarantine: %s", ownership.ErrBlocked, r.Quarantine)
+		}
+		if r.Quarantines == nil {
+			return fmt.Errorf("%w: version 2 importer state has no slot quarantine map", ownership.ErrBlocked)
+		}
+	default:
+		return fmt.Errorf("%w: unsupported importer receipt state version %d", ownership.ErrBlocked, r.Version)
 	}
 	controller, err := uuid.Parse(r.Controller)
-	if err != nil || controller == uuid.Nil || r.Version != 1 || r.Target != s.target ||
+	if err != nil || controller == uuid.Nil || r.Version != 2 || r.Target != s.target ||
 		!reflect.DeepEqual(r.Networks, s.config.Networks) || len(r.Devices) != 2*len(r.Networks) ||
 		r.Receipts == nil || r.Latest == nil {
 		return fmt.Errorf("%w: invalid importer version, domain, devices or controller", ownership.ErrBlocked)
 	}
-	s.controller, s.devices, s.receipts, s.latest, s.snapshot =
-		r.Controller, r.Devices, r.Receipts, r.Latest, r.Snapshot
+	s.controller, s.devices, s.receipts, s.latest, s.snapshot, s.quarantines =
+		r.Controller, r.Devices, r.Receipts, r.Latest, r.Snapshot, r.Quarantines
 	s.markerPath = marker
 	if err := s.verifyMarker(); err != nil {
 		return err
 	}
-	return s.validateReceipts()
+	if err := s.validateReceipts(); err != nil {
+		return err
+	}
+	return s.validateQuarantines()
 }
 
 func (s *ownedNetlinkState) verifyMarker() error {
@@ -123,6 +153,259 @@ func (s *ownedNetlinkState) verifyMarker() error {
 		return fmt.Errorf("%w: importer marker differs from durable controller/domain: %v", ownership.ErrBlocked, err)
 	}
 	return nil
+}
+
+func (s *ownedNetlinkState) deviceForSlot(slot RemoteKernelSlot) (RemoteNetlinkNetwork, RemoteDeviceIdentity, bool) {
+	for _, network := range s.config.Networks {
+		name := network.BridgeDevice
+		if slot.Family == unix.AF_BRIDGE {
+			name = network.VXLANDevice
+		}
+		device, ok := s.devices[name]
+		if ok && device.Ifindex == slot.Ifindex {
+			return network, device, true
+		}
+	}
+	return RemoteNetlinkNetwork{}, RemoteDeviceIdentity{}, false
+}
+
+func (s *ownedNetlinkState) validateQuarantines() error {
+	if s.quarantines == nil {
+		return fmt.Errorf("%w: missing slot quarantine map", ownership.ErrBlocked)
+	}
+	for key, quarantine := range s.quarantines {
+		slot, err := remoteKernelSlot(slotRequest(quarantine.Slot))
+		if err != nil || key != remoteKernelSlotKey(slot) || slot != quarantine.Slot ||
+			quarantine.Target != s.target || quarantine.Reason == "" {
+			return fmt.Errorf("%w: invalid durable slot quarantine %q", ownership.ErrBlocked, key)
+		}
+		network, device, ok := s.deviceForSlot(slot)
+		if !ok || quarantine.NetworkID != network.NetworkID || quarantine.Device != device ||
+			quarantine.Domain != s.config.Recovery.Domain {
+			return fmt.Errorf("%w: slot quarantine domain/device mismatch %q", ownership.ErrBlocked, key)
+		}
+		if quarantine.Resolved && strings.TrimSpace(quarantine.Resolution) == "" {
+			return fmt.Errorf("%w: resolved slot quarantine lacks resolution evidence %q", ownership.ErrBlocked, key)
+		}
+		if !quarantine.Resolved && quarantine.Resolution != "" {
+			return fmt.Errorf("%w: active slot quarantine carries resolution evidence %q", ownership.ErrBlocked, key)
+		}
+		if len(quarantine.Observed) == 0 {
+			return fmt.Errorf("%w: slot quarantine lacks observed kernel evidence %q", ownership.ErrBlocked, key)
+		}
+		for _, observed := range quarantine.Observed {
+			observedSlot, err := remoteKernelSlot(observed)
+			if err != nil || observedSlot != slot {
+				return fmt.Errorf("%w: slot quarantine contains mismatched observation %q", ownership.ErrBlocked, key)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *ownedNetlinkState) scanStartupKernelState(ctx context.Context, network RemoteNetlinkNetwork) error {
+	scopes := []struct{ index, family int }{
+		{s.devices[network.VXLANDevice].Ifindex, unix.AF_BRIDGE},
+		{s.devices[network.BridgeDevice].Ifindex, unix.AF_INET},
+		{s.devices[network.BridgeDevice].Ifindex, unix.AF_INET6},
+	}
+	for _, scope := range scopes {
+		if err := s.check(ctx); err != nil {
+			return err
+		}
+		entries, err := s.kernel.NeighList(scope.index, scope.family)
+		if err != nil {
+			return fmt.Errorf("complete kernel dump required: %w", err)
+		}
+		bySlot := map[string][]RemoteKernelEntry{}
+		for _, neighbor := range entries {
+			entry := kernelEntry(neighbor)
+			if entry.Flags&netlink.NTF_EXT_LEARNED == 0 &&
+				!(scope.family == unix.AF_BRIDGE && entry.IP != "") {
+				continue
+			}
+			slot, err := remoteKernelSlot(entry)
+			if err != nil {
+				return fmt.Errorf("cannot identify managed kernel slot: %w", err)
+			}
+			bySlot[remoteKernelSlotKey(slot)] = append(bySlot[remoteKernelSlotKey(slot)], entry)
+		}
+		keys := make([]string, 0, len(bySlot))
+		for key := range bySlot {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			observed := bySlot[key]
+			sort.Slice(observed, func(i, j int) bool { return remoteHash(observed[i]) < remoteHash(observed[j]) })
+			slot, _ := remoteKernelSlot(observed[0])
+			if prior, ok := s.quarantines[key]; ok && !prior.Resolved {
+				if err := s.recordSlotQuarantine(slot, observed, prior.Reason); err != nil && !isSlotQuarantineError(err) {
+					return err
+				}
+				continue
+			}
+			if s.slotHasConfirmedReceipt(slot, observed) {
+				continue
+			}
+			reason := "unreceipted kernel state; no startup adoption"
+			if s.receiptExistsForSlot(slot) {
+				reason = "kernel state conflicts with durable owned receipt"
+			}
+			if err := s.recordSlotQuarantine(slot, observed, reason); err != nil && !isSlotQuarantineError(err) {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func isSlotQuarantineError(err error) bool {
+	var quarantine *slotQuarantineError
+	return errors.As(err, &quarantine)
+}
+
+func (s *ownedNetlinkState) receiptExistsForSlot(slot RemoteKernelSlot) bool {
+	for _, receipt := range s.receipts {
+		for _, object := range []*RemoteObjectReceipt{&receipt.FDB, receipt.Neighbor} {
+			if object != nil && sameKernelSlot(object.Request, slotRequest(slot)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *ownedNetlinkState) slotHasConfirmedReceipt(slot RemoteKernelSlot, observed []RemoteKernelEntry) bool {
+	if len(observed) != 1 {
+		return false
+	}
+	for _, receipt := range s.receipts {
+		for _, object := range []*RemoteObjectReceipt{&receipt.FDB, receipt.Neighbor} {
+			if object != nil && object.Status == "confirmed" && object.ACK && !object.DeleteACK &&
+				sameKernelSlot(object.Request, slotRequest(slot)) && object.Observed == observed[0] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *ownedNetlinkState) recordSlotQuarantine(slot RemoteKernelSlot, observed []RemoteKernelEntry, reason string) error {
+	if s.journal == nil {
+		s.blocked = "unreceipted remote kernel state; durable quarantine unavailable"
+		return s.quarantineError()
+	}
+	if s.quarantines == nil {
+		s.quarantines = map[string]RemoteSlotQuarantine{}
+	}
+	key := remoteKernelSlotKey(slot)
+	network, device, ok := s.deviceForSlot(slot)
+	if !ok {
+		s.blocked = "slot quarantine is outside the verified device topology"
+		return s.quarantineError()
+	}
+	quarantine, exists := s.quarantines[key]
+	if exists && (quarantine.Target != s.target || quarantine.NetworkID != network.NetworkID ||
+		quarantine.Device != device || (quarantine.Domain != (ownership.Domain{}) &&
+		quarantine.Domain != s.config.Recovery.Domain)) {
+		s.blocked = "durable slot quarantine identity changed"
+		return s.quarantineError()
+	}
+	changed := !exists
+	if !exists {
+		quarantine = RemoteSlotQuarantine{Slot: slot, Target: s.target, NetworkID: network.NetworkID,
+			Device: device, Domain: s.config.Recovery.Domain, Reason: reason}
+	}
+	if quarantine.Resolved && len(observed) != 0 {
+		quarantine.Resolved, quarantine.Resolution = false, ""
+		changed = true
+	}
+	for _, entry := range observed {
+		found := false
+		for _, prior := range quarantine.Observed {
+			found = found || prior == entry
+		}
+		if !found {
+			quarantine.Observed = append(quarantine.Observed, entry)
+			changed = true
+		}
+	}
+	sort.Slice(quarantine.Observed, func(i, j int) bool {
+		return remoteHash(quarantine.Observed[i]) < remoteHash(quarantine.Observed[j])
+	})
+	if changed {
+		s.quarantines[key] = quarantine
+		if err := s.checkpoint(); err != nil {
+			return fmt.Errorf("persist slot quarantine: %w", err)
+		}
+	}
+	return &slotQuarantineError{slot: slot, reason: quarantine.Reason}
+}
+
+func (b *OVNNetlinkBackend) Quarantines() []RemoteSlotQuarantine {
+	if b == nil || b.owned == nil {
+		return nil
+	}
+	s := b.owned
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	keys := make([]string, 0, len(s.quarantines))
+	for key := range s.quarantines {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]RemoteSlotQuarantine, 0, len(keys))
+	for _, key := range keys {
+		quarantine := s.quarantines[key]
+		quarantine.Observed = append([]RemoteKernelEntry(nil), quarantine.Observed...)
+		result = append(result, quarantine)
+	}
+	return result
+}
+
+func (b *OVNNetlinkBackend) ResolveQuarantinedSlot(ctx context.Context, slot RemoteKernelSlot, evidence string) error {
+	if b == nil || b.owned == nil {
+		return fmt.Errorf("remote Netlink disabled: explicit owned backend required")
+	}
+	evidence = strings.TrimSpace(evidence)
+	if evidence == "" {
+		return fmt.Errorf("explicit resolution evidence required")
+	}
+	s := b.owned
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.journal == nil {
+		return fmt.Errorf("durable slot quarantine required for resolution")
+	}
+	if err := s.check(ctx); err != nil {
+		return err
+	}
+	canonical, err := remoteKernelSlot(slotRequest(slot))
+	if err != nil || canonical != slot {
+		return fmt.Errorf("invalid quarantined slot identity: %v", err)
+	}
+	key := remoteKernelSlotKey(slot)
+	quarantine, ok := s.quarantines[key]
+	if !ok {
+		return fmt.Errorf("slot %s is not quarantined", key)
+	}
+	if quarantine.Resolved {
+		if quarantine.Resolution == evidence {
+			return nil
+		}
+		return fmt.Errorf("slot %s was already resolved with different evidence", key)
+	}
+	found, err := s.slot(ctx, slotRequest(slot))
+	if err != nil {
+		return err
+	}
+	if len(found) != 0 {
+		return s.recordSlotQuarantine(slot, found, quarantine.Reason)
+	}
+	quarantine.Resolved, quarantine.Resolution = true, evidence
+	s.quarantines[key] = quarantine
+	return s.checkpoint()
 }
 
 func (s *ownedNetlinkState) validateReceipts() error {
@@ -226,6 +509,13 @@ func (s *ownedNetlinkState) verifyRecovered(ctx context.Context) error {
 			if o == nil {
 				continue
 			}
+			slot, slotErr := remoteKernelSlot(o.Request)
+			if slotErr != nil {
+				return fmt.Errorf("%w: invalid recovered kernel slot: %v", ownership.ErrBlocked, slotErr)
+			}
+			if quarantine, ok := s.quarantines[remoteKernelSlotKey(slot)]; ok && !quarantine.Resolved {
+				continue
+			}
 			found, err := s.slot(ctx, o.Request)
 			if err != nil {
 				return err
@@ -234,8 +524,10 @@ func (s *ownedNetlinkState) verifyRecovered(ctx context.Context) error {
 				continue
 			}
 			if len(found) != 0 {
-				s.blocked = "foreign/conflicting kernel slot during recovery"
-				return s.quarantineError()
+				if err := s.recordSlotQuarantine(slot, found, "kernel state conflicts with durable owned receipt during recovery"); err != nil && !isSlotQuarantineError(err) {
+					return err
+				}
+				continue
 			}
 			// Authoritatively observed absence is not an ownership claim.
 			// Missing desired objects can be recreated only after fresh BGP polls.
@@ -312,6 +604,11 @@ func (b *OVNNetlinkBackend) RecoveryState() string {
 	defer s.mu.Unlock()
 	if s.blocked != "" {
 		return "RECOVERY_BLOCKED"
+	}
+	for _, quarantine := range s.quarantines {
+		if !quarantine.Resolved {
+			return "RECOVERY_PARTIAL"
+		}
 	}
 	return s.recoveryState
 }

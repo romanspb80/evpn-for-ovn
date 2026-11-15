@@ -1,11 +1,11 @@
-# Future application and topology integrations
+# Future platform and topology integrations
 
 | Design | Current status | Canonical work |
 |---|---|---|
 | [OpenStack Neutron](openstack-neutron.md) | Proposed consumer; no adapter implemented | INT-01 |
 | [DCI / multi-cluster](dci-multicluster.md) | Proposed routed/multi-site design; no acceptance | INT-02 |
 | [OVN-Kubernetes](../upstream/ovn-kubernetes.md) | Upstream integration investigation, not a drop-in replacement | INT-03 |
-| Standalone OVN platform integration | G.6/G.7 Node-Agent import/authorized export and single-chassis smoke implemented; complete lifecycle adapter/installer and multi-chassis migration unvalidated | [G.7b.5b](../backlog.md#g7b5b), [DEP-01](../backlog.md#dep-01) |
+| Standalone OVN platform integration | Opt-in import and authorized export exist; bounded two-chassis lifecycle evidence uses a shared OVN control plane. A complete platform adapter and supported installer remain open. | [Standalone recovery work](../backlog.md#standalone-recovery), [DEP-01](../backlog.md#dep-01) |
 
 All task definitions are in the [backlog](../backlog.md). The Framework's
 Go route and endpoint services can be reused without CNI,
@@ -13,7 +13,7 @@ Multus or Kubernetes. This is not a claim that the full Node-Agent recovery
 path is platform-neutral: its CNI authority uses Kubernetes/containerd; explicit
 standalone modes use independently provisioned speaker and authorization identity.
 Kubernetes CRDs and reconciliation remain integration surfaces.
-See the [verified architecture boundaries](../../architecture/framework-first.md).
+See the [verified architecture boundaries](../../architecture/framework-architecture.md).
 
 ## Standalone OVN design target
 
@@ -25,12 +25,11 @@ recovery domains, and install/update/delete/forwarding acceptance. Existing
 direct service tests and the one-network/one-VTEP OVSDB importer are useful
 starting points, not proof that this contract is implemented.
 
-G.7b now implements protected endpoint policy, authoritative NB/SB intersection,
-revision/generation fencing and lifecycle tombstones, consumed by the opt-in
-standalone exporter. The [live smoke](../../../TESTING_GUIDE.md#standalone-export-smoke-g7b5a)
-verifies authorization, policy revocation and agent restart without CNI on one
-reused chassis. It does not implement a platform policy producer, supported
-installer or live migration/forwarding acceptance.
+The standalone exporter uses protected endpoint policy, authoritative NB/SB
+intersection, revision/generation fencing and lifecycle tombstones.
+[Historical standalone scenarios](../../archive/validation-record.md#standalone-authorization-and-two-chassis-lifecycle)
+cover bounded forwarding and ordered migration in a shared-OVN laboratory;
+they do not implement a platform policy producer or supported installer.
 
 The **EvpnCore standalone BGP provider deployment** is a separate future
 configuration/installation owner; standalone process attestation already exists.

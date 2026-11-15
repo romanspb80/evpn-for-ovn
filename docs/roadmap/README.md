@@ -10,7 +10,7 @@ link to those tasks; they are not competing TODO lists.
 | Linked master dashboard and open-priority summary | [Roadmap overview](overview.md) |
 | Authoritative task definitions, criteria and actions | [Canonical backlog](backlog.md) |
 | Experimental release and remaining P0 gates | [Release readiness](release.md) |
-| G.6/G.7 implementation and scoped evidence | [Implementation status](../../IMPLEMENTATION_README.md) |
+| Implementation and scoped validation | [Capability matrix](../project/capability-matrix.md) |
 | Implemented Framework and capability boundaries | [Framework](framework.md) |
 | EvpnCore, proposed CRDs and CNI | [Kubernetes integration](kubernetes-integration.md) |
 | OVN-Kubernetes, OVN/OVS, k8gobgp, GoBGP, Cilium | [Upstream index](upstream/README.md) |
@@ -23,14 +23,11 @@ research. Status vocabulary: `Proposed`, `Investigating`, `Blocked`,
 `In Progress`, `Verified`, `Done`. A proposal or source implementation alone
 is not end-to-end acceptance.
 
-The [Testing Guide](../../TESTING_GUIDE.md) remains authoritative for test
-contracts and historical results. C4.4f.2q.2 established one-chassis Type-2
-Framework and CNI scopes, not shared-VTEP, two-chassis, RR, Type-5 or DCI.
-G.6/G.7 standalone runtime milestones are bounded; G.7b.5a single-chassis
-smoke and 18/18 operator regression evidence were verified on 2026-11-08.
-G.7b.5b forwarding/migration and broad FW-04 recovery remain open.
-Publication requires the separate [release gates](release.md). A documentation
-or source-preparation baseline is not permission to publish.
+The [Testing Guide](../../TESTING_GUIDE.md) describes runnable scenarios.
+The [capability matrix](../project/capability-matrix.md) distinguishes bounded
+results from open coverage. Publication requires the separate
+[release gates](release.md); completing a subset of preparation tasks is not
+permission to publish.
 
 Legacy navigation paths [implementation TODO](../architecture/implementation-todo.md),
 [upstream plan](upstream.md) and [integration goals](integration-goals.md)

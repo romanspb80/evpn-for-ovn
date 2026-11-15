@@ -53,7 +53,8 @@ func (r *EvpnCoreReconciler) workloadStatus(ctx context.Context, objects []*unst
 				return "", "", "", err
 			}
 			if d.Status.ObservedGeneration < d.Generation || d.Status.DesiredNumberScheduled == 0 ||
-				obj.GetName() == "evpn-node-agent" && d.Status.DesiredNumberScheduled != 1 ||
+				obj.GetName() == "evpn-node-agent" && (core == nil || dataplaneMode(core.Spec) == "managed-single-node") && d.Status.DesiredNumberScheduled != 1 ||
+				obj.GetName() == "evpn-node-agent" && core != nil && core.Spec.WorkerInventory != nil && int(d.Status.DesiredNumberScheduled) != len(core.Spec.WorkerInventory.Workers) ||
 				d.Status.UpdatedNumberScheduled != d.Status.DesiredNumberScheduled ||
 				d.Status.NumberReady != d.Status.DesiredNumberScheduled ||
 				d.Status.NumberAvailable != d.Status.DesiredNumberScheduled || d.Status.NumberUnavailable != 0 ||
