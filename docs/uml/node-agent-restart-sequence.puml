@@ -1,0 +1,63 @@
+@startuml
+title Node-Agent restart | bounded Operator Type-2 fixture contract
+autonumber
+skinparam backgroundColor #FCFCFD
+skinparam shadowing false
+skinparam defaultFontName DejaVu Sans
+skinparam defaultFontSize 14
+skinparam maxMessageSize 180
+skinparam sequenceArrowColor #2F5D7C
+skinparam participantBackgroundColor #EAF4FF
+
+actor "Test runner" as T
+participant "Node-Agent\nCNI + Type-2 loops" as A
+database "Durable CNI / export /\nimport journals" as J
+participant "Kubernetes / CRI /\nOVN / OVS / Linux" as V
+participant "Same attested\nGoBGP speaker" as G
+participant "OVN/OVS + FRR\nworkload packet path" as P
+
+== Before interruption ==
+T -> A : collect fresh status and captured CNI ADD calls
+A -> J : acknowledged endpoint and exact path receipts
+A -> G : verify actual speaker identity and owned routes
+note over A,V
+  Root-private journals remain on the same worker.
+  Installation/node, boot, namespace and configuration must match.
+end note
+
+== Agent replacement ==
+T -> A : restart DaemonSet; verify new Pod\n(optional scoped force-crash verifies container restart)
+A -> J : reopen original journals; replay/reconcile matching state
+A -> V : current Pod/Node UID, READY sandbox,\nexact OVN/OVS and host attachment checks
+V --> A : current identity and resource observations
+A -> G : attest live peer and verify exact route ownership
+alt matching identities, resolved intents, same speaker
+  A -> A : restore acknowledged endpoints;\nresume fresh import/export reconciliation
+  A -> J : retain same-speaker acknowledged UUID receipts
+else uncertainty, conflict or unresolved mutation
+  A -> A : report blocked recovery; no tuple adoption\nor resource recreation from CNI ADD replay
+end
+
+== Runner assertions, not readiness alone ==
+T -> A : require newer RUNNING status; 4 export UUIDs,\nsame receipts and speaker; 1 imported route
+T -> A : replay CHECK for captured endpoint identity
+T -> T : compare captured ADD calls; no ADD replay
+T -> P : subsequent bidirectional traffic + packet captures
+P --> T : attributed OVN/OVS VXLAN packets
+note over T,P
+  The scoped runner does not assert uninterrupted service or a convergence SLA.
+  Recovery assertions must pass before normal lifecycle cleanup continues.
+end note
+
+== Subsequent exact cleanup ==
+T -> A : retire endpoint through CNI lifecycle
+A -> V : delete only matching owned attachment / LSP / veth
+A -> G : asynchronously withdraw exact owned UUIDs
+T -> P : verify survivor traffic and route preservation
+T -> T : drain remaining owned routes/resources;\nverify scoped absence and guarded fixture cleanup
+
+legend bottom center
+  Implemented fixture/test contract, not new live acceptance evidence.
+  GoBGP exchanges routes; OVN/OVS forwards external VXLAN packets.
+endlegend
+@enduml

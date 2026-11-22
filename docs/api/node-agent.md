@@ -28,7 +28,7 @@ runtime requires configured OVN NBDB/OVSDB and privileged namespace/network
 access; dry-run/test backends are not live forwarding evidence. The
 in-memory record store is not a durable database, but request-backed CHECK/
 DEL recovery exists. Broader restart guarantees remain
-[FW-04](../roadmap/backlog.md), not an assertion of no recovery at all.
+[CNI endpoint continuity](../architecture/cni-endpoint-continuity.md), which describes the implemented checks and their live-validation limits.
 
 Type-2 export/import runs in separate asynchronous reconcilers when enabled.
 ADD/DEL do **not** synchronously advertise/withdraw BGP routes before returning.

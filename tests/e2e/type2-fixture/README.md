@@ -40,14 +40,12 @@ repository's top-level `frr/` directory and prevents vtysh's missing-config
 warning. Startup waits for the bgpd process separately from the
 BGP peer becoming established. A failure at either readiness gate is recorded
 as startup failure. FRR runs with only the additional `NET_ADMIN` and
-`SYS_ADMIN` capabilities declared by this fixture. The pinned FRR 8.4 image's
-zebra and bgpd request `CAP_SYS_ADMIN` during privilege initialization; the
-fixture adds it because the default Docker capability set omits it. This is a
-broad Linux capability, so it is limited to the run-owned FRR container on the
+`SYS_ADMIN` capabilities declared by this fixture. Review the selected FRR
+image's privilege requirements before startup. `SYS_ADMIN` is a broad Linux
+capability, so it is limited to the run-owned FRR container on the
 internal fixture network. The fixture does not enable privileged mode or
-disable Docker seccomp/AppArmor profiles. `NET_RAW` is not added because it
-was already available in the observed default container capability set and is
-not the capability missing from the failed startup.
+disable Docker seccomp/AppArmor profiles. `NET_RAW` is not explicitly added
+by the fixture; inspect the effective capability set of the selected runtime.
 
 Startup readiness checks each speaker's detailed neighbor output against the
 expected peer address and exact established state. It then separately requires
@@ -59,12 +57,10 @@ mandatory check after advertisement.
 
 The Framework/CNI suites now select official FRR 10.7.1 and managed k8gobgp
 v0.2.8; see the [dependency audit](../../../docs/architecture/runtime-dependencies.md)
-for their verified image digests. This standalone fixture still takes explicit
-caller-supplied digest references and bypasses the k8gobgp manager. Its
-historical FRR 8.4 captures and privilege observations above are not relabeled
-as 10.7.1 evidence. Use the independent suite results in the
-[Testing Guide](../../../TESTING_GUIDE.md), not this fixture's old captures,
-for the upgraded Framework/CNI acceptance status.
+for their required image digests. This standalone fixture takes explicit
+caller-supplied digest references and bypasses the k8gobgp manager. Use the
+[Testing Guide](../../../TESTING_GUIDE.md) for separate Framework/CNI
+scenarios; this control-plane fixture does not substitute for those suites.
 
 ## Start
 
@@ -82,9 +78,8 @@ identities in the generated subnet. Defaults are GoBGP `.3`, FRR peer `.2`,
 and remote VTEP `.4` within the generated `/24`; the run-owned FRR container
 configures the VTEP address on its underlay interface. The default RD is the
 GoBGP peer address plus the VNI (for example `198.18.0.3:1000`), and the
-default RT is `64512:1000`. Both ASN defaults are 64512, matching the
-historical GoBGP/FRR test configuration. The default subnet is selected from
-RFC 2544 benchmarking space and checked against existing Docker networks.
+default RT is `64512:1000`. Both ASN defaults are 64512. The default subnet
+is selected from RFC 2544 benchmarking space and checked against existing Docker networks.
 Peer addresses and router IDs default from that subnet.
 
 `start` writes a run-specific GoBGP TOML config, FRR config, ownership
@@ -144,14 +139,15 @@ interfaces. Failed
 topology setup attempts the same rollback before preserving startup evidence.
 
 ```sh
-python3 tools/e2e/evpn-type2-fixture.py advertise <run_id> primary
-python3 tools/e2e/evpn-type2-fixture.py advertise <run_id> secondary
-python3 tools/e2e/evpn-type2-fixture.py advertise <run_id> netlink-primary
-python3 tools/e2e/evpn-type2-fixture.py observe <run_id>
-python3 tools/e2e/evpn-type2-fixture.py withdraw <run_id> primary
-python3 tools/e2e/evpn-type2-fixture.py observe <run_id>
-python3 tools/e2e/evpn-type2-fixture.py advertise <run_id> primary
-python3 tools/e2e/evpn-type2-fixture.py observe <run_id>
+RUN_ID='<run_id>'
+python3 tools/e2e/evpn-type2-fixture.py advertise "$RUN_ID" primary
+python3 tools/e2e/evpn-type2-fixture.py advertise "$RUN_ID" secondary
+python3 tools/e2e/evpn-type2-fixture.py advertise "$RUN_ID" netlink-primary
+python3 tools/e2e/evpn-type2-fixture.py observe "$RUN_ID"
+python3 tools/e2e/evpn-type2-fixture.py withdraw "$RUN_ID" primary
+python3 tools/e2e/evpn-type2-fixture.py observe "$RUN_ID"
+python3 tools/e2e/evpn-type2-fixture.py advertise "$RUN_ID" primary
+python3 tools/e2e/evpn-type2-fixture.py observe "$RUN_ID"
 ```
 
 GoBGP originates `primary` with the pinned CLI's `global rib add -a evpn
@@ -172,7 +168,7 @@ confirm route absence/presence while polling; its output alone cannot pass the
 attribute gate.
 
 The GoBGP-originated primary must be a remote path from the expected GoBGP
-peer at FRR; a local FRR path or peer ID `0.0.0.0` is rejected. The
+peer at FRR; a local FRR path or peer ID `0.0.0.0` is rejected.
 Each FRR-originated endpoint must be present in GoBGP from the expected FRR
 peer, and its FRR exact-route output must identify the local FRR path. The
 parser does not treat `aspath.string: "Local"` as origin proof. For the GoBGP
@@ -200,7 +196,7 @@ assertions.
 ## Cleanup and evidence
 
 ```sh
-python3 tools/e2e/evpn-type2-fixture.py stop <run_id>
+python3 tools/e2e/evpn-type2-fixture.py stop '<run_id>'
 ```
 
 Cleanup inspects Containerlab/run labels and ownership receipts, captures

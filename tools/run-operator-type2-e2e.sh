@@ -2,6 +2,47 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROFILE="${EVPN_OPERATOR_TYPE2_PROFILE:-full}"
+BASE_CASES=(setup operator_ownership cni_lifecycle cni_identity type2_export type2_import
+  mp_bgp_exchange dataplane_forwarding route_withdrawal cleanup)
+RECOVERY_CASES=()
+case "${PROFILE}" in
+  full) RECOVERY_CASES=(operator_restart importer_restart node_agent_restart speaker_restart
+    bgp_session_loss nbdb_unavailability ovsdb_unavailability withdrawal_during_failure) ;;
+  uc02) ;;
+  uc06-agent-restart) RECOVERY_CASES=(node_agent_restart) ;;
+  uc06-speaker-restart) RECOVERY_CASES=(speaker_restart) ;;
+  *) echo "Unknown EVPN_OPERATOR_TYPE2_PROFILE: ${PROFILE}" >&2; exit 2 ;;
+esac
+if [[ "${PROFILE}" != full ]]; then
+  for option in "EVPN_TWO_WORKER_GENEVE=${EVPN_TWO_WORKER_GENEVE:-0}" \
+    "EVPN_EXTERNAL_FRR_SMOKE=${EVPN_EXTERNAL_FRR_SMOKE:-0}" \
+    "EVPN_EXTERNAL_GOBGP_SMOKE=${EVPN_EXTERNAL_GOBGP_SMOKE:-0}" \
+    "EVPN_EXTERNAL_RECOVERY=${EVPN_EXTERNAL_RECOVERY:-0}" \
+    "EVPN_STANDALONE_EXPORT_SMOKE=${EVPN_STANDALONE_EXPORT_SMOKE:-0}" \
+    "EVPN_STANDALONE_COHOST_SMOKE=${EVPN_STANDALONE_COHOST_SMOKE:-0}" \
+    "EVPN_STANDALONE_MULTICHASSIS_SMOKE=${EVPN_STANDALONE_MULTICHASSIS_SMOKE:-0}" \
+    "EVPN_STANDALONE_LIFECYCLE_SMOKE=${EVPN_STANDALONE_LIFECYCLE_SMOKE:-0}" \
+    "EVPN_FRR_INTEROP_INITIAL_ONLY=${EVPN_FRR_INTEROP_INITIAL_ONLY:-0}" \
+    "EVPN_FRR_INTEROP_NO_REPLACEMENT=${EVPN_FRR_INTEROP_NO_REPLACEMENT:-0}"; do
+    if [[ "${option#*=}" != 0 ]]; then
+      echo "${PROFILE} cannot be combined with ${option%%=*}" >&2
+      exit 2
+    fi
+  done
+  if [[ "${EVPN_OPERATOR_TYPE2_FORCE_AGENT_CRASH:-0}" != 0 && "${PROFILE}" != uc06-agent-restart ]]; then
+    echo "Forced agent crash requires uc06-agent-restart or full" >&2
+    exit 2
+  fi
+fi
+if [[ "$#" == 1 && "$1" == --list-cases && "${PROFILE}" != full ]]; then
+  printf '%s\n' "${BASE_CASES[@]}" "${RECOVERY_CASES[@]}"
+  exit 0
+fi
+if (( $# > 0 )); then
+  echo "Usage: select EVPN_OPERATOR_TYPE2_PROFILE=full|uc02|uc06-agent-restart|uc06-speaker-restart; --list-cases requires a UC profile" >&2
+  exit 2
+fi
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$(python3 -c 'import secrets; print(secrets.token_hex(4))')"
 KIND_CLUSTER="evpn-op-type2-${RUN_ID,,}"
 WORKER="${KIND_CLUSTER}-worker"
@@ -122,7 +163,8 @@ cleanup() {
     e2e_lab_down || cleanup_rc=1
   fi
   test_image_cleanup || cleanup_rc=1
-  python3 - "${EVIDENCE_DIR}" "${rc}" "${cleanup_rc}" "${EVPN_STANDALONE_EXPORT_SMOKE:-0}" "${EVPN_STANDALONE_COHOST_SMOKE:-0}" "${EVPN_STANDALONE_MULTICHASSIS_SMOKE:-0}" "${EVPN_STANDALONE_LIFECYCLE_SMOKE:-0}" <<'PY'
+  python3 - "${EVIDENCE_DIR}" "${rc}" "${cleanup_rc}" "${EVPN_STANDALONE_EXPORT_SMOKE:-0}" "${EVPN_STANDALONE_COHOST_SMOKE:-0}" "${EVPN_STANDALONE_MULTICHASSIS_SMOKE:-0}" "${EVPN_STANDALONE_LIFECYCLE_SMOKE:-0}" \
+    "${PROFILE}" "${BASE_CASES[@]}" "${RECOVERY_CASES[@]}" <<'PY'
 import csv, json, pathlib, sys
 p=pathlib.Path(sys.argv[1])
 names=(
@@ -131,6 +173,9 @@ names=(
     "importer_restart","node_agent_restart","speaker_restart","bgp_session_loss",
     "nbdb_unavailability","ovsdb_unavailability","withdrawal_during_failure",
     "cleanup")
+profile=sys.argv[8]
+if profile != "full":
+    names=tuple(sys.argv[9:])
 if sys.argv[4] == "1":
     names=("setup","standalone_export_advertise","standalone_export_revoke",
            "standalone_export_restart","standalone_restore","cleanup")
@@ -149,11 +194,15 @@ cases={name:{"status":"NOT TESTED"} for name in names}
 for row in csv.reader((p/"cases.tsv").open(), delimiter="\t"):
     name,status,time,*detail=row
     cases[name]={"status":status,"time":time,"detail":detail[0] if detail else ""}
-cases["cleanup"]={"status":"PASS" if sys.argv[3]=="0" else "FAIL"}
+if cases["cleanup"]["status"]!="FAIL":
+    cases["cleanup"]={"status":"PASS" if sys.argv[3]=="0" else "FAIL"}
 result={"suite":"operator-managed-type2","cases":cases,"testExit":int(sys.argv[2]),
         "cleanupExit":int(sys.argv[3]),"evidenceDirectory":str(p),
         "topology":"single operator OVN chassis plus independent FRR/Linux VXLAN endpoint",
         "restartRecovery":"acknowledged UUID recovery and independently attested empty replacement RIB; ambiguous retained AddPath remains blocked"}
+if profile != "full":
+    result["profile"]=profile
+    del result["restartRecovery"]
 if sys.argv[4] == "1":
     result["suite"]="operator-managed-type2-standalone-export-smoke"
     result["topology"]="reused single operator OVN/OVS chassis plus existing GoBGP/FRR EVPN peer"
@@ -713,7 +762,9 @@ PY
 interop_run_lifecycle() { return 0; }
 
 run_case operator_ownership verify_operator_ownership
-run_case importer_restart restart_importer
+if [[ "${PROFILE}" == full ]]; then
+  run_case importer_restart restart_importer
+fi
 ACTIVE_CASE=cni_lifecycle
 create_pod a
 create_pod b
@@ -750,13 +801,21 @@ case_status type2_import PASS "actual authoritative importer, owned FDB/neighbor
 case_status mp_bgp_exchange PASS "Established real GoBGP/FRR EVPN session and routes in both RIBs"
 case_status dataplane_forwarding PASS "bidirectional ICMP and packet-path VXLAN/OpenFlow verification"
 run_case type2_export verify_wire_routes
-run_case operator_restart restart_operator
-run_case node_agent_restart restart_agent_with_endpoints
-run_case speaker_restart restart_speaker_with_endpoints
-run_case bgp_session_loss session_loss
-run_case nbdb_unavailability database_outage ovn/ovnnb_db.pid nbdb
-run_case ovsdb_unavailability database_outage openvswitch/ovsdb-server.pid ovsdb
-run_case withdrawal_during_failure withdrawal_outage
+if [[ "${PROFILE}" == full ]]; then
+  run_case operator_restart restart_operator
+fi
+if [[ "${PROFILE}" == full || "${PROFILE}" == uc06-agent-restart ]]; then
+  run_case node_agent_restart restart_agent_with_endpoints
+fi
+if [[ "${PROFILE}" == full || "${PROFILE}" == uc06-speaker-restart ]]; then
+  run_case speaker_restart restart_speaker_with_endpoints
+fi
+if [[ "${PROFILE}" == full ]]; then
+  run_case bgp_session_loss session_loss
+  run_case nbdb_unavailability database_outage ovn/ovnnb_db.pid nbdb
+  run_case ovsdb_unavailability database_outage openvswitch/ovsdb-server.pid ovsdb
+  run_case withdrawal_during_failure withdrawal_outage
+fi
 run_case cni_lifecycle interop_verify_full_lifecycle
 case_status route_withdrawal PASS "local/remote RIB, UUID, kernel, OVN/OVS withdrawal and foreign survivor checks"
 ACTIVE_CASE=cleanup
@@ -773,4 +832,6 @@ k -n evpn-operator-system get lease/evpn-core-installation -o json |
 k -n k8gobgp-system get bgpconfig/cni-export -o json |
   tee "${EVIDENCE_DIR}/provider-config-after-delete.json" >/dev/null
 python3 "${ROOT}/tools/e2e/operator_ownership.py" "${EVIDENCE_DIR}" --cleanup "${INSTALLATION_UID}"
-echo "operator-managed acknowledged agent recovery and verified replacement speaker recovery=PASS; retained ambiguous AddPath recovery remains BLOCKED"
+if [[ "${PROFILE}" == full ]]; then
+  echo "operator-managed acknowledged agent recovery and verified replacement speaker recovery=PASS; retained ambiguous AddPath recovery remains BLOCKED"
+fi

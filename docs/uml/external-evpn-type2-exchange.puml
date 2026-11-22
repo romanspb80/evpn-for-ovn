@@ -1,48 +1,57 @@
 @startuml
-title Type-2 exchange - PLANNED / NOT EXECUTED
+title External fabric — Type-2 control and separate packet path
+top to bottom direction
 skinparam backgroundColor #FCFCFD
 skinparam shadowing false
-skinparam roundcorner 12
+skinparam roundcorner 8
 skinparam defaultFontName DejaVu Sans
-skinparam sequenceArrowColor #2563EB
-skinparam participantBackgroundColor #F3F4F6
+skinparam defaultFontSize 13
+skinparam ArrowFontSize 12
+skinparam linetype ortho
+skinparam ArrowColor #475569
+skinparam componentStyle rectangle
+skinparam componentBackgroundColor #F8FAFC
+skinparam componentBorderColor #64748B
+skinparam packageBackgroundColor #FFFFFF
+skinparam packageBorderColor #94A3B8
 
-actor "Policy authority" as Auth
-participant "Node-Agent A" as A
-database "Separate fence /\nexport journals" as J
-database "OVN NB / SB" as DB
-participant "GoBGP A" as G
-participant "FRR Remote1" as F
-participant "Remote1 Linux\nbridge / VXLAN" as R
-participant "Owned local\nNetlink sync" as K
-participant "ovn-controller /\nOVS forwarding" as O
+package "EVPN control plane — route state, not packets" {
+  component "OVN NB/SB + OVSDB\nendpoint evidence" as Evidence
+  component "Node-Agent exporter\n1. Observe and authorize" as Exporter
+  component "GoBGP speaker\nEVPN global RIB" as GoBGP
+  component "External BGP EVPN peer" as Peer
+  component "Node-Agent importer\n5. Validate source, RT, VNI, VTEP" as Importer
+  component "Linux Netlink FDB / neighbor\n(no SBDB or OVS-flow writes)" as Netlink
 
-Auth -> A : scoped exact endpoint policy
-A -> J : persist revision / digest / generation
-A -> DB : complete NB / SB reads
-DB --> A : exact ready locally bound LSP
-A -> A : intersect authorization and observation
-A -> J : export journal: durable AddPath intent
-A -> G : AddPath Type-2
-G --> A : acknowledged UUID
-A -> J : commit exact UUID receipt
-G -> F : local Type-2 / RT / VNI / next hop A
-F -> R : install received endpoint FDB / neighbor
-F -> G : external Type-2 / next hop R1
-A -> G : complete RIB reads
-G --> A : two equal validated observations
-A -> K : receipt-owned remote FDB / neighbor
-K --> O : Netlink observation
-O -> O : program OVS VXLAN / flows
-O -[#16A34A]> R : local endpoint to external endpoint
-R -[#16A34A]> O : return VXLAN / VNI 1000
+  Evidence -[#64748B,dashed]-> Exporter : endpoint / binding state
+  Exporter -[#64748B,dotted]-> GoBGP : 2. AddPath; DeletePath(exact UUID)
+  GoBGP -[#2563EB,dashed]- Peer : 3. BGP EVPN Type-2 exchange
+  GoBGP -[#64748B,dotted]-> Importer : 4. ListPath remote RIB
+  Importer -[#64748B,dotted]-> Netlink : 6. Apply / withdraw owned state
+}
 
-note over G,R
-  BGP processes do not forward workload packets.
-  Linux sync UDP60100 and actual OVS UDP4789 are separate.
-end note
-note over A,O
-  Dependencies are asynchronous, not one atomic transaction.
-  Importer receipts are independent of authorization/export journals.
-end note
+package "Separate OVN/OVS workload packet path — bounded historical fixture" {
+  component "Source workload" as Source
+  component "OVN logical network" as LogicalNetwork
+  component "OVN/OVS forwarding" as OVS
+  component "Local VXLAN VTEP" as LocalVTEP
+  cloud "IP underlay" as Underlay
+  component "External VTEP" as RemoteVTEP
+  component "Remote endpoint" as Destination
+
+  Source -[#334155,bold]-> LogicalNetwork : local forwarding
+  LogicalNetwork -[#334155,bold]-> OVS
+  OVS -[#15803D,bold]-> LocalVTEP
+  LocalVTEP -[#15803D,bold]-> Underlay : VXLAN / UDP 4789
+  Underlay -[#15803D,bold]-> RemoteVTEP : VNI
+  RemoteVTEP -[#334155,bold]-> Destination : decapsulate / forward
+}
+
+legend bottom
+  Blue dashed line: BGP EVPN route exchange (bidirectional)
+  Gray dashed arrows: observed OVN / OVS endpoint state
+  Gray dotted arrows: Node-Agent API and import reconciliation
+  Dark solid arrows: local workload forwarding
+  Green solid arrows: VXLAN packet forwarding
+endlegend
 @enduml

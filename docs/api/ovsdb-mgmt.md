@@ -6,6 +6,13 @@ Service: `ovsdb_mgmt.OvsdbService`. Contract:
 implementation: [`services/ovsdb_mgmt/main.go`](../../services/ovsdb_mgmt/main.go).
 All types below are in package `ovsdb_mgmt`.
 
+This is an unauthenticated legacy RPC surface, not a dependency of the supported
+Operator Netlink profile. That profile no longer deploys the service. The Kind
+compatibility manifest keeps it behind a ClusterIP Service only, without
+host-network binding, NodePort, or Gateway exposure. In-cluster callers can
+still reach privileged methods; do not use that profile on a shared or untrusted
+cluster.
+
 Caller keys: **H** = separate
 [`services/bgp_ad_handler`](../../services/bgp_ad_handler/main.go) route
 handler; **F** = direct Framework E2E network setup/teardown in
@@ -25,7 +32,7 @@ NBDB/OVSDB directly. Node-agent endpoints also use domain backends directly.
 | DelVtep | `DelVtepRequest` -> `Status` | H | Concrete: named LS/LSP/VXLAN removal through helper; no universal cross-database atomicity. |
 | AddClient | `AddClientRequest` -> `Status` | H | Concrete: append `mac ip` to named LSP addresses. Requires NB; does not advertise BGP routes. |
 | DelClient | `DelClientRequest` -> `Status` | H | Concrete: remove exact `mac ip` string from LSP addresses. Not generic endpoint or BGP deletion. |
-| GetVtep | `GetVtepRequest` -> `GetVtepResponse` | M | Concrete: NB LSP and associated OVS VXLAN lookup; **can write OVS Interface external_ids iface-id** as an auto-fix. Not read-only; write failures may only be logged. |
+| GetVtep | `GetVtepRequest` -> `GetVtepResponse` | M | Concrete: NB LSP and associated OVS VXLAN lookup. Does not repair OVS Interface external IDs; missing associations require an authorized lifecycle writer. |
 | GetVteps | `Empty` -> `GetVtepsResponse` | M | Concrete: helper enumerates VTEP LSPs; empty/nil collection on failure. |
 | AddLogicalSwitch | `LogicalSwitch` -> `Status` | M | **Unimplemented:** generated codes.Unimplemented fallback. |
 | GetLogicalSwitch | `LogicalSwitchRequest` -> `LogicalSwitchResponse` | M | **Unimplemented.** |
@@ -45,5 +52,5 @@ Most failures use `Status.success/message` with gRPC OK, while read methods
 may return empty data after backend failure. There is no cross-OVN/OVS/kernel
 transaction or general endpoint identity/idempotency guarantee across this
 surface. Do not use empty reads as proof of route absence or delete foreign
-objects to compensate. See [API-01](../roadmap/backlog.md) and the separate
+objects to compensate. See the [security boundary](../security/netlink-deployment-security-contract.md) and the separate
 [owned integration contract](../architecture/integrations.md).

@@ -139,6 +139,17 @@ type EndpointExporter struct {
 	blocked     error
 }
 
+// AppliedRoutes reports acknowledged ownership, including coordinator-driven
+// withdrawals; it does not assert current speaker or inventory health.
+func (e *EndpointExporter) AppliedRoutes() []OwnedType2Route {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.reconciler == nil {
+		return nil
+	}
+	return e.reconciler.AppliedRoutes()
+}
+
 func (e *EndpointExporter) Reconcile(ctx context.Context) (result ExportResult, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

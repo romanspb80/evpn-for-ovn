@@ -3,6 +3,7 @@ package nodeagent
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -13,7 +14,44 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+type speakerReadinessError struct{ err error }
+
+func (g speakerReadinessError) Check(context.Context) error { return g.err }
+
+func TestAttestedReadinessCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rpcCanceled := fmt.Errorf("speaker GetBgp: %w", status.Error(codes.Canceled, "caller canceled"))
+	gate := attestedReadiness{readiness: speakerReadinessError{rpcCanceled}}
+	if !inventoryObservationCanceled(gate.Check(ctx)) {
+		t.Fatal("gRPC caller cancellation became a trust incident")
+	}
+	if inventoryObservationCanceled(gate.Check(context.Background())) {
+		t.Fatal("remote cancellation without caller cancellation was trusted")
+	}
+	identityFailure := errors.New("speaker identity differs")
+	gate.readiness = speakerReadinessError{identityFailure}
+	if err := gate.Check(ctx); err != identityFailure {
+		t.Fatal("caller cancellation masked a real identity failure")
+	}
+}
+
+func TestAttestedReadinessUnboundTransportFailure(t *testing.T) {
+	temporary := &inventoryFailure{Cause: "speaker-transport-unavailable", Err: unix.ENOENT}
+	guard := &unixSpeakerContinuity{dialFailure: temporary}
+	gate := attestedReadiness{readiness: speakerReadinessError{status.Error(codes.Unavailable, "dial failed")}, continuity: guard}
+	if cause, security := inventoryFailureClass(gate.Check(context.Background())); cause != temporary.Cause || security {
+		t.Fatal("actual unbound transport failure was not preserved")
+	}
+	gate.readiness = speakerReadinessError{errors.New("speaker ASN differs")}
+	if _, security := inventoryFailureClass(gate.Check(context.Background())); !security {
+		t.Fatal("stale dial failure masked an observed speaker identity mismatch")
+	}
+}
 
 func TestSpeakerPIDFDPollInterrupted(t *testing.T) {
 	for _, tc := range []struct {
@@ -159,23 +197,67 @@ func TestSpeakerProcessContinuity(t *testing.T) {
 	if err != nil || first != again {
 		t.Fatal("incarnation not stable")
 	}
+	rpcFailure := status.Error(codes.DeadlineExceeded, "paused speaker")
+	readiness := attestedReadiness{readiness: speakerReadinessError{rpcFailure}, continuity: guard}
+	if cause, security := inventoryFailureClass(readiness.Check(context.Background())); cause != "attested-speaker-rpc-unavailable" || security {
+		t.Fatal("freshly attested same-peer RPC outage was not availability")
+	}
 	source.err = fmt.Errorf("API unavailable")
+	guard.dialFailure = &inventoryFailure{Cause: "speaker-transport-unavailable", Err: unix.ECONNREFUSED}
+	if _, security := inventoryFailureClass(readiness.Check(context.Background())); !security {
+		t.Fatal("RPC outage masked independent attestation failure")
+	}
 	if cached, err := guard.Incarnation(); err != nil || cached != first {
 		t.Fatal("incarnation accessor performed full attestation")
 	}
 	if err := guard.Check(context.Background()); err == nil {
 		t.Fatal("Check ignored unavailable API")
 	}
+	missingProcess := &os.PathError{Op: "readlink", Path: fmt.Sprintf("/proc/%d/ns/pid", child.Process.Pid), Err: os.ErrNotExist}
+	// I2/I4: disappearing proc evidence alone is not availability proof.
+	if got := speakerProcessFailure(missingProcess, int32(child.Process.Pid), guard.fd); got != missingProcess {
+		t.Fatal("live peer proc failure was downgraded")
+	}
 	source.err = nil
 	if ev.PID != int32(child.Process.Pid) || ev.BootID == "" || ev.StartTicks == "" {
 		t.Fatalf("bad evidence: %+v", ev)
 	}
-	if err := child.Process.Kill(); err != nil {
+	exited := make(chan error, 1)
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		exited <- child.Process.Kill()
+	}()
+	if cause, security := inventoryFailureClass(speakerProcessFailure(missingProcess,
+		int32(child.Process.Pid), guard.fd)); cause != "verified-speaker-exit" || security {
+		t.Fatal("proc teardown preceding pidfd readiness lost verified exit")
+	}
+	if err := <-exited; err != nil {
 		t.Fatal(err)
 	}
 	child.Wait()
-	if err := guard.Check(context.Background()); err == nil {
-		t.Fatal("exited process accepted")
+	if cause, security := inventoryFailureClass(guard.Check(context.Background())); cause != "verified-speaker-exit" || security {
+		t.Fatal("pidfd-confirmed exit was not classified as temporary")
+	}
+	if cause, security := inventoryFailureClass(speakerProcessFailure(fmt.Errorf("attestation: %w", missingProcess),
+		int32(child.Process.Pid), guard.fd)); cause != "verified-speaker-exit" || security {
+		t.Fatal("proc disappearance race lost verified process-exit classification")
+	}
+	// I2/I4: death cannot mask an independently observed integrity failure.
+	for _, failure := range []error{
+		&os.PathError{Op: "open", Path: "/etc/evpn/provider.json", Err: os.ErrNotExist},
+		&os.PathError{Op: "open", Path: fmt.Sprintf("/proc/%d/ns/pid", child.Process.Pid+1), Err: os.ErrNotExist},
+		&os.PathError{Op: "open", Path: missingProcess.Path, Err: os.ErrPermission},
+		errors.New("speaker workload identity changed"),
+		os.ErrNotExist,
+	} {
+		if got := speakerProcessFailure(failure, int32(child.Process.Pid), guard.fd); got != failure {
+			t.Fatalf("unrelated integrity error downgraded after peer exit: %v", failure)
+		}
+	}
+	for _, fd := range []int{0x7fffffff, -1} {
+		if got := speakerProcessFailure(missingProcess, int32(child.Process.Pid), fd); got != missingProcess {
+			t.Fatal("invalid pidfd supplied availability proof")
+		}
 	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)

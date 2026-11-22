@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -42,6 +43,9 @@ type cniResourceObserver interface {
 	Observe(context.Context, *endpointRecord) (cniReceipt, bool, error)
 	NetworkAbsent(context.Context, string) error
 	DeleteExact(context.Context, cniEndpointACK) error
+	DeleteOrphanExact(context.Context, cniEndpointACK) error
+	OrphanAbsent(context.Context, cniEndpointACK) (bool, error)
+	OrphanHostAbsent(context.Context, cniEndpointACK) error
 }
 
 type cniEndpointACK struct {
@@ -69,13 +73,15 @@ type cniACKState struct {
 }
 
 type cniContinuity struct {
-	nodeName  string
-	domain    ownership.Domain
-	journal   cniJournal
-	workload  CNIWorkloadAttestor
-	observer  cniResourceObserver
-	state     cniACKState
-	authority interface {
+	nodeName   string
+	domain     ownership.Domain
+	journal    cniJournal
+	workload   CNIWorkloadAttestor
+	observer   cniResourceObserver
+	state      cniACKState
+	recovering bool
+	scanAfter  string
+	authority  interface {
 		Admit(context.Context, *pb.CNIAddRequest) (CNIAdmissionEvidence, error)
 	}
 }
@@ -93,6 +99,10 @@ func decodeCNIState(raw []byte, dst interface{}) error {
 }
 
 func (s *CNIServer) recoverCNI(ctx context.Context, c *cniContinuity) error {
+	return s.initializeCNI(ctx, c, false)
+}
+
+func (s *CNIServer) initializeCNI(ctx context.Context, c *cniContinuity, retry bool) error {
 	s.operations.Lock()
 	defer s.operations.Unlock()
 	if c.journal == nil || c.workload == nil || c.observer == nil || s.continuity != nil {
@@ -113,66 +123,124 @@ func (s *CNIServer) recoverCNI(ctx context.Context, c *cniContinuity) error {
 		return fmt.Errorf("%w: incompatible CNI metadata", ownership.ErrBlocked)
 	}
 	// An ADD without a durably acknowledged resource UUID cannot be adopted.
-	// Partial DEL is retained for operator reconciliation, never inferred success.
+	// Orphan DEL intents can be replayed only against the matching active ACK.
 	if pending != nil {
-		if pending.Operation != "cni-identity" {
+		if pending.Operation == "cni-orphan-del" {
+			var candidate cniEndpointACK
+			if err := decodeCNIState(pending.Payload, &candidate); err != nil {
+				return fmt.Errorf("%w: invalid orphan cleanup intent", ownership.ErrBlocked)
+			}
+			previous, ok := c.state.Endpoints[endpointKey(candidate.Identity)]
+			if !ok || previous.State != "active" || !reflect.DeepEqual(candidate, previous) {
+				return fmt.Errorf("%w: orphan cleanup intent does not match active ACK", ownership.ErrBlocked)
+			}
+		} else if pending.Operation != "cni-identity" {
 			return fmt.Errorf("%w: unresolved CNI %s sequence %d", ownership.ErrBlocked, pending.Operation, pending.Sequence)
-		}
-		var candidate cniEndpointACK
-		if err := decodeCNIState(pending.Payload, &candidate); err != nil {
-			return fmt.Errorf("%w: invalid identity checkpoint", ownership.ErrBlocked)
-		}
-		previous, ok := c.state.Endpoints[endpointKey(candidate.Identity)]
-		candidate.State, candidate.Reason = previous.State, previous.Reason
-		candidate.VerifiedAt = previous.VerifiedAt
-		if !ok || previous.State != "pending_creation" || !reflect.DeepEqual(candidate, previous) {
-			return fmt.Errorf("%w: identity checkpoint cannot introduce ownership", ownership.ErrBlocked)
-		}
-		if err := c.journal.Commit(pending.Sequence, c.state); err != nil {
-			return err
+		} else {
+			var candidate cniEndpointACK
+			if err := decodeCNIState(pending.Payload, &candidate); err != nil {
+				return fmt.Errorf("%w: invalid identity checkpoint", ownership.ErrBlocked)
+			}
+			previous, ok := c.state.Endpoints[endpointKey(candidate.Identity)]
+			candidate.State, candidate.Reason = previous.State, previous.Reason
+			candidate.VerifiedAt = previous.VerifiedAt
+			if !ok || previous.State != "pending_creation" || !reflect.DeepEqual(candidate, previous) {
+				return fmt.Errorf("%w: identity checkpoint cannot introduce ownership", ownership.ErrBlocked)
+			}
+			if err := c.journal.Commit(pending.Sequence, c.state); err != nil {
+				return err
+			}
 		}
 	}
-	restored := map[string]*endpointRecord{}
 	for key, ack := range c.state.Endpoints {
 		if err := validateCNIACK(key, ack); err != nil {
 			return fmt.Errorf("%w: %v", ownership.ErrBlocked, err)
 		}
-		if ack.State == "deleted" || ack.State == "quarantined" {
-			continue
-		}
-		if ack.State == "pending_creation" {
-			if err := c.verifyResources(ctx, s, ack); err != nil {
-				return fmt.Errorf("%w: pending endpoint resource identity: %v", ownership.ErrBlocked, err)
-			}
-			restored[key] = cloneRecord(ack.record())
-			continue
-		}
-		deleted, err := c.workload.Verify(ctx, ack.Spec.Workload, ack.Runtime.GetContainerId(), ack.Runtime.GetNetnsPath())
-		if err != nil {
-			return fmt.Errorf("%w: workload observation: %v", ownership.ErrBlocked, err)
-		}
-		if deleted {
-			continue
-		}
-		if err := c.verifyResources(ctx, s, ack); err != nil {
-			return fmt.Errorf("%w: %v", ownership.ErrBlocked, err)
-		}
-		restored[key] = cloneRecord(ack.record())
 	}
-	s.store.mu.Lock()
-	defer s.store.mu.Unlock()
-	if len(s.store.records) != 0 {
+	s.store.mu.RLock()
+	occupied := len(s.store.records) != 0
+	s.store.mu.RUnlock()
+	if occupied {
 		return fmt.Errorf("%w: recovery requires empty endpoint store", ownership.ErrBlocked)
 	}
-	s.store.records = restored
+	c.recovering = true
+	if !retry {
+		if err := s.retryPendingOrphanLocked(ctx, c); err != nil {
+			return fmt.Errorf("%w: %v", ownership.ErrBlocked, err)
+		}
+		if err := s.rescanCNIReceiptsLocked(ctx, c); err != nil {
+			for key := range c.state.Endpoints {
+				s.store.delete(key)
+			}
+			return fmt.Errorf("%w: %v", ownership.ErrBlocked, err)
+		}
+	}
 	s.continuity = c
 	return nil
 }
 
+const cniOrphanHostUnresolved = "orphan_host_unresolved"
+
+// Replay must finish before scanning other ACKs: the journal has one intent slot.
+func (s *CNIServer) rescanCNIReceiptsLocked(ctx context.Context, c *cniContinuity) error {
+	keys := make([]string, 0, len(c.state.Endpoints))
+	for key, ack := range c.state.Endpoints {
+		if ack.State == "active" || c.recovering && ack.State == "pending_creation" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	start := sort.Search(len(keys), func(i int) bool { return keys[i] > c.scanAfter })
+	var scanErr error
+	for i := range keys {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(scanErr, err)
+		}
+		key := keys[(start+i)%len(keys)]
+		c.scanAfter = key
+		ack := c.state.Endpoints[key]
+		_, restored := s.store.get(key)
+		if c.recovering && restored {
+			continue
+		}
+		if ack.State == "active" {
+			observe := cniWorkloadRetired
+			if !c.recovering {
+				observe = cniPodRetired
+			}
+			retired, err := observe(ctx, c.workload, ack)
+			if err != nil {
+				scanErr = errors.Join(scanErr, fmt.Errorf("observe Pod for endpoint %q: %w", key, err))
+				continue
+			}
+			if retired {
+				if err := s.cleanupOrphanLocked(ctx, c, key, ack, 0); err != nil {
+					return errors.Join(scanErr, fmt.Errorf("orphan cleanup for %q pending retry: %w", key, err))
+				}
+				continue
+			}
+		}
+		if c.recovering {
+			if err := c.verifyResources(ctx, s, ack); err != nil {
+				scanErr = errors.Join(scanErr, fmt.Errorf("recover resource identity for %q: %w", key, err))
+				continue
+			}
+			s.store.putIfAbsentOrEqual(key, ack.record())
+		}
+	}
+	if scanErr == nil {
+		c.recovering = false
+	}
+	return scanErr
+}
+
 func validateCNIACK(key string, a cniEndpointACK) error {
 	if a.Identity == nil || a.Runtime == nil || a.Attachment == nil || a.Result == nil ||
-		key != endpointKey(a.Identity) || (a.State != "active" && a.State != "deleted" && a.State != "pending_creation" && a.State != "quarantined") {
+		key != endpointKey(a.Identity) || (a.State != "active" && a.State != "deleted" && a.State != "pending_creation" && a.State != "quarantined" && a.State != cniOrphanHostUnresolved) {
 		return errors.New("invalid endpoint ACK metadata")
+	}
+	if a.State == cniOrphanHostUnresolved && a.Reason == "" {
+		return errors.New("unresolved orphan host cleanup has no reason")
 	}
 	if a.State == "pending_creation" && (a.Admission == nil || a.CreatedAt.IsZero() || !a.VerifyBy.After(a.CreatedAt) ||
 		a.VerifyBy.Sub(a.CreatedAt) > 2*time.Minute) {
@@ -224,6 +292,9 @@ func validateCNIACK(key string, a cniEndpointACK) error {
 }
 
 func (c *cniContinuity) ready() error {
+	if c.recovering {
+		return fmt.Errorf("%w: CNI startup recovery pending", ownership.ErrBlocked)
+	}
 	_, pending, err := c.journal.Snapshot()
 	if err != nil {
 		return err
@@ -244,6 +315,93 @@ func (c *cniContinuity) verifyResources(ctx context.Context, s *CNIServer, ack c
 	}
 	_, err = s.network.Check(ctx, endpointKey(ack.Identity), ack.record())
 	return err
+}
+
+func cniWorkloadRetired(ctx context.Context, workload CNIWorkloadAttestor, ack cniEndpointACK) (bool, error) {
+	deleted, err := workload.Verify(ctx, ack.Spec.Workload, ack.Runtime.GetContainerId(), ack.Runtime.GetNetnsPath())
+	if err == nil || !errors.Is(err, errCNIIdentityConflict) {
+		return deleted, err
+	}
+	if retired, ok := workload.(interface {
+		VerifyRetired(context.Context, endpoint.WorkloadRef) (bool, error)
+	}); ok {
+		confirmed, retirementErr := retired.VerifyRetired(ctx, ack.Spec.Workload)
+		if retirementErr != nil {
+			return false, retirementErr
+		}
+		if confirmed {
+			return true, nil
+		}
+	}
+	return deleted, err
+}
+
+func cniPodRetired(ctx context.Context, workload CNIWorkloadAttestor, ack cniEndpointACK) (bool, error) {
+	if verifier, ok := workload.(interface {
+		VerifyRetired(context.Context, endpoint.WorkloadRef) (bool, error)
+	}); ok {
+		return verifier.VerifyRetired(ctx, ack.Spec.Workload)
+	}
+	return cniWorkloadRetired(ctx, workload, ack)
+}
+
+func (s *CNIServer) cleanupOrphanLocked(ctx context.Context, c *cniContinuity, key string, ack cniEndpointACK, sequence uint64) error {
+	if ack.State != "active" || key != endpointKey(ack.Identity) {
+		return errors.New("orphan cleanup requires the matching active CNI ACK")
+	}
+	retired, err := cniPodRetired(ctx, c.workload, ack)
+	if err != nil {
+		return fmt.Errorf("revalidate retired Pod identity: %w", err)
+	}
+	if !retired {
+		return errors.New("original Pod UID is not authoritatively retired")
+	}
+	if sequence == 0 {
+		fmt.Fprintf(os.Stderr, "CNI orphan candidate endpoint=%q pod_retirement=confirmed\n", key)
+		sequence, err = c.journal.Begin("cni-orphan-del", ack)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "CNI orphan intent persisted endpoint=%q sequence=%d\n", key, sequence)
+	}
+	// Recheck Kubernetes immediately before the receipt-fenced mutations. A new
+	// Pod UID is retired relative to this ACK, but can never match its UUIDs.
+	retired, err = cniPodRetired(ctx, c.workload, ack)
+	if err != nil {
+		return fmt.Errorf("revalidate retired Pod before deletion: %w", err)
+	}
+	if !retired {
+		return errors.New("original Pod UID became active before orphan deletion")
+	}
+	if err := c.observer.DeleteOrphanExact(ctx, ack); err != nil {
+		return err
+	}
+	absent, err := c.observer.OrphanAbsent(ctx, ack)
+	if err != nil {
+		return err
+	}
+	if !absent {
+		return errors.New("orphan OVN/OVS resource absence not verified")
+	}
+	ack.State = "deleted"
+	// RTM_DELLINK does not condition deletion on the observed identity.
+	// An absence lookup is evidence only; never attempt orphan link mutation.
+	if err := c.observer.OrphanHostAbsent(ctx, ack); err != nil {
+		ack.State = cniOrphanHostUnresolved
+		ack.Reason = "host veth absence unverified; deletion disabled because link identity cannot be fenced"
+	}
+	next := cniACKState{Version: c.state.Version, Endpoints: make(map[string]cniEndpointACK, len(c.state.Endpoints))}
+	for endpointID, current := range c.state.Endpoints {
+		next.Endpoints[endpointID] = current
+	}
+	next.Endpoints[key] = ack
+	if err := c.journal.Commit(sequence, next); err != nil {
+		return err
+	}
+	c.state = next
+	s.store.delete(key)
+	fmt.Fprintf(os.Stderr, "CNI orphan cleanup endpoint=%q ovs=complete ovn=complete state=%s reason=%q\n", key, ack.State, ack.Reason)
+	return nil
 }
 
 func (c *cniContinuity) check(ctx context.Context, s *CNIServer, req *pb.CNICheckRequest) error {
@@ -326,6 +484,9 @@ func (c *cniContinuity) add(ctx context.Context, s *CNIServer, req *pb.CNIAddReq
 		return fail(errors.New("Kubernetes Pod deleted; ADD refused"))
 	}
 	if ack, ok := c.state.Endpoints[key]; ok && ack.State != "deleted" {
+		if ack.State == cniOrphanHostUnresolved {
+			return fail(errors.New(ack.Reason))
+		}
 		if ack.State == "quarantined" {
 			return fail(errors.New("endpoint quarantined; no ADD adoption"))
 		}
@@ -445,6 +606,8 @@ func (c *cniContinuity) del(ctx context.Context, s *CNIServer, req *pb.CNIDelReq
 	outcome := pb.DelOutcome_DEL_OUTCOME_ALREADY_ABSENT
 	if ok && normalizeIdentity(ack.Identity) != normalizeIdentity(id) {
 		outcome = pb.DelOutcome_DEL_OUTCOME_STALE_OPERATION
+	} else if ok && ack.State == cniOrphanHostUnresolved {
+		return fail(errors.New(ack.Reason))
 	} else if ok && (ack.State == "active" || ack.State == "pending_creation" || ack.State == "quarantined") {
 		if err := c.verifyResources(ctx, s, ack); err != nil {
 			return fail(err)

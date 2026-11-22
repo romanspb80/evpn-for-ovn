@@ -17,14 +17,15 @@ import (
 const fenceOperation = "worker-inventory-accept"
 
 type fenceState struct {
-	Version      int    `json:"version"`
-	ClusterUID   string `json:"clusterUID"`
-	Installation string `json:"installationUID"`
-	NodeName     string `json:"nodeName"`
-	NodeUID      string `json:"nodeUID"`
-	Revision     uint64 `json:"revision"`
-	Digest       string `json:"digest"`
-	WorkerDigest string `json:"workerDigest"`
+	Version      int         `json:"version"`
+	ClusterUID   string      `json:"clusterUID"`
+	Installation string      `json:"installationUID"`
+	NodeName     string      `json:"nodeName"`
+	NodeUID      string      `json:"nodeUID"`
+	Revision     uint64      `json:"revision"`
+	Digest       string      `json:"digest"`
+	WorkerDigest string      `json:"workerDigest"`
+	Trust        *TrustState `json:"trust,omitempty"`
 }
 
 // Fence serializes acceptance of publisher-authenticated declarations for one
@@ -66,13 +67,17 @@ func OpenFence(directory, cluster, installation, nodeName, nodeUID string) (*Fen
 	}
 	f := &Fence{journal: journal, cluster: cluster, install: installation, nodeName: nodeName, nodeUID: nodeUID}
 	raw, pending, err := journal.Snapshot()
-	if err == nil && pending != nil {
-		err = fmt.Errorf("%w: unresolved inventory acceptance requires operator intervention", ownership.ErrBlocked)
-	}
 	if err == nil && string(raw) != "null" {
 		err = decodeFence(raw, &f.state)
 		if err == nil {
 			err = f.validateState(f.state)
+		}
+	}
+	if err == nil && pending != nil {
+		if pending.Operation != "worker-inventory-trust" {
+			err = fmt.Errorf("%w: unresolved inventory acceptance requires operator intervention", ownership.ErrBlocked)
+		} else {
+			err = f.recoverTrustIntent(pending)
 		}
 	}
 	if err != nil {
@@ -82,6 +87,9 @@ func OpenFence(directory, cluster, installation, nodeName, nodeUID string) (*Fen
 }
 
 func decodeFence(data []byte, out *fenceState) error {
+	if err := ownership.RejectDuplicateJSONKeys(data); err != nil {
+		return err
+	}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
@@ -99,9 +107,27 @@ func digestValid(s string) bool {
 }
 
 func (f *Fence) validateState(s fenceState) error {
-	if s.Version != 1 || s.ClusterUID != f.cluster || s.Installation != f.install || s.NodeName != f.nodeName ||
-		s.NodeUID != f.nodeUID || s.Revision == 0 || !digestValid(s.Digest) || !digestValid(s.WorkerDigest) {
+	if (s.Version != 1 && s.Version != 2) || s.ClusterUID != f.cluster || s.Installation != f.install || s.NodeName != f.nodeName ||
+		s.NodeUID != f.nodeUID {
 		return fmt.Errorf("%w: invalid inventory fence scope or state", ownership.ErrBlocked)
+	}
+	if s.Version == 2 {
+		if s.Trust == nil || s.Trust.Validate() != nil {
+			return fmt.Errorf("%w: invalid inventory trust state", ownership.ErrBlocked)
+		}
+		if s.Revision == 0 && s.Digest == "" && s.WorkerDigest == "" {
+			return nil
+		}
+		if b := s.Trust.Binding; b != nil && (b.ClusterUID != f.cluster || b.InstallationUID != f.install ||
+			b.NodeName != f.nodeName || b.NodeUID != f.nodeUID || b.Revision > s.Revision ||
+			(b.Revision == s.Revision && (b.Digest != s.Digest || b.WorkerDigest != s.WorkerDigest))) {
+			return fmt.Errorf("%w: recovery binding scope differs", ownership.ErrBlocked)
+		}
+	} else if s.Trust != nil {
+		return fmt.Errorf("%w: trust metadata in legacy inventory schema", ownership.ErrBlocked)
+	}
+	if s.Revision == 0 || !digestValid(s.Digest) || !digestValid(s.WorkerDigest) {
+		return fmt.Errorf("%w: invalid inventory authority head", ownership.ErrBlocked)
 	}
 	return nil
 }
@@ -147,6 +173,9 @@ func (f *Fence) Accept(in Inventory) (Worker, error) {
 	}
 	next := fenceState{Version: 1, ClusterUID: f.cluster, Installation: f.install, NodeName: f.nodeName,
 		NodeUID: f.nodeUID, Revision: in.Revision, Digest: digest, WorkerDigest: workerDigest}
+	if f.state.Trust != nil {
+		next.Version, next.Trust = 2, cloneTrust(f.state.Trust)
+	}
 	seq, err := f.journal.Begin(fenceOperation, next)
 	if err != nil {
 		return Worker{}, err

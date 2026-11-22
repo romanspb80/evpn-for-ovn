@@ -74,6 +74,9 @@ func TestBuildServerForOptionsRealModeFactorySuccess(t *testing.T) {
 	if srv == nil {
 		t.Fatalf("expected server")
 	}
+	if !srv.requirePeerCredentials {
+		t.Fatal("real OVN/OVS server must require Unix peer credentials")
+	}
 	if !factory.buildCalled {
 		t.Fatalf("expected factory build to be called")
 	}

@@ -1,12 +1,8 @@
 @startdot
 digraph Architecture {
-  // Center the SVG legend after Graphviz lays out the architecture.
-  // DOT diagrams do not support PlantUML's "legend bottom center".
   // Regenerate from the repository root:
-  // JAVA_TOOL_OPTIONS=-Djava.awt.headless=true plantuml -tsvg docs/uml/component-overview.puml
-  // python3 -c 'from pathlib import Path; import re; p = Path("docs/uml/component-overview.svg"); s = p.read_text(); s, n = re.subn(r"(<g\b[^>]*)(>\s*<title>legend</title>)", r"\1" + " transform=\"translate(-102 0)\"" + r"\2", s); assert n == 1; p.write_text(s)'
-  // Graph center: 591 pt; legend center: 693 pt; X offset: -102 pt.
-  graph [rankdir=TB, bgcolor="white", pad="0.18", nodesep="0.28", ranksep="0.48",
+  // python3 docs/uml/render-component-overview.py
+  graph [forcelabels=true, rankdir=TB, bgcolor="white", pad="0.18", nodesep="0.28", ranksep="0.48",
          splines=polyline, compound=true, newrank=true, outputorder=edgesfirst,
          fontname="DejaVu Sans", labelloc=t,
          label=<<FONT POINT-SIZE="18" COLOR="#17263C"><B>EVPN-for-OVN — Framework Architecture</B></FONT>>];
@@ -42,7 +38,7 @@ digraph Architecture {
           fillcolor="#DEEDFF", color="#4F86BF", penwidth=1.5, width=3.45];
     netlink [label=<<B>Netlink-Programmed</B><BR/><FONT POINT-SIZE="8">Primary integration target</FONT>>,
              fillcolor="#E9F3FF", color="#6E9BCB", width=2.15];
-    ovsdb [label=<<B>OVSDB-Programmed</B><BR/><FONT POINT-SIZE="8">Experimental</FONT>>,
+    ovsdb [label=<<B>OVSDB-Programmed</B><BR/><FONT POINT-SIZE="8">Maintenance / testing only</FONT><BR/><FONT POINT-SIZE="8">Outside v0.1.0 deployment scope</FONT>>,
            fillcolor="#FFF5E6", color="#D8B47A", width=2.15];
     {rank=same; ovsdb; netlink;}
     ovsdb -> netlink [style=invis, weight=15];
@@ -53,7 +49,7 @@ digraph Architecture {
     labelloc=t; fontsize=9; fontname="DejaVu Sans"; fontcolor="#5F7187";
     style="rounded,filled"; color="#DCE5EF"; fillcolor="#F8FAFD"; margin=11;
     gobgp [label=<<B>GoBGP</B><BR/><FONT POINT-SIZE="8">BGP / EVPN engine</FONT>>];
-    provider [label=<<B>k8gobgp</B><BR/><FONT POINT-SIZE="8">Optional Kubernetes provider</FONT>>,
+    provider [label=<<B>k8gobgp</B><BR/><FONT POINT-SIZE="8">Optional Kubernetes<BR/>provider</FONT>>,
               fillcolor="#F4F6F8", color="#B5C0CC"];
     {rank=same; gobgp; provider;}
     gobgp -> provider [style=invis, weight=12];
@@ -63,11 +59,10 @@ digraph Architecture {
     label="INTEGRATION STATE AND WORKLOAD FORWARDING";
     labelloc=t; fontsize=9; fontname="DejaVu Sans"; fontcolor="#5F7187";
     style="rounded,filled"; color="#DCE5EF"; fillcolor="#F8FAFD"; margin=11;
-    linux [label=<<B>Linux / Netlink</B><BR/><FONT POINT-SIZE="8">Bridge · VXLAN · FDB · neighbors</FONT>>];
-    // Preserve the published node width while accommodating the updated subtitle.
-    ovn_controller [label=<<B>ovn-controller</B><BR/><FONT POINT-SIZE="8">Reads/writes Linux state · programs OVS</FONT>>,
+    linux [label=<<B>Linux / Netlink</B><BR/><FONT POINT-SIZE="8">Bridge · VXLAN<BR/>FDB · neighbors</FONT>>];
+    ovn_controller [label=<<B>ovn-controller</B><BR/><FONT POINT-SIZE="8">Reads/writes Linux state<BR/>Programs OVS</FONT>>,
                     width=2.4306, margin="0.06,0.10"];
-    ovn [label=<<B>OVN / OVS</B><BR/><FONT POINT-SIZE="8">Workload forwarding dataplane</FONT>>,
+    ovn [label=<<B>OVN / OVS</B><BR/><FONT POINT-SIZE="8">Workload forwarding<BR/>dataplane</FONT>>,
          fillcolor="#F0F7F4", color="#A7C9B9"];
     {rank=same; linux; ovn_controller; ovn;}
     linux -> ovn_controller [style=invis, weight=12];
@@ -100,13 +95,12 @@ digraph Architecture {
   provider:w -> gobgp:e [color="#7C8B9C", constraint=false];
   core -> netlink [color="#4479B6"];
   core -> ovsdb [color="#4479B6"];
-  netlink -> linux [color="#4479B6", label="Program Linux VXLAN / FDB / neighbors"];
-  ovsdb -> ovn [color="#4479B6", label="Program OVSDB resources"];
-  // Keep the original label footprint so the surrounding nodes do not move.
+  netlink -> linux [color="#4479B6", label="Program Linux VXLAN / FDB\n/ neighbors"];
+  ovsdb -> ovn [color="#4479B6", label="Program OVSDB\nresources"];
   linux -> ovn_controller [dir=both, color="#7C8B9C",
-    label=<<TABLE BORDER="0" CELLBORDER="0" CELLPADDING="0" CELLSPACING="0" WIDTH="129"><TR><TD>Read / write Linux EVPN state</TD></TR></TABLE>>];
-  ovn_controller -> ovn [color="#7C8B9C", label="Reconcile OVS forwarding"];
+    label="Read / write", xlabel="Linux state", minlen=1];
+  ovn_controller -> ovn [color="#7C8B9C", label="Reconcile OVS", xlabel="forwarding"];
   gobgp -> peer [dir=both, color="#397AB5", label="BGP EVPN route exchange"];
-  ovn -> peer [dir=both, color="#34846A", label="EVPN VXLAN dataplane (VTEP ↔ VTEP)"];
+  ovn -> peer [dir=both, color="#34846A", label="EVPN VXLAN dataplane", xlabel="(VTEP ↔ VTEP)"];
 }
 @enddot

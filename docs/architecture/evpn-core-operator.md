@@ -1,19 +1,19 @@
 # EVPN Core Operator lifecycle
 
-The operator is the standard lifecycle controller for the Kubernetes CNI
-architecture, but remains experimental and is not a production-ready EVPN
-installation. It manages Kubernetes workloads using
-[`core-resources.yaml`](../../deploy/operator/core-resources.yaml), while
-the existing Framework and Node-Agent retain endpoint/network and Type-2
-runtime responsibilities. This page is ordinary Markdown suitable for a
-future MkDocs Material navigation tree; no website deployment is required.
+The Operator is an experimental Kubernetes lifecycle controller for `EvpnCore`,
+not a generic CNI or application-workload installer. The shipped
+[`core-resources.yaml`](../../deploy/operator/core-resources.yaml) defines an
+OVN/OVS Service and Deployment plus an optional Node-Agent DaemonSet in
+`managed-single-node`; `external-ovn` manages only the Node-Agent DaemonSet.
+The controller creates required namespaces but does not manage application
+workloads or the separate legacy Kind compatibility services. The Framework
+and Node-Agent retain endpoint/network and Type-2 runtime responsibilities.
+This page is ordinary Markdown suitable for a future MkDocs Material
+navigation tree; no website deployment is required.
 
-The [operator-managed Type-2 acceptance suite](operator-type2-acceptance.md)
-exercises the actual CNI, direct Unix GoBGP integration, independent FRR peer
-and captured VXLAN traffic. Its bounded normal and forced-SIGKILL
-runs verify Node-Agent/speaker recovery; ambiguous lost-UUID AddPath outcomes
-remain intentionally BLOCKED. Kubernetes workload readiness
-must not be interpreted as proof of route/packet convergence.
+The [release scope](../release/v0.1.0.md) describes integration maturity and
+limitations. Experimental implementation does not establish general
+multi-worker lifecycle or production readiness.
 
 For the wider SDN framework and the separation between owned networking logic,
 platform orchestration and external providers, see the
@@ -60,7 +60,7 @@ separate leader-election Lease in `evpn-operator-system`.
 
 | Owner | Scope |
 |---|---|
-| EvpnCore | Legacy mode: app and OVN workloads and optional agent; external-OVN mode: Node-Agent DaemonSet only. Both use an installation lock and Kubernetes cleanup journal |
+| EvpnCore | `managed-single-node`: OVN/OVS Service and Deployment plus optional Node-Agent DaemonSet; `external-ovn`: Node-Agent DaemonSet only. Required namespaces are ensured but retained. Both use an installation lock and Kubernetes cleanup journal. No app workload is in the shipped template. |
 | Independent k8gobgp installer/manager | Provider CRDs, DaemonSet, Service, speaker processes and `BGPConfiguration` |
 | Framework/Node-Agent | Existing endpoint/attachment and optional Type-2 import/export lifecycle |
 | OVN/OVS | Databases, logical-to-physical forwarding and controller-owned state |
@@ -77,12 +77,16 @@ This allows restart-safe cleanup and namespace changes.
 Existing unowned resources at desired keys are conflicts: no automatic
 adoption, overwriting or takeover is performed.
 
-In legacy mode the controller creates missing app and OVN namespaces but does not delete
-them during finalization. It does not own the separately installed Multus,
-NADs, CNI binaries, provider resources, or an upstream OVN installation. Its
-own template instead deploys a single OVN/OVS workload. Disabling the
-Node-Agent remains an API compatibility setting, not a second CNI solution
-deployment model. For CNI operation enable it explicitly.
+In `managed-single-node` mode the controller ensures the configured app and
+OVN namespaces exist, but does not delete them during finalization. Its
+template deploys one OVN/OVS Service and Deployment, and creates the
+Node-Agent DaemonSet only when enabled. In `external-ovn` mode it ensures only
+the app namespace and manages only the Node-Agent DaemonSet; OVN/OVS and its
+namespace are external. Neither profile deploys application workloads. The
+Operator does not own separately installed Multus, NADs, CNI binaries,
+provider resources, or an upstream OVN installation. CNI operation requires
+an enabled CNI-serving Node-Agent; standalone EVPN import/export modes do not
+start that service.
 
 Each reconciliation keeps immutable CR UID/generation/spec and rendered
 desired resources. Fresh uncached reads and optimistic resourceVersion
@@ -134,18 +138,18 @@ reason `Disabled`. **Disable is not uninstall.** Delete the CR to uninstall.
 
 | Field | Default / behavior |
 |---|---|
-| `appNamespace` | `evpn-system`; app Services/Deployments and Node-Agent |
-| `ovnNamespace` | `ovn-system`; OVN/OVS Deployment and Service |
-| `appImage` | `evpn4ovn/app:kind`; all compatibility app containers |
+| `appNamespace` | `evpn-system`; Node-Agent namespace. No app Service/Deployment is in the shipped template. |
+| `ovnNamespace` | `ovn-system`; OVN/OVS Deployment and Service in `managed-single-node`; external in `external-ovn` |
+| `appImage` | Retained compatibility field (`evpn4ovn/app:kind` default); no container in the shipped template consumes it, so changing it has no effect on current managed resources |
 | `ovnImage` | `evpn4ovn/ovn-ovs:kind`; OVN/OVS container |
 | `dataplaneMode` | `managed-single-node` by default; `external-ovn` explicitly selects externally provisioned OVN/OVS and an agent-only DaemonSet |
-| `dataplaneNode` | Required when enabled in legacy mode; exact existing, Ready, schedulable Kubernetes Node name. Must be omitted in `external-ovn` |
+| `dataplaneNode` | Required when enabled in `managed-single-node`; exact existing, Ready, schedulable Kubernetes Node name. Must be omitted in `external-ovn` |
 | `gobgpImage` | Retained deprecated compatibility field; **not consumed** because speaker image belongs to the independent provider |
 | `bgp.provider` | `k8gobgp`; admission schema and runtime validation reject other values, including `standalone` |
 | `nodeAgent.enabled` | `false` for compatibility; enabling creates one DaemonSet |
 | `nodeAgent.image` | `evpn4ovn/node-agent:kind`; agent and dependency init container |
-| `nodeAgent.nodeSelector` | Legacy: optional hostname matching `dataplaneNode`. External: required nonempty Kubernetes label selector |
-| `nodeAgent.tolerations` | Empty; applied to both OVN/OVS and Node-Agent in legacy mode, or to the agent in external mode |
+| `nodeAgent.nodeSelector` | `managed-single-node`: optional selector constrained to `dataplaneNode`. `external-ovn`: required nonempty Kubernetes label selector |
+| `nodeAgent.tolerations` | Empty; applied to OVN/OVS and Node-Agent in `managed-single-node`, or the agent in `external-ovn` |
 | `nodeAgent.mode` | `real-ovn-ovs`; `in-memory` is available only for diagnostics |
 | `nodeAgent.networkBackend` | `linux-veth`; `in-memory` is diagnostic, not live forwarding |
 | `nodeAgent.socket` | `/run/evpn-node-agent/agent.sock` |
@@ -156,6 +160,7 @@ reason `Disabled`. **Disable is not uninstall.** Delete the CR to uninstall.
 | `nodeAgent.exportStatusPath`, `remoteStatusPath` | Empty; optional node-local JSON status output files |
 | `nodeAgent.exportInterval`, `remoteInterval` | `2s`; positive Go duration strings |
 | `nodeAgent.exportTimeout`, `remoteTimeout` | `5s`; positive Go duration strings |
+| `nodeAgent.verifyNetlinkExportProvenance` | `true`; supported secure profiles must keep provenance verification enabled. The benchmark-only bypass is not acceptable for deployment or release validation. |
 | `nodeAgent.gobgpHostPath` | `/run/gobgp`; mounted read-only at `/var/run/gobgp` |
 
 Socket, config and status file paths must be clean absolute paths beneath
@@ -163,6 +168,13 @@ Socket, config and status file paths must be clean absolute paths beneath
 path other than `/`. Export/import configuration requires
 `real-ovn-ovs`/`linux-veth`. `k8gobgp-system` is reserved and cannot be used
 as an app/OVN namespace.
+
+Namespace relocation updates the rendered OVN Service endpoints without
+changing the Node-Agent's default node-local Unix NB/OVS/SB socket endpoints
+or its rendered configuration. The lifecycle runner checks this distinction
+along with managed-resource and ownership transitions; see
+[`tools/run-operator-e2e.sh`](../../tools/run-operator-e2e.sh) and the
+baseline's schema and unit-test coverage.
 
 ```yaml
 apiVersion: evpn.romanspb80.github.io/v1alpha1
@@ -175,7 +187,6 @@ spec:
   dataplaneNode: worker-1
   appNamespace: evpn-system
   ovnNamespace: ovn-system
-  appImage: evpn4ovn/app:kind
   ovnImage: evpn4ovn/ovn-ovs:kind
   bgp:
     provider: k8gobgp
@@ -216,7 +227,7 @@ errors/restarts. Agent readiness checks Unix socket connectivity, not Type-2
 convergence or the full NodeAgentCNI API. Rolling update has zero surge to
 avoid deliberately running two agent pods per node.
 
-In the default legacy mode, required
+In the default `managed-single-node` mode, required
 node affinity uses `metadata.name`, not a potentially shared hostname label,
 to place the single-replica OVN/OVS Deployment and Node-Agent DaemonSet on
 the same `spec.dataplaneNode`. Node readiness, cordoning, selector mismatch
@@ -253,7 +264,7 @@ requires its `external_ids:system-id` to equal the configured chassis name,
 then requires exactly one matching, identified Southbound `Chassis` row.
 The existing exporter checks the local VTEP is assigned on the host; it does
 not require that address to equal the OVN Geneve encapsulation address.
-If chassis evidence is lost after durable export recovery was initialized,
+Outside opted-in inventory trust recovery, if chassis evidence is lost after durable export recovery was initialized,
 the exporter attempts to persist a permanent withdrawal-only fence and
 withdraws acknowledged UUIDs through the existing attested speaker and
 authoritative RIB gates. A failed operation is reported as unresolved and
@@ -298,7 +309,7 @@ The opt-in Node-Agent gate uses in-cluster service-account credentials and
 reads only `evpn-worker-inventory` in the pinned namespace. Explicit command
 line options `--worker-inventory-namespace`, `--worker-inventory-uid`,
 `--worker-inventory-cluster-uid`, `--worker-inventory-installation-uid`, and
-`--worker-inventory-journal` are supplied by the Operator; the UID is the
+`--worker-inventory-journal`, and `--worker-inventory-recovery-file` are supplied by the Operator; the UID is the
 ConfigMap Kubernetes UID, not its inventory digest. The journal is
 `/var/lib/evpn-node-agent/inventory` on the configured persistent host volume.
 The gate
@@ -307,12 +318,19 @@ also requires both enabled Type-2 configs, CNI continuity with admission,
 It checks the publication identity, Operator apply journal, canonical digest,
 node UID and local launch configuration, independently checks chassis and
 speaker, then accepts the revision in the separate durable journal. Each
-export and import cycle repeats the check. Import is also gated before
-Netlink ownership initialization. A failure after exporter recovery has
-initialized attempts the existing durable withdrawal-only fence and exact
-owned-route withdrawal; unresolved withdrawal is reported, not assumed.
-If recovery has not initialized, there is no guarantee that a failed
-inventory check persisted a withdrawal fence or withdrew older receipts.
+export and import cycle repeats the check, and each inventory-mode Add
+revalidates authority and current endpoint ownership. Import is also gated
+before Netlink ownership initialization. With the recovery-file option,
+classified temporary failures require full independent revalidation and a
+durable two-journal grant; integrity, identity and unknown failures persist a
+security fence requiring separate host-administrator authorization.
+Restoring inventory bytes or speaker health cannot release that fence.
+The inventory denial can be recorded before export recovery initializes;
+exact owned withdrawal still requires initialized, reconciled export
+ownership and an attested speaker. Unresolved withdrawal is reported, not
+assumed. See [Type-2 ownership and recovery](type2-restart-ownership.md) for the
+fail-closed identity and receipt requirements. Without the recovery-file option, the conservative
+legacy permanent-fence behavior remains.
 
 The API server, Operator credentials, administrators and RBAC are the authority;
 the UID pin and apply journal detect replacement and drift, not an authorized
@@ -405,17 +423,14 @@ actual Node UID and the EvpnCore UID allocated by Kubernetes. Use the existing
 [continuity configuration](cni-creation-authority.md) and
 [provider attestation](type2-restart-ownership.md) contracts; boot ID,
 network-namespace identity, executable hashes and runtime inspection paths
-must be measured on each node, not copied from another. A complete tested
-two-worker configuration and provider peer setup is not established by this
-manual template workflow. A separate inventory-gated attempt-8 scenario did
-verify one exact prepared two-worker configuration, shared NB/SB, external FRR
-Type-2 exchange and bidirectional forwarding; see its
-[acceptance record](operator-type2-acceptance.md#attempt-8-inventory-gated-two-worker-type-2-forwarding).
+must be observed on each node, not copied from another. This manual workflow
+is an experimental template, not a complete installer; see its
+[validation procedure](../../deploy/operator/examples/two-worker/VALIDATION.md).
 The [two-worker templates](../../deploy/operator/examples/two-worker/README.md)
 describe the native OVN Netlink synchronization and controller-owned OVS
 VXLAN forwarding path, node-local trust and external peer setup. The shared
-EVPN-enabled switch and forwarding have evidence only in the bounded attempt-8
-topology; generalized setup, lifecycle and recovery remain unverified.
+EVPN-enabled switch requires explicit configuration and independent packet
+checks; generalized setup, lifecycle and recovery are not guaranteed.
 
 After creating the CR and provisioning those files, inspect the rollout and
 the identity pin (substitute the actual namespaces and names):
@@ -508,11 +523,9 @@ speaker with the external fabric; the Operator does not configure BGP peers.
 The exporter uses the existing local endpoint observations and the importer
 uses the existing policy-filtered RIB and owned Netlink path. Native OVN
 Geneve remains responsible for ordinary connectivity within the shared OVN
-domain. A fully checked two-worker set of node-local JSON configurations
-and this manual template workflow remain unaccepted. A separate inventory-gated
-[attempt-8 scenario](operator-type2-acceptance.md#attempt-8-inventory-gated-two-worker-type-2-forwarding)
-verified one exact two-worker configuration and live external Type-2 forwarding;
-it does not validate this template as a general deployment procedure.
+domain. The template does not synthesize a complete set of node-local JSON
+configurations or establish a supported deployment procedure; follow its
+[validation guide](../../deploy/operator/examples/two-worker/VALIDATION.md).
 
 Labels must be controlled by trusted administrators and assigned only after
 the node is prepared. Kubernetes schedules the DaemonSet as labels/nodes
@@ -535,11 +548,9 @@ is rejected; perform a planned drain and reinstall instead. Back up the CR
 status and upgrade the CRD together with the operator; rolling back to an
 operator or schema unaware of the recorded mode is unsupported.
 
-Attempt 8 verifies Type-2 exchange and workload-to-external forwarding for one
-inventory-gated two-worker topology. General multi-node CNI lifecycle,
-restart/recovery, and the manual configuration workflow above remain
-unvalidated. Shared-OVN Geneve is not evidence of independent OVN domains
-exchanging EVPN Type-2/VXLAN.
+General multi-node CNI lifecycle and restart/recovery remain outside the
+release guarantees. Shared-OVN Geneve is not evidence of independent OVN
+domains exchanging EVPN Type-2/VXLAN.
 
 Exporter config is loaded/reloaded by
 [`LoadExporterConfig`](../../pkg/nodeagent/export_runtime.go);
@@ -569,21 +580,24 @@ socket or writer authority.
 
 ## BGP provider boundary and future standalone
 
-`k8gobgp` remains the default, independent lifecycle owner. Install its
-upstream release/CRDs and authoritative `BGPConfiguration` separately. The
-core no longer creates or deletes a `k8gobgp` Service. Compatibility app
-clients still reference
-`k8gobgp.k8gobgp-system.svc.cluster.local:50051`; the provider installation
-must explicitly supply a reachable listener/Service if using that path.
+`k8gobgp` is the only provider accepted by the current Operator. GoBGP is the
+BGP/EVPN engine; `k8gobgp` is an optional, independent Kubernetes speaker
+configuration/lifecycle provider. Install its upstream release/CRDs and
+authoritative `BGPConfiguration` separately. The current Operator template
+does not create application clients or a `k8gobgp` Service. The separate,
+unsupported legacy Kind compatibility manifest contains clients that may
+reference `k8gobgp.k8gobgp-system.svc.cluster.local:50051`; only that legacy
+path requires a separately reachable listener/Service.
 The known upstream Unix-only runtime is not magically converted into a
 TCP proxy by a Service manifest. See the
 [provider ownership and reproducibility boundary](runtime-dependencies.md).
 
 No GoBGP session/configuration writer is added. Existing Framework Type-2
 AddPath/UUID DeletePath behavior and gRPC integration are unchanged.
-Compatibility management RPCs capable of configuring speakers still need
-operational isolation from k8gobgp's manager; this task does not resolve
-the broader [FW-02](../roadmap/backlog.md) contract.
+Legacy speaker, peer-configuration and Type-2 route-write RPCs are disabled
+with `PermissionDenied`; they are not configuration authority. The remaining
+compatibility API still lacks transport authentication and authorization;
+keep it isolated as described in [SECURITY.md](../../SECURITY.md).
 
 Future `standalone` should provide an explicit speaker deployment/configuration
 adapter with its own authoritative configuration ownership and readiness.
@@ -591,7 +605,10 @@ It must keep speaker ASN/router ID/peers/VRF configuration separate from
 EVPN network intent and endpoint route lifecycles, and must never run
 alongside a competing k8gobgp configuration writer for the same speaker.
 Deployment/config schema, persistence, credentials and migration contracts
-must be defined before enabling it. Currently `standalone` is rejected.
+must be defined before enabling this Operator provider adapter.
+Setting `spec.bgp.provider` to `standalone` is currently rejected; this is
+distinct from
+the opt-in [standalone Node-Agent export path](standalone-endpoint-authorization.md).
 
 ## Status and deletion
 
@@ -651,10 +668,12 @@ No destructive network-state deletion policy is implemented.
 ## Installation, upgrade and limitations
 
 Use only trusted, isolated disposable hosts until security and operational
-validation is complete. Existing management gRPC, OVN/OVSDB TCP listeners,
-NodePorts `30052`/`30053`, privileged pods and broad cross-namespace
-permissions remain experimental assumptions. Firewall/isolate those
-interfaces **before** applying the manifests; consult
+validation is complete. Existing unauthenticated management gRPC, OVN/OVSDB TCP
+listeners, cluster-internal compatibility Services, privileged pods, and broad
+cross-namespace permissions remain experimental assumptions. The legacy Kind
+management Services are ClusterIP-only, with no management host networking,
+NodePorts, or Gateway routes; unauthenticated in-cluster access remains.
+Firewall/isolate those interfaces **before** applying the manifests; consult
 [SECURITY.md](../../SECURITY.md).
 
 ### Administrator-only trust boundary
@@ -680,18 +699,22 @@ or explicit grants: these manifests cannot revoke external bindings.
 There is no tenant-safe delegation/admission policy in this MVP.
 
 Privileged/root execution and hostPID remain necessary for the current
-tested exporter peer-process/pidfd evidence and host network/netns runtime,
+exporter peer-process/pidfd checks and host network/netns runtime,
 not a claim that every mode requires every Linux capability. A reduced
 NET_ADMIN/SYS_ADMIN profile, hostPID-free diagnostic mode and narrower
 mounts need separate kernel/runtime validation; they are not introduced
 as untested replacements here.
 
-Build compatible operator/app/OVN/Node-Agent images, install k8gobgp
-independently, apply `deploy/operator/manifests/operator.yaml`, create the
-CR's namespace, stage node-local JSON if used, specify the exact dataplane node,
-then apply the CR. Watch conditions/events and actual runtime health.
-Image changes roll workloads; OVN updates remain disruptive (`Recreate`).
-Legacy CRs without `dataplaneNode`, or with arbitrary Node-Agent selectors,
+Build the Operator and the OVN/OVS and Node-Agent images required by the
+chosen profile; the shipped template has no application image to build, and
+`appImage` is retained but has no effect on current resources. Install
+`k8gobgp` independently, apply `deploy/operator/manifests/operator.yaml`,
+create the namespace that will contain the CR, stage node-local JSON if used,
+specify `dataplaneNode` for `managed-single-node`, then apply the CR. The
+controller ensures its configured app namespace and, in `managed-single-node`,
+the OVN namespace. Watch conditions/events and actual runtime health. Image
+changes roll managed workloads; OVN updates remain disruptive (`Recreate`).
+`managed-single-node` CRs without `dataplaneNode`, or with arbitrary Node-Agent selectors,
 become ConfigurationInvalid until an administrator supplies compatible
 placement. Upgrade the CRD together with the operator so `state`, `conflict`
 and placement fields are not pruned by an older schema.
@@ -785,8 +808,10 @@ and plan an explicit recovery/reinstall. Durable OVN storage, tested database
 migrations and automatic state-preserving rollback remain unimplemented.
 
 Unit/schema coverage and the Containerlab-backed
-[`tools/run-operator-e2e.sh`](../../tools/run-operator-e2e.sh) test lifecycle
-behavior with the operator-managed agent. Specialized Framework/CNI suites
+[`tools/run-operator-e2e.sh`](../../tools/run-operator-e2e.sh) and baseline
+unit/schema coverage exercise managed resources and namespace transitions. Use those inventory
+checks rather than inferring app workloads from legacy manifests.
+Specialized Framework/CNI suites
 retain their evidence-specific runtime deployments; never combine them with
 an enabled operator-managed agent in the same lab. No production or
 multi-chassis acceptance is implied. Remaining work includes durable OVN

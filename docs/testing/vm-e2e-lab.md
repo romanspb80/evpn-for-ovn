@@ -37,13 +37,21 @@ libvirt system daemon and CLI, Vagrant and `vagrant-libvirt`, Python 3, Git,
 tar and Docker to export the pinned OVN image. A working libvirt system
 connection, permissions to manage its resources, and guest outbound access
 to package and pinned tool sources are required. Guest is
-`generic/ubuntu2204` version 4.3.12, libvirt provider. The historical
-direct-agent fixture ran with 4 vCPU, 12 GiB RAM and a 128 GiB sparse disk;
-these are defaults, **not measured minimums**. Provide adequate free host disk,
-RAM and CPU in addition to the host's own needs. The guest needs the
+`generic/ubuntu2204` version 4.3.12, libvirt provider. The helper defaults
+to 4 vCPU, 12 GiB RAM and a 128 GiB sparse disk;
+these are resource settings, **not measured platform minimums**.
+Provide adequate free host disk, RAM and CPU in addition to the host's own
+needs. The guest needs the
 `openvswitch` kernel module, network namespaces and privileged containers.
 Nested virtualization is not required merely to run Docker in this VM; it is
 needed only if the physical host is itself a VM without exposed KVM.
+
+After a retained guest is rebooted, verify that its installed `openvswitch`
+kernel module is actually loaded before starting a lab. The pinned OVN image
+does not contain the guest's kernel modules. Ask the laboratory administrator
+to load the installed guest module when needed; restarting Docker alone does
+not fix this prerequisite. A failed in-container OVS module insertion can
+remove Linux bridges and break the guest's Docker/Kind networking.
 
 Check without changing infrastructure:
 
@@ -69,10 +77,7 @@ box hash is available, provisioning is **BLOCKED**. Guest package signatures
 and checksums for Kind, kubectl, Go and Containerlab are enforced by the
 existing `deploy/containerlab/vagrant-secondary/provision.sh`.
 
-The separately managed Vagrant home used for this lab already contains that
-verified box. Its previously verified archive SHA256 is
-`c6252ddb99513c8a4cfc729ea496d2d793e9f7e3eb68f47504b4fa955664a399`; the
-cached `box.img` is additionally pinned by the VM manager to
+The cached `box.img` is pinned by the VM manager to
 `65db5e4be7ca68a84fe29d3f356f2189bb4b8a43116c358d764a126d80f90ae4`.
 The original `.box` archive is not retained in the Vagrant cache; if the cache
 is missing or its disk fingerprint changes, reacquire the exact 4.3.12 libvirt
@@ -105,14 +110,13 @@ Do not substitute a tag with a different ID.
 An administrator must create a **new empty directory storage pool** and a
 **new dedicated NAT network**, with DHCP and DNS, reachable from the guest.
 Choose an unused private IPv4 /24 and gateway that do not overlap any host
-route, network, VPN or libvirt network. Do not reuse the historical
-`evpn-cni-e2e-709bc99` pool or `evpn-cni-e2e-nat` network. The wrapper checks
-that the network is active, NAT, private /24 and not attached to any existing
-VM, and the pool is active and empty; it cannot establish that the
+route, network, VPN or libvirt network. The wrapper checks that the selected
+network is active, NAT, private /24 and not attached to any existing VM, and
+that the pool is active and empty; it cannot establish that the
 administrator-selected network is safe for the surrounding infrastructure.
-The wrapper explicitly rejects the historical pool and network names and
-ignores Vagrant environment overrides that redirect its working directory,
-state directory or Vagrantfile.
+It refuses its historical lab defaults and ignores Vagrant environment
+overrides that redirect its working directory, state directory or
+Vagrantfile.
 Review host routes and every network's `virsh net-dumpxml` before creation.
 The wrapper does not create, delete or reconfigure either pool or network.
 
@@ -194,6 +198,12 @@ python3 tools/vm-e2e-lab.py --directory "$LAB" source --archive /tmp/evpn-vm-sou
 python3 tools/vm-e2e-lab.py --directory "$LAB" image --archive /tmp/evpn-vm-ovn.tar
 ```
 
+The `image` action loads the archive, then pulls and verifies the exact pinned
+k8gobgp registry digest and expected config ID. Docker archive load alone does
+not restore `RepoDigest` aliases. The helper refuses to continue when the exact
+registry digest or expected image identity is unavailable; do not substitute a
+tag or another digest.
+
 `source` recomputes `git archive --format=tar "$SOURCE_COMMIT"` and refuses a
 dirty host checkout or any archive whose SHA-256 differs from that committed
 tree. It streams the verified tar archive to the guest, where the uploaded
@@ -250,8 +260,8 @@ The existing runtime contract is documented in
 The fixture derives other executable hashes from each newly created worker;
 it does not compare them with administrator-approved pins across separate
 cluster runs. Review those observations for every new run. The workflow does
-not yet run a live negative attestation/identity-change test, so it cannot
-claim that requirement has been validated.
+not include a live negative attestation/identity-change test. That scenario
+requires separate failure injection and exact process/route observations.
 
 ## Inventory-gated Type-2 scenario
 
@@ -311,10 +321,8 @@ python3 tools/vm-e2e-lab.py --directory "$LAB" collect \
 The guest executes
 `tools/run-operator-secondary-cni-e2e.sh --scenario operator-inventory-type2-two-worker`
 with disposable-host confirmation and both pinned binaries. Do not substitute a
-single-worker scenario. Historical attempt-8 evidence established OVS/underlay
-forwarding on the previous baseline only. The integrated branch still requires
-a fresh live run before claiming forwarding parity. The strengthened harness
-now requires time-correlated workload-interface captures (`net1` and
+single-worker scenario. The harness requires time-correlated
+workload-interface captures (`net1` and
 `frr-work0`), worker Linux bridge/VXLAN snapshots, and an allowlisted
 evidence manifest with source and binary provenance; ping success alone is not
 sufficient for dataplane attribution. Worker Linux bridge/VXLAN counters are
@@ -327,6 +335,59 @@ without creating a circular artifact hash.
 
 ## Evidence and interpretation
 
+### Acceptance gap overlays
+
+Keep acceptance-gap evidence separate from previous attempts. Record the exact
+production commit, original archive hash and every test-only overlay; compare
+production source bytes with that commit. Do not weaken the VM source uploader's
+clean-tree/archive checks to admit an overlay. A directly invoked guest fixture
+with recorded test overlays is a different run variant from the pristine archive
+workflow above.
+
+On the verified disposable guest, the Framework runners have separate opt-ins:
+
+```sh
+EVPN_NATIVE_GAP_CLOSURE=1 EVIDENCE_ROOT="$HOME/evpn-gap-evidence/native" \
+  bash tools/run-framework-netlink-e2e.sh
+FRAMEWORK_OVSDB_GAP_CLOSURE=1 EVIDENCE_ROOT="$HOME/evpn-gap-evidence/ovsdb" \
+  bash tools/run-framework-ovsdb-e2e.sh
+```
+
+Run them serially. Preserve their fixed milestone cluster names; each evidence
+root contains uniquely named attempts. Native gaps cover IPv4/IPv6 export and
+withdrawal plus an actual SBDB process pause/recovery. OVSDB gaps separately
+exercise importer/speaker restart safety, peer outage and foreign ownership
+conflicts; native-backend evidence does not establish those assertions.
+
+`TestRemoteType2GapNegatives_Live` requires the existing disposable read-only
+importer fixture, `EVPN_IMPORT_LIVE=disposable`, `EVPN_GAP_CLOSURE=1`,
+`EVPN_IMPORT_LOCAL_VTEP` matching its receiver, and an existing owned
+`EVPN_GAP_EVIDENCE_DIR`. Run it after `TestRemoteType2Import_Live` has released
+its test peer. It establishes a real EVPN peer and uses an isolated Linux network
+namespace for owned FDB/neighbour assertions. That namespace retains its own
+`192.0.2.32` local VTEP; `EVPN_IMPORT_LOCAL_VTEP` identifies the separate
+receiver's readiness gate, not the namespace's VXLAN device. Evidence is copied
+through the agent container, where the files actually reside. The receiver's
+two local exports and foreign local control remain intact. Each execution creates a unique
+`route-negatives-*` evidence directory. Unauthorized RT/VTEP/VNI input,
+duplicate AddPaths and conflicting next hops are tested with valid and foreign
+survivors. This is wire-to-kernel ownership evidence, not workload forwarding
+or OVSDB backend parity.
+
+For the separate importer gap run, enable `EVPN_EXPORT_TEST=1`,
+`EVPN_IMPORT_TEST=1`, and `EVPN_GAP_CLOSURE=1` with
+`EVPN_FRR_INTEROP_TEST=0` in `tools/run-cni-mvp-2.4b-multus.sh`.
+This opt-in reuses the maintained provider-attestation setup without enabling
+the FRR topology or a competing remote writer. It establishes two healthy
+local exports and a foreign control before exercising the importer API outage
+and route negatives, then exits through owned topology cleanup. It does not
+repeat the unrelated legacy exporter fault sequence or bypass Unix-peer,
+Kubernetes, executable, or runtime identity checks.
+
+Retain failed attempts as well as successful ones. An opt-in test skipped before
+fixture setup is not live coverage. Count canonical case IDs rather than command
+invocations, and preserve each original result alongside its gap-closure result.
+
 Each run saves scenario status, logs, kernel package/probe evidence where
 applicable, and environment versions in a private guest `/tmp/evpn-vm-run-*`
 directory. The existing
@@ -335,6 +396,15 @@ diagnostics, node/OVN/OVS observations, CNI and Geneve evidence, and
 continuity-stage and journal observations where reached. A status of PASS
 means the invoked runner exited successfully; inspect its detailed evidence
 for individual assertions and any `FOREIGN_WITNESS_NOT_AVAILABLE` result.
+If an inventory workload capture fails to reach its listening state,
+`inventory-capture-startup-failure.json` records the command, elapsed time,
+captured startup/trailing stderr, and process exit status; it is setup evidence,
+not evidence that forwarding passed or failed. The inventory fixture provisions
+missing `tcpdump` only in its verified run-owned FRR container. It records tool
+and Alpine versions in `inventory-frr-workload-tools.json` and provisions
+`iputils-ping` in that same container when the available ping lacks the required
+`-e` identifier option. The owned lab teardown removes these writable-layer
+changes; no host packages or pinned image are changed.
 FAIL means the invocation failed; BLOCKED means a prerequisite is unavailable;
 SKIP means intentionally skipped; NOT RUN means no invocation occurred.
 Preflight failures can occur before a status file exists and are not PASS.
@@ -344,7 +414,6 @@ Collected archives and guest evidence can contain credentials, Pod data,
 configuration and packet captures. They are private (output mode 0600), not
 automatically redacted, and must be inspected and sanitized before sharing.
 Collection includes all matching run directories in this disposable guest.
-No measured duration is available for this workflow.
 
 ## Reruns, troubleshooting and cleanup
 

@@ -26,6 +26,25 @@ type exportTestGate struct {
 
 func (g *exportTestGate) Check(context.Context) error { g.calls++; return g.err }
 
+func TestEndpointExporterReportsCoordinatorWithdrawal(t *testing.T) {
+	ctx := context.Background()
+	api := &memoryType2API{}
+	exporter := &EndpointExporter{Observer: &exportTestObserver{desired: []LocalEndpoint{sampleEndpoint()}},
+		Gate: &exportTestGate{}, Source: api, Applier: api}
+	if _, err := exporter.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(exporter.AppliedRoutes()) != 1 {
+		t.Fatal("acknowledged ownership missing")
+	}
+	if _, err := exporter.WithdrawAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(exporter.AppliedRoutes()) != 0 || len(api.paths) != 0 {
+		t.Fatal("status retained ownership after coordinator-driven withdrawal")
+	}
+}
+
 func TestEndpointExporterSafety(t *testing.T) {
 	ctx := context.Background()
 	ep := sampleEndpoint()

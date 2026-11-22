@@ -14,8 +14,78 @@ import (
 	"testing"
 	"time"
 
+	"github.com/romanspb80/evpn-for-ovn/pkg/evpn"
 	"github.com/romanspb80/evpn-for-ovn/pkg/nodeagent"
 )
+
+func TestInventoryStartupDenialAlwaysAttemptsOwnedCleanup(t *testing.T) {
+	for _, failure := range []string{"worker removed", "publication integrity", "authority unavailable", "importer denied"} {
+		t.Run(failure, func(t *testing.T) {
+			denial := errors.New(failure)
+			var checkContext context.Context
+			cleanups := 0
+			err := checkInventoryStartup(context.Background(), func(ctx context.Context) error {
+				checkContext = ctx
+				return denial
+			}, func(ctx context.Context, failure error) error {
+				cleanups++
+				if failure != denial {
+					t.Fatal("startup cleanup lost the original denial classification")
+				}
+				if checkContext.Err() != context.Canceled || ctx.Err() != nil {
+					t.Fatal("withdrawal inherited the failed check's canceled context")
+				}
+				deadline, ok := ctx.Deadline()
+				if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > 30*time.Second {
+					t.Fatal("withdrawal must have an independent bounded budget")
+				}
+				return nil
+			})
+			if !errors.Is(err, denial) || cleanups != 1 {
+				t.Fatalf("startup denial lost or cleanup skipped: cleanups=%d err=%v", cleanups, err)
+			}
+		})
+	}
+}
+
+func TestInventoryStartupCleanupErrorsAndCancellation(t *testing.T) {
+	denial, unresolved := errors.New("publication integrity"), errors.New("speaker unavailable")
+	err := checkInventoryStartup(context.Background(),
+		func(context.Context) error { return denial },
+		func(context.Context, error) error { return unresolved })
+	if !errors.Is(err, denial) || !errors.Is(err, unresolved) || !strings.Contains(err.Error(), "withdrawal unresolved") {
+		t.Fatalf("startup hid denial or unconfirmed cleanup: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = checkInventoryStartup(ctx, func(context.Context) error { return denial }, func(cleanup context.Context, _ error) error {
+		return cleanup.Err()
+	})
+	if !errors.Is(err, denial) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("parent cancellation did not abort cleanup: %v", err)
+	}
+	called := false
+	if err := checkInventoryStartup(context.Background(), func(context.Context) error { return nil },
+		func(context.Context, error) error { called = true; return nil }); err != nil || called {
+		t.Fatal("successful startup entered denial cleanup")
+	}
+}
+
+func TestInventoryStartupUsesWithdrawalOnlyRuntime(t *testing.T) {
+	// No usable inventory or CNI server is needed to attempt denial cleanup.
+	// Without existing durable ownership it must remain explicitly unresolved.
+	err := checkInventoryStartup(context.Background(), func(context.Context) error {
+		return errors.New("initial inventory publication rejected")
+	}, func(ctx context.Context, failure error) error {
+		_, err := nodeagent.WithdrawInventoryExports(ctx, nodeagent.RuntimeOptions{}, nodeagent.ExportRuntimeOptions{
+			InventoryGate: func(context.Context, evpn.ExporterConfig) error { return errors.New("still denied") },
+		}, failure)
+		return err
+	})
+	if err == nil || !strings.Contains(err.Error(), "owned startup withdrawal unresolved") {
+		t.Fatalf("startup claimed cleanup without a durable withdrawal runtime: %v", err)
+	}
+}
 
 func TestRunStandaloneEVPNSelectionAndCancellation(t *testing.T) {
 	for _, test := range []struct {

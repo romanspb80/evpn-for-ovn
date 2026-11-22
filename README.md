@@ -1,117 +1,209 @@
 # EVPN for OVN
 
-EVPN-for-OVN is an **experimental, platform-oriented networking project** for
-developing and testing EVPN Type-2 integration with OVN. Its reusable EVPN Core
-combines route reconciliation and ownership-aware recovery with GoBGP's BGP control
-plane and OVN/OVS workload forwarding. It is not a production-ready installer.
+EVPN for OVN helps network and platform engineers connect OVN workloads to
+external EVPN/VXLAN networks using GoBGP Type-2 routes and ownership-aware
+endpoint lifecycle. It is an experimental Go framework with bounded
+standalone Node-Agent and Kubernetes paths, not a production fabric installer
+or a guarantee of interchangeable deployment combinations.
 
-The project also provides a standalone **secondary CNI** for Kubernetes:
-Multus invokes the EVPN CNI plugin, which works with Node-Agent and a
-project-owned OVN domain. This is separate from the primary CNI and does not
-require EVPN BGP for connectivity inside a shared OVN domain. Kubernetes is
-the current platform integration; OVN-Kubernetes and OpenStack Neutron/ML2-OVN
-adapters are design targets, not implemented integrations.
+EVPN Type-2 advertises endpoint MAC/IP reachability and the remote VTEP
+location; the framework connects that control-plane information to OVN/OVS
+VXLAN forwarding. GoBGP is the intentionally selected engine, not an
+interchangeable backend.
 
-<a id="architecture"></a>
+OVN/OVS is the intentional workload networking foundation, and GoBGP is the
+selected BGP/EVPN engine. The reusable framework core handles route processing,
+advertisement and withdrawal, endpoint ownership, authorization, fencing and
+durable recovery state. It is not an OVN-independent network platform or a
+production installer.
 
-[![EVPN-for-OVN component overview](docs/uml/component-overview.svg)](docs/uml/component-overview.svg)
+[![EVPN for OVN component overview](docs/uml/component-overview.svg)](docs/uml/component-overview.svg)
 
-EVPN Core is a logical set of responsibilities, not a separate service.
-Node-Agent hosts the existing Type-2 loops where used. The Framework has one
-primary **Netlink-Programmed** integration target and a separate experimental
-**OVSDB-Programmed** integration; neither changes OVN/OVS's role as workload
-forwarding dataplane. [GoBGP](https://github.com/osrg/gobgp) is the BGP/EVPN
-engine. In Kubernetes, the optional independent
-[k8gobgp provider](https://github.com/purelb/k8gobgp) may manage speaker
-configuration; it does not process Framework Type-2 routes. See the
-[diagram index](docs/uml/README.md) and [component overview](docs/concepts/component-overview.md)
-for architecture boundaries and current versus planned integrations. The
-diagram is an architecture overview, not a vendor-interoperability validation
-claim.
+## Architecture and components
 
-<a id="verified-capabilities"></a>
+- **EVPN Core:** Type-2 route reconciliation and owned endpoint lifecycle.
+- **Node-Agent:** node-local integration state and recovery; it serves CNI
+  requests only when started in the CNI-serving mode.
+- **GoBGP:** BGP/EVPN control-plane operations; optional k8gobgp provider in
+  Kubernetes environments.
+- **OVN/OVS:** workload forwarding, including the external VXLAN dataplane.
+- **Operator:** Kubernetes resource management for the Netlink core profile.
 
-## What has been demonstrated
+Netlink manages Linux integration state consumed by OVN/OVS; a Linux bridge
+is not a separate workload-forwarding dataplane. BGP route exchange and
+OVN/OVS-to-external-VTEP packet forwarding are distinct paths.
 
-- Secondary CNI connectivity was validated on a two-worker Kubernetes cluster
-  using Multus and OVN Geneve, including ADD/DEL, CHECK replay, bidirectional
-  forwarding, owned endpoint cleanup, and primary Kindnet preservation. This
-  did **not** test EVPN Type-2 or foreign OVN/OVS resource preservation.
-- Separate bounded GoBGP/FRR tests demonstrated Type-2 exchange and
-  VXLAN forwarding; standalone two-chassis forwarding and endpoint lifecycle
-  also have separately scoped evidence.
-- Two **independent OVN domains** exchanging Type-2 with GoBGP are a planned
-  target, not a validated topology.
+## Use Cases
 
-These are distinct scenarios, not a combined production acceptance. The
-[capability matrix](docs/project/capability-matrix.md) is the current index
-of evidence, limitations and unresolved status.
+The primary validated networking use case is EVPN Type-2 connectivity across
+two OVN chassis, with GoBGP handling route exchange and OVN/OVS forwarding
+workload traffic over VXLAN.
 
-<a id="experimental-use-and-security"></a>
-<a id="getting-started"></a>
+### 1. [Two-Chassis EVPN Type-2 Connectivity](docs/use-cases/README.md#two-chassis-evpn-type-2-connectivity)
 
-## Security and getting started
+Validation covers bidirectional forwarding, route reconciliation and
+withdrawal, Node-Agent restart recovery, and cleanup. The two chassis share one
+OVN NBDB/SBDB control plane; this is not independent-domain interconnection.
 
-The TCP management gRPC services have **no TLS, authentication or
-authorization**. Use live examples only on a dedicated disposable lab host and
-a trusted, isolated management network; never expose those services or
-OVN/OVSDB to untrusted networks. The kind/core examples expose NodePorts
-`30052` and `30053`: isolate them at the host/perimeter **before** applying
-the manifests. Containerlab management TLS does not secure these RPCs.
-Privileged containers, host mounts and broad Operator permissions are lab
-assumptions, not production defaults. Read [SECURITY.md](SECURITY.md).
+### 2. [Integrating OVN with an External EVPN/VXLAN Fabric](docs/use-cases/README.md#integrating-ovn-with-an-external-evpnvxlan-fabric)
 
-To explore a concrete networking solution, start with the
-[Kubernetes CNI solution guide](docs/solutions/kubernetes-cni/README.md).
-Its Containerlab/Kind workflow is an experimental, disposable lab—not a
-production installation. The [Containerlab guide](deploy/containerlab/README.md)
-documents prerequisites, isolation and tested scope before running anything.
-There is no production deployment recipe. For development builds and safe
-tests, use the [Development and Testing Guide](TESTING_GUIDE.md).
-For the isolated Operator-managed two-worker lab, see the
-[disposable VM E2E guide](docs/testing/vm-e2e-lab.md).
+Integrate OVN-managed workloads with an existing EVPN fabric, including
+external VTEPs and BGP EVPN speakers such as FRR.
 
-## Documentation
+The framework handles authorized endpoint advertisement, remote route import,
+and ownership-aware withdrawal.
 
-- [Documentation home](docs/README.md) — task-oriented navigation.
-- [Component overview](docs/concepts/component-overview.md) and
-  [network topologies](docs/architecture/network-topologies.md).
-- [Capability and validation status](docs/project/capability-matrix.md).
-- [EVPN Framework Architecture](docs/architecture/framework-architecture.md).
-- [Kubernetes CNI solution](docs/solutions/kubernetes-cni/README.md),
-  [API reference](docs/api/README.md), and
-  [roadmap](docs/roadmap/README.md).
+**Status:** Experimental. General full-fabric and vendor interoperability are
+not qualified; the validated two-chassis scenario above is a narrower scope.
 
-## Build and test from source
+[![EVPN Type-2 control and OVN/OVS external VXLAN forwarding](docs/uml/external-evpn-fabric.svg)](docs/use-cases/README.md#integrating-ovn-with-an-external-evpnvxlan-fabric)
 
-The Go source targets Go 1.27.3. From the repository root, the following
-non-privileged commands compile the main binaries and run the Go tests without
-provisioning Kubernetes, OVN/OVS, or a lab:
+The diagram separates route exchange, supporting Linux state and actual
+OVN/OVS-to-external-VTEP packets; it is not fabric-wide acceptance evidence.
+
+Independent OVN-domain interconnection remains planned; its design and
+validation requirements are tracked in the [roadmap](docs/roadmap/README.md#independent-ovn-domain-interconnection-planned).
+
+### Deployment and Integration
+
+The framework provides experimental integration paths for standalone OVN
+environments and Kubernetes deployments, including secondary CNI/Multus
+networking and Kubernetes Operator management.
+
+Deployment support varies by configuration. Refer to the
+[capability matrix](docs/project/capability-matrix.md) and
+[deployment guides](docs/architecture/deployment.md) for supported combinations
+and validation boundaries. The [detailed use-case guide](docs/use-cases/README.md)
+describes both networking goals and links supporting
+[deployment and operations](docs/guides/deployment-and-integration.md),
+[network topologies](docs/guides/network-topologies.md), and
+[reliability and lifecycle](docs/guides/reliability-and-lifecycle.md) guidance.
+
+## Implemented functionality
+
+The experimental framework provides Type-2 import/export with policy checks,
+exact path withdrawal and durable ownership receipts; CNI-serving Node-Agent
+ADD/CHECK/DEL when configured; identity-gated recovery; and Operator
+worker-inventory publication. Standalone EVPN import/export paths are
+separate and do not launch that CNI service. These are implementation
+features, not guarantees of generalized multi-VTEP recovery or production
+availability.
+
+## Architecture dimensions and release scope
+
+These are separate architectural questions, not a promise that every
+combination is implemented or supported. See the [capability
+matrix](docs/project/capability-matrix.md) for boundaries.
+
+| Dimension | v0.1.0 scope |
+|---|---|
+| Network-state programming | Netlink-Programmed is the selected experimental integration; OVSDB-Programmed is retained for maintenance and testing, outside release deployment scope. |
+| Deployment and orchestration | Standalone Node-Agent EVPN import/export is a non-CNI runtime and does not require the Operator. A CNI-serving Node-Agent may be launched separately for secondary-network service; that is distinct from the standalone non-CNI runtime. In Operator profiles, Node-Agent is optional in `managed-single-node` and required in `external-ovn`. |
+| Workload integration | Kubernetes CNI/Multus provides secondary attachments and OVN endpoint lifecycle; it is separate from the cluster's primary CNI and from standalone non-CNI EVPN paths. |
+| Platform integration | Project-owned OVN/OVS is current. OVN-Kubernetes and Neutron / ML2-OVN are planned, not implemented platform integrations. |
+| BGP/EVPN control plane | GoBGP is the BGP/EVPN engine. `k8gobgp` is an optional Kubernetes provider; the Operator currently accepts only `k8gobgp`, not a standalone-speaker provider. |
+
+The Kubernetes secondary CNI is separate from the cluster's primary CNI.
+Ordinary connectivity inside a shared OVN Geneve domain does not require
+EVPN Type-2 routes. External Type-2 exchange supplies EVPN/VXLAN integration;
+it does not replace OVN networking.
+
+## Quick start: build and offline tests
+
+Use the Go toolchain declared in `go.mod` and Python 3 for test harnesses.
+From the repository root:
 
 ```bash
+go test ./...
 go build ./cmd/evpn-cni ./cmd/evpn-node-agent ./cmd/evpn-ovsdb \
   ./services/evpn_mgmt ./services/ovsdb_mgmt ./services/bgp_ad_handler \
   ./deploy/operator
-go test ./...
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/lib -p 'test_*.py'
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/e2e -p 'test_*.py'
 ```
 
-These are development checks, not an installer or a live forwarding test.
-There is no production installation recipe. For an experimental end-to-end
-example, follow the [Kubernetes CNI solution guide](docs/solutions/kubernetes-cni/README.md)
-and its [isolation and prerequisites](deploy/containerlab/README.md) first.
+For configuration and usage examples, start with the
+[deployment guide](docs/architecture/deployment.md), the
+[Kubernetes CNI guide](docs/solutions/kubernetes-cni/README.md), or the
+[two-worker Operator example](deploy/operator/examples/two-worker/README.md).
+These require trusted disposable lab environments, not production clusters.
+Read [SECURITY.md](SECURITY.md) before any live workflow. The
+[testing guide](TESTING_GUIDE.md) explains preparation, scenarios, execution,
+evidence inspection and run-owned cleanup.
 
-## Project History and Evolution
+## Project History
 
-The project originated in 2018 as a Python/Ryu EVPN-over-OVN prototype; the
-current Go framework is a substantial redesign using GoBGP and libovsdb.
-The Go framework history is maintained on `main`; the historical
-[`master` branch](https://github.com/romanspb80/evpn-for-ovn/tree/master)
-preserves the separate Python/Ryu prototype. These histories are intentionally
-separate and must not be merged. See the [historical index](docs/archive/README.md).
+EVPN-for-OVN began in [**2018**](https://github.com/romanspb80/evpn-for-ovn/commit/63777a5b23cd66f9776cb9a7c9de735773e860ec)
+as an experimental project for interconnecting
+OVN-based networks using BGP EVPN and VXLAN. The original Python prototype
+evolved with Ryu and ovsdbapp, with service communication through RabbitMQ and
+oslo.messaging.
 
-Type-3/Type-5, generalized multi-VTEP and shared-VTEP lifecycle, secure
-management APIs and production readiness are not established. The optional
-CMS emulator is a test/demo tool, not a required framework service.
+The modern Go implementation is a substantial architectural redesign using
+GoBGP and libovsdb, rather than a direct translation of the prototype. It
+introduces a modular framework, node-local ownership and lifecycle management,
+and Kubernetes CNI/Operator integration while retaining OVN/OVS as its
+networking foundation.
 
-Original project code is licensed under the [Apache License 2.0](LICENSE);
-see the [licensing review](docs/release/licensing.md) for third-party material.
+The historical [`master` branch](https://github.com/romanspb80/evpn-for-ovn/tree/master)
+preserves the Python prototype and its development history.
+[`main`](https://github.com/romanspb80/evpn-for-ovn/tree/main) contains the
+modern Go framework. The prototype documents the project's origins; neither
+its historical examples nor the current experimental framework imply
+production readiness.
+
+## Roadmap at a glance
+
+Bounded Type-2/Netlink, standalone EVPN, the validated two-chassis Type-2
+scenario, secondary CNI/Multus and constrained Operator paths are
+implemented experimentally. Orphan/API-outage recovery and generalized
+multi-worker lifecycle lack complete acceptance. Type-5 and
+OVN-Kubernetes/Neutron integrations remain planned; Type-3 and multihoming
+are exploratory topics outside the release scope. A separate Type-2
+interoperability program names FRR and four vendor peers, all planned or
+awaiting authorized image availability; none is claimed to have passed.
+These are not delivery commitments. See the
+[complete roadmap and vendor test gates](docs/roadmap/README.md) and
+[known limitations](docs/known-issues/README.md).
+
+## Documentation
+
+- [Practical user-facing use cases](docs/use-cases/README.md)
+- [Component overview](docs/architecture/component-overview.md)
+- [Architecture and component roles](docs/architecture/framework-architecture.md)
+- [Deployment and configuration](docs/architecture/deployment.md)
+- [Security contract](docs/security/netlink-deployment-security-contract.md)
+- [API reference](docs/api/README.md)
+- [Known limitations and troubleshooting](docs/known-issues/README.md)
+- [Development and testing](TESTING_GUIDE.md)
+- [Release scope](docs/release/v0.1.0.md)
+- [Capabilities and planned integrations](docs/project/capability-matrix.md)
+- [Roadmap and future work](docs/roadmap/README.md)
+- [Documentation index](docs/README.md)
+
+## Experimental limitations and future work
+
+Implemented functionality is not production qualification. Generalized
+multi-VTEP lifecycle, arbitrary foreign-state preservation, production
+upgrade/rollback and service availability are outside the release guarantees.
+Missed CNI DEL/orphan recovery and Kubernetes API-unavailability recovery
+remain incomplete operational acceptance areas. Direct OVSDB regressions are
+deferred; Type-3 and Type-5 functionality are outside the implemented Type-2
+release scope.
+
+Secure CNI transport requires root:root Unix peer authentication using
+`SO_PEERCRED` and kernel `SO_PEERPIDFD`, independently of optional continuity
+checks. The supported Operator profile excludes legacy
+unauthenticated management services. Privileged components still require
+trusted hosts and administrators; ClusterIP is not authentication.
+
+## Contributing and license
+
+Use the [development and testing guide](TESTING_GUIDE.md) when extending
+components or harnesses. Keep changes scoped, add appropriate tests, and
+document configuration and security implications without claiming broader
+operational support.
+
+The project is licensed under [Apache 2.0](LICENSE). See [NOTICE](NOTICE) and
+[licensing information](docs/release/licensing.md) for dependency and
+distribution considerations.

@@ -2,6 +2,19 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERIFY_PROVENANCE="${EVPN_FRAMEWORK_VERIFY_NETLINK_EXPORT_PROVENANCE:-true}"
+PROVENANCE_FLAG=""
+case "${VERIFY_PROVENANCE}" in
+  true) ;;
+  false)
+    if [[ "${EVPN_NATIVE_GAP_CLOSURE:-0}" == 1 ]]; then
+      echo "Netlink provenance benchmark cannot run the native gap-closure cases" >&2
+      exit 2
+    fi
+    PROVENANCE_FLAG=" --evpn-export-skip-netlink-provenance"
+    ;;
+  *) echo "EVPN_FRAMEWORK_VERIFY_NETLINK_EXPORT_PROVENANCE must be true or false" >&2; exit 2 ;;
+esac
 KIND_CLUSTER="${KIND_CLUSTER:-framework-netlink-e2e-c4k}"
 EVIDENCE_ROOT="${EVIDENCE_ROOT:-/tmp/framework-netlink-e2e-c4k-evidence}"
 RUN_SUFFIX="$(python3 -c 'import secrets; print(secrets.token_hex(4))')"
@@ -43,6 +56,7 @@ source "${ROOT}/tools/lib/cni-agent-image-test.sh"
 source "${ROOT}/tools/lib/cni-evpn-export-test.sh"
 source "${ROOT}/tools/lib/cni-evpn-frr-interop-test.sh"
 source "${ROOT}/tools/lib/containerlab-e2e.sh"
+source "${ROOT}/tools/lib/framework-native-gap-cases.sh"
 e2e_lab_acquire
 
 RT_CAPTURE_SEQUENCE=0
@@ -233,6 +247,7 @@ write_status() {
   cat >"${EVIDENCE_DIR}/run-status.txt" <<EOF
 run=${RUN_ID}
 cluster=${KIND_CLUSTER}
+verify-netlink-export-provenance=${VERIFY_PROVENANCE}
 result=$([[ "${rc}" == 0 ]] && echo PASS || echo FAIL)
 failure-classification=${FAILURE_CLASSIFICATION:-UNRESOLVED}
 failure-gate=${FAILURE_GATE:-NOT_REACHED}
@@ -244,6 +259,8 @@ cleanup() {
   local original_rc=$?
   trap - EXIT INT TERM
   set +e
+  native_gap_restore_sb || cleanup_rc=1
+  native_gap_capture_stop || cleanup_rc=1
   capture_stop
   stop_remote_capture_keeper || true
   if [[ "${CREATED_CLUSTER}" == 1 || "${CLUSTER_CREATE_ATTEMPTED}" == 1 ]]; then
@@ -567,7 +584,7 @@ ${EXPORT_SERVICE_ACCOUNT}
             test -S /var/run/ovn/ovnnb_db.sock && test -S /var/run/openvswitch/db.sock && test -f /run/evpn-node-agent/export-config.json && break
             sleep 1
           done
-          exec /usr/local/bin/evpn-node-agent --socket=/run/evpn-node-agent/agent.sock --mode=real-ovn-ovs --network-backend=linux-veth --ovn-nb-endpoint=unix:/var/run/ovn/ovnnb_db.sock --ovsdb-endpoint=unix:/var/run/openvswitch/db.sock ${EXPORT_FLAGS} ${REMOTE_FLAGS}
+          exec /usr/local/bin/evpn-node-agent --socket=/run/evpn-node-agent/agent.sock --mode=real-ovn-ovs --network-backend=linux-veth --ovn-nb-endpoint=unix:/var/run/ovn/ovnnb_db.sock --ovsdb-endpoint=unix:/var/run/openvswitch/db.sock ${EXPORT_FLAGS}${PROVENANCE_FLAG} ${REMOTE_FLAGS}
         volumeMounts:
         - {name: ovs, mountPath: /var/run/openvswitch}
         - {name: ovn, mountPath: /var/run/ovn}
@@ -719,9 +736,10 @@ docker exec "${WORKER}" sh -c \
 FAILURE_CLASSIFICATION=GO-BGP-TYPE2
 FAILURE_GATE=F6
 deadline=$((SECONDS+120))
+export_confirmed=0
 while (( SECONDS < deadline )); do
   if ag cat /run/evpn-node-agent/export-status.json >"${EVIDENCE_DIR}/export-status-initial.json" 2>/dev/null &&
-     python3 - "${EVIDENCE_DIR}/export-status-initial.json" <<'PY'
+     python3 - "${EVIDENCE_DIR}/export-status-initial.json" "${VERIFY_PROVENANCE}" <<'PY'
 import json,sys
 s=json.load(open(sys.argv[1]))
 assert not s.get("Error"),s
@@ -739,16 +757,29 @@ assert routes=={
     ("0a:58:f0:01:00:0b",(),True),
     ("0a:58:f0:01:00:0b",("10.244.240.11",),False),
 },routes
+for item in applied:
+    endpoint=item["Endpoint"]
+    benchmark=endpoint["EndpointID"].startswith("ovn-netlink-benchmark/")
+    assert benchmark == (sys.argv[2] == "false"),endpoint
 PY
-  then break; fi
+  then export_confirmed=1; break; fi
   sleep 2
 done
+if [[ "${export_confirmed}" != 1 ]]; then
+  echo "Timed out confirming the expected Type-2 routes and Netlink provenance mode" >&2
+  exit 1
+fi
 provider_exec gobgp --target unix:///var/run/gobgp/gobgp.sock global rib -a evpn \
   >"${EVIDENCE_DIR}/gobgp-rib-initial.txt" 2>&1 || true
 docker exec "${FRR_CONTAINER}" vtysh -c 'show bgp l2vpn evpn route type macip' \
   >"${EVIDENCE_DIR}/frr-rib-initial.txt"
 grep -q '10.244.240.10' "${EVIDENCE_DIR}/frr-rib-initial.txt"
 grep -q '10.244.240.11' "${EVIDENCE_DIR}/frr-rib-initial.txt"
+if [[ "${EVPN_NATIVE_GAP_CLOSURE:-0}" == 1 ]]; then
+  FAILURE_CLASSIFICATION=NATIVE-GAPS
+  FAILURE_GATE=M008-M009
+  native_gap_cases
+fi
 interop_wait_import_count 1 initial
 FAILURE_CLASSIFICATION=NETLINK
 FAILURE_GATE=F7

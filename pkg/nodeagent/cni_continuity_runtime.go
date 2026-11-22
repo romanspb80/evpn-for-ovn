@@ -73,8 +73,9 @@ func LoadCNIContinuityConfig(path string) (CNIContinuityConfig, error) {
 	return cfg, nil
 }
 
-// EnableCNIContinuity restores only fully independently verified ACKs before
-// socket preparation. Close must run after RPCs have drained.
+// EnableCNIContinuity validates the journal before serving; the worker retries
+// independent ACK verification while CNI and export remain fenced. Close must
+// run after RPCs have drained.
 func (s *CNIServer) EnableCNIContinuity(ctx context.Context, cfg CNIContinuityConfig, opts RuntimeOptions) (func() error, error) {
 	lifetime := ctx
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -169,7 +170,7 @@ func (s *CNIServer) EnableCNIContinuity(ctx context.Context, cfg CNIContinuityCo
 		}
 		c.authority = &cniCallerAuthority{config: *cfg.Admission, runtimeSocket: strings.TrimPrefix(cfg.CRIEndpoint, "unix://")}
 	}
-	if err := s.recoverCNI(ctx, c); err != nil {
+	if err := s.initializeCNI(ctx, c, true); err != nil {
 		nb.Close()
 		ovs.Close()
 		conn.Close()
@@ -287,6 +288,41 @@ func (a *KubernetesCNIWorkloadAttestor) VerifyPod(ctx context.Context, ref endpo
 	}
 	if string(pod.UID) != ref.UID || pod.Spec.NodeName != a.NodeName || pod.DeletionTimestamp != nil {
 		return false, fmt.Errorf("%w: Pod UID/node changed or deleting", errCNIIdentityConflict)
+	}
+	return false, nil
+}
+
+// VerifyRetired proves that the Pod UID recorded by a durable CNI ACK is no
+// longer current. It deliberately does not inspect the deleted sandbox/netns.
+func (a *KubernetesCNIWorkloadAttestor) VerifyRetired(ctx context.Context, ref endpoint.WorkloadRef) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if a.Client == nil {
+		return false, errors.New("Kubernetes client not configured for Pod retirement")
+	}
+	if ref.Kind != "pod" || ref.UID == "" || ref.Name == "" || ref.Namespace == "" ||
+		ref.NodeName != a.NodeName || a.NodeUID == "" {
+		return false, errors.New("incomplete authoritative Pod retirement identity")
+	}
+	node, err := a.Client.Nodes().Get(ctx, a.NodeName, metav1.GetOptions{})
+	if err != nil {
+		return false, fmt.Errorf("Kubernetes Node retirement observation: %w", err)
+	}
+	if string(node.UID) != a.NodeUID || node.DeletionTimestamp != nil {
+		return false, fmt.Errorf("%w: Node changed or deleting", errCNIIdentityConflict)
+	}
+	pod, err := a.Client.Pods(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("Kubernetes Pod retirement observation: %w", err)
+	}
+	if string(pod.UID) != ref.UID {
+		return true, nil
+	}
+	if pod.Spec.NodeName != a.NodeName {
+		return false, fmt.Errorf("%w: Pod moved from the configured Node", errCNIIdentityConflict)
 	}
 	return false, nil
 }
@@ -475,4 +511,33 @@ func (o *nativeCNIObserver) NetworkAbsent(_ context.Context, key string) error {
 		return err
 	}
 	return errors.New("CNI host veth still present")
+}
+
+func (o *nativeCNIObserver) OrphanHostAbsent(ctx context.Context, ack cniEndpointACK) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	links, err := netlink.LinkList()
+	if err != nil {
+		return err // An interrupted dump must not establish absence.
+	}
+	return cniOrphanHostAbsentIn(links, ack)
+}
+
+func cniOrphanHostAbsentIn(links []netlink.Link, ack cniEndpointACK) error {
+	key := endpointKey(ack.Identity)
+	if key == "" || ack.Receipt.HostIfIndex <= 0 || ack.Spec.OVSInterfaceName == "" {
+		return errors.New("incomplete orphan host receipt")
+	}
+	alias := ownerAliasForKey(key)
+	for _, link := range links {
+		if link == nil || link.Attrs() == nil {
+			return errors.New("incomplete orphan host inventory")
+		}
+		a := link.Attrs()
+		if a.Name == ack.Spec.OVSInterfaceName || a.Index == ack.Receipt.HostIfIndex || a.Alias == alias {
+			return errors.New("orphan host veth or a conflicting link remains visible")
+		}
+	}
+	return nil
 }

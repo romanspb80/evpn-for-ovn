@@ -1,36 +1,60 @@
-# Capability and validation matrix
+# Capabilities and integration maturity
 
-This is the canonical index of **current implementation and validation
-status**. Each result applies only to its stated topology, source and inputs.
-Historical reports may cite private, ephemeral artifacts that are not
-available as public evidence; a documentation review is not a new test.
-For runnable scenarios see the [Testing Guide](../../TESTING_GUIDE.md); for
-outstanding work see the [backlog](../roadmap/backlog.md).
+Implemented functionality, test scenarios and operational support are
+different concepts. This matrix describes the experimental v0.1.0 scope,
+not a historical test scorecard or a production support guarantee. Its
+architecture dimensions are independent concepts; this is not a promise that
+every possible combination is implemented or supported.
 
-**Implemented** means code exists. **Validated** means the specified behavior
-was demonstrated under the stated scope; **partially validated** means material
-coverage remains open. **Planned** is a target, **blocked** means a known
-obstacle prevents progress, and **unresolved** means available evidence is
-insufficient to establish the final status.
+| Architecture dimension | Current scope | Boundary |
+|---|---|---|
+| Network-state programming | Netlink is the selected experimental release integration | Direct OVSDB is retained for maintenance and testing only, outside release deployment scope |
+| Deployment and orchestration | Standalone Node-Agent EVPN import/export runtime, or Kubernetes Operator lifecycle | Standalone paths do not require the Operator and do not start a CNI server; a CNI-serving Node-Agent may be independently started for secondary-network service; Kubernetes profiles are constrained, not a general deployment matrix |
+| Workload integration | CNI/Multus secondary attachment and OVN endpoint lifecycle | Separate from the cluster primary CNI and from standalone non-CNI EVPN paths |
+| Platform integration | Project-owned OVN/OVS is current | OVN-Kubernetes and Neutron / ML2-OVN are planned, not implemented platform adapters |
+| BGP/EVPN control plane | GoBGP engine; optional `k8gobgp` Kubernetes speaker provider | Operator accepts only `k8gobgp`; no standalone Operator provider is implemented |
+| Vendor EVPN/VXLAN interoperability | Planned Type-2 peer test program | FRR is the planned reference; Nokia SR Linux, Juniper cJunosEvolved, NVIDIA Cumulus VX and Arista cEOS await authorized image and lab readiness; no vendor pass is claimed |
 
-| Capability | Status | Scope, evidence and source identity | Limits / last verified |
-|---|---|---|---|
-| Reusable Type-2 domain and embedded runtime | Implemented, partially validated | Provider-neutral domain models and reconciliation are reused by Node-Agent. [Source boundary](../architecture/framework-architecture.md); [historical dataplane record](../archive/validation-record.md#framework-fixture-and-exporter-regressions). | Stateful runtime and its packages still have platform dependencies. Historical reports are not validation of the current checkout. |
-| Multi-Node OVN Geneve secondary CNI | Implemented, validated within scope | Two workers/chassis, shared NB/SB, Multus ADD/DEL and CHECK replayed from captured arguments, correlated bidirectional net1/Geneve traffic, owned cleanup and primary Kindnet preservation. [Lab procedure](../../deploy/containerlab/README.md#running-and-collecting-evidence). | No EVPN Type-2; no suitable foreign OVN/OVS preservation witness. Original result summaries are not available as a durable public bundle. |
-| Operator GoBGP–FRR Type-2 lifecycle | Implemented, validated within scope | Historical one-chassis Operator/CNI/Node-Agent run with independent FRR/Linux peer; route import/export, attributed VXLAN packets, exact withdrawal and bounded crash recovery. [Acceptance record](../architecture/operator-type2-acceptance.md). | The FRR side is not a second OVN control plane; this lifecycle evidence is not evidence for the two-worker scenario. |
-| Inventory-gated Operator Type-2 on two workers | Live E2E verified within scope | Attempt 8 of `operator-inventory-type2-two-worker`: independently attested speakers, durable inventory acceptance, local Type-2 export, external FRR route import, and bidirectional workload-to-external-endpoint forwarding. [Evidence and limits](../architecture/operator-type2-acceptance.md#attempt-8-inventory-gated-two-worker-type-2-forwarding). | No worker-to-worker forwarding, restart, withdrawal, recovery, generalized multi-chassis support, or complete Operator health. The 468-file source comparison applies only to the checkout at that historical point; the current dirty working tree is not byte-identical to the attempt-8 archive. No Git commit SHA is recorded in the source archive. |
-| Operator-managed multi-node Kubernetes CNI lifecycle | Partially implemented, bounded Type-2 E2E verified | Experimental external-OVN mode selects prepared nodes for one Operator-managed DaemonSet; the exact inventory-gated two-worker Type-2 path passed attempt 8. [Lifecycle and manual drain](../architecture/evpn-core-operator.md#externally-prepared-shared-ovn); [attempt-8 record](../architecture/operator-type2-acceptance.md#attempt-8-inventory-gated-two-worker-type-2-forwarding). | General multi-node placement, restart/withdrawal/recovery, worker-to-worker forwarding, and complete Operator runtime health remain unconfirmed or untested. |
-| Shared OVN with external FRR | Implemented, validated within scope | Two-worker fixture with shared OVN, external known-unicast Type-2/VXLAN and simultaneous local Geneve. [Historical fixture and evidence](../testing/external-evpn-fabric.md#accepted-external-frr-interoperability). | Not the Multus secondary-CNI lifecycle or full fabric acceptance. |
-| Shared OVN with external GoBGP/Linux | Implemented, validated within scope | Separate shared-OVN fixture with external Type-2/VXLAN and simultaneous local Geneve and FRR. [Historical fixture and evidence](../testing/external-evpn-fabric.md#accepted-external-gobgp-interoperability). | Remote2 is a **test-only RIB projector and Linux dataplane**, not another OVN control plane. |
-| Full external-fabric acceptance | Unresolved | Historical reports do not establish complete acceptance. [Evidence requirements](../testing/external-evpn-fabric.md#isolation-and-lifecycle-evidence) require two final-input manifests and source/build identities. | Final manifests and identities have not been independently verified; lack of verification is not itself a known technical block. |
-| Standalone co-hosted Type-2 loops | Implemented, validated within scope | Simultaneous import/export, revocation and agent restart in a reused lab. [Historical co-hosting record](../archive/validation-record.md#standalone-authorization-and-two-chassis-lifecycle). | Not general multi-chassis or failure-matrix acceptance; source inputs are historical. |
-| Standalone two-chassis forwarding | Implemented, validated within scope | Shared OVN control plane, two speakers/agents, native-Netlink import and attributed VXLAN forwarding. [Historical forwarding record](../archive/validation-record.md#standalone-authorization-and-two-chassis-lifecycle). | Not two independent OVN domains or generalized recovery. |
-| Standalone endpoint lifecycle | Implemented, validated within scope | Exact tombstones, deletion, replacement, ordered migration and agent restarts. [Historical lifecycle record](../archive/validation-record.md#standalone-authorization-and-two-chassis-lifecycle). | Speaker replacement, interrupted writes, stale databases and power loss remain outside scope. |
-| Netlink and OVSDB integration modes | Implemented, partially validated | One reusable Framework has separate integration contracts. Netlink-Programmed is the selected target; OVSDB-Programmed is experimental and retained for regression/research/comparison. [Integration boundary](../architecture/framework-architecture.md#type-2-dataplane-boundaries); [historical tests](../archive/validation-record.md#independent-framework-netlink-e2e). | OVSDB tests are limited to one network and one remote VTEP; shared- and multi-VTEP lifecycle are not generally established. No comparative benchmark has been run. Reviewed 2026-11-12. |
-| Type-2 ownership and recovery | Implemented, partially validated | UUID-only BGP withdrawal, journals, authoritative observations and scoped Netlink recovery. [Recovery contract](../architecture/type2-restart-ownership.md); [operator record](../architecture/operator-type2-acceptance.md). | General crash and power-loss coverage remains open. Reviewed 2026-11-12. |
-| Ambiguous AddPath without durable UUID | Blocked | Recovery deliberately blocks rather than guessing ownership or withdrawing by NLRI. [Recovery contract](../architecture/type2-restart-ownership.md). | Known safety obstacle, not a test-status inference. Reviewed 2026-11-12. |
-| Foreign preservation in the secondary-CNI baseline | Implemented, not validated in this scenario | Preservation mechanisms exist, but the reported secondary-CNI lab had no suitable foreign witness. [Lab scope](../../deploy/containerlab/README.md#running-and-collecting-evidence). | Other fixture results cannot establish this scenario. |
-| Bare GoBGP–FRR route fixture | Implemented, partially validated | [Route-lifecycle fixture](../../tests/e2e/type2-fixture/README.md), independent of OVN and CNI. | Readiness alone is not route exchange; this fixture does not establish workload forwarding. Reviewed 2026-11-12. |
-| Independent OVN-domain GoBGP–GoBGP | Planned | Two independent OVN control planes exchanging Type-2 and forwarding between domains. [Target topology](../architecture/network-topologies.md#gobgp-and-gobgp-independent-ovn-domains). | Shared-OVN and Remote2 results do not validate this topology. Reviewed 2026-11-12. |
-| OVN-Kubernetes and Neutron/ML2-OVN adapters | Planned | [Integration targets](../roadmap/integrations/README.md). | No implemented adapters or supported installers are claimed. Reviewed 2026-11-12. |
-| Type-3, Type-5 and production deployment | Planned | [Roadmap](../roadmap/backlog.md), [security](../../SECURITY.md). | Not accepted as implemented capabilities; secure management and broad recovery gates remain open. Reviewed 2026-11-12. |
+| Area | Implementation / maturity | Boundary |
+|---|---|---|
+| Netlink-Programmed Type-2 | Implemented; experimental | GoBGP route processing and owned Linux integration state; OVN/OVS workload forwarding. |
+| Standalone exporter/importer co-hosting | Implemented; experimental | Standalone route import/export paths are separate from Operator lifecycle and CNI serving. |
+| Two-Chassis EVPN Type-2 | Implemented and validated in v0.1.0 | Two OVN/OVS chassis share NBDB/SBDB and exchange Type-2 routes through GoBGP, with VXLAN data-plane forwarding. This is not independent OVN-domain interconnection. |
+| Operator inventory-gated multi-worker profile | Implemented; experimental | Bounded per-worker external forwarding; not generalized worker-to-worker traffic or lifecycle support. |
+| Exact owned-route withdrawal / foreign-route preservation | Implemented; bounded validation | Route withdrawal is scoped to owned receipts; arbitrary foreign-state preservation is not a release guarantee. |
+| Endpoint delete, replacement and controlled migration | Implemented; bounded lifecycle | Does not promise zero-loss mobility or generalized multi-VTEP support. |
+| Kubernetes CNI / Multus | Implemented experimental secondary ADD/CHECK/DEL lifecycle when the CNI-serving Node-Agent is enabled | Project-owned shared OVN domain; separate from the primary CNI and standalone non-CNI runtime |
+| Operator-managed Node-Agent | Experimental lifecycle and worker-inventory publication | Kubernetes readiness is not route convergence or node-local ownership acceptance |
+| Standalone EVPN runtime | Opt-in import/export with protected configuration | Administrator authorization, OVN identity, speaker attestation and durable fencing required; no CNI server or standalone Operator provider |
+| CNI peer transport | Mandatory root:root `SO_PEERCRED` and `SO_PEERPIDFD` | Independent of optional continuity; does not protect against host compromise |
+| Agent / speaker recovery | Implemented; experimental | Durable journals, exact receipts and identity-gated restart paths; generalized recovery and availability are not guaranteed |
+| Missed DEL / orphan recovery | Exact-receipt retirement path | Operational acceptance incomplete; API absence and ambiguous host state must fail closed |
+| Kubernetes API-unavailability | Authority gating and inventory recovery paths | Operational acceptance incomplete; an unavailable API does not prove endpoint retirement |
+| Multi-worker / multi-VTEP | Worker-local inventory and test templates | Generalized multi-VTEP lifecycle and arbitrary foreign-state preservation are not guaranteed |
+| OVSDB-Programmed | Maintenance and isolated tests only | Outside selected v0.1.0 deployment scope; advanced regressions deferred |
+| OVN-Kubernetes / Neutron ML2-OVN | Planned adapters | Not implemented platform integrations |
+| EVPN Type-3 / Type-5 | Outside implemented Type-2 release scope | No full BUM membership or routed Type-5 service claim |
+| Final v0.1.0 release acceptance | All tests in the final revised inventory are reported as passing | The revised inventory and final evidence bundle are not included here; no numeric count is asserted. See the [validation-history archive](../internal/validation-history/README.md). |
+| Production operations | Not qualified | Privileges, upgrades, rollback, platform support and availability remain open |
+
+The [two networking use cases](../use-cases/README.md) are validated two-chassis
+EVPN Type-2 connectivity and experimental external EVPN/VXLAN integration.
+Independent OVN-domain interconnection is planned in the
+[roadmap](../roadmap/README.md#independent-ovn-domain-interconnection-planned).
+CNI/Multus, standalone
+OVN and Operator are deployment/integration mechanisms; multi-worker placement
+is a topology, and ownership/recovery is a lifecycle requirement. This
+presentation does not change any matrix entry or its acceptance boundary.
+The [vendor interoperability plan](../roadmap/README.md#3-vendor-evpnvxlan-interoperability)
+is future test planning, not release-snapshot acceptance or a production
+interoperability guarantee.
+
+See [deployment and operations](../guides/deployment-and-integration.md),
+[topology scenarios](../guides/network-topologies.md),
+[reliability and lifecycle](../guides/reliability-and-lifecycle.md),
+[release notes](../release/v0.1.0.md),
+[test scenarios](../../TESTING_GUIDE.md),
+[roadmap](../roadmap/README.md),
+[security contract](../security/netlink-deployment-security-contract.md),
+[known limitations](../known-issues/README.md), and
+[validation-history archive](../internal/validation-history/README.md).

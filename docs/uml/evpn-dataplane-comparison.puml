@@ -25,11 +25,11 @@ digraph Backends {
         fillcolor="#DEEDFF", color="#4F86BF", penwidth=1.5, width=4.4];
 
   subgraph cluster_backends {
-    label="SELECT ONE INTEGRATION BACKEND";
+    label="RELEASE-SCOPED PROGRAMMING MODES";
     labelloc=t; fontsize=9; fontcolor="#35628F";
     style="rounded,filled"; color="#A9C6E5"; fillcolor="#F3F8FF"; margin=11;
-    netlink [label=<<B>Netlink-Programmed</B><BR/><FONT POINT-SIZE="8">primary integration target</FONT>>, fillcolor="#E9F3FF", color="#6E9BCB", width=2.8];
-    ovsdb [label=<<B>OVSDB-Programmed</B><BR/><FONT POINT-SIZE="8">experimental · not feature-equivalent</FONT>>, fillcolor="#FFF2DE", color="#D8B47A", width=2.8];
+    netlink [label=<<B>Netlink-Programmed</B><BR/><FONT POINT-SIZE="8">selected v0.1.0 deployment</FONT>>, fillcolor="#E9F3FF", color="#6E9BCB", width=2.8];
+    ovsdb [label=<<B>OVSDB-Programmed</B><BR/><FONT POINT-SIZE="8">maintenance / testing only</FONT><BR/><FONT POINT-SIZE="8">outside v0.1.0 deployment</FONT>>, fillcolor="#FFF2DE", color="#D8B47A", width=2.8];
     {rank=same; netlink; ovsdb;}
     netlink -> ovsdb [style=invis, weight=15];
   }

@@ -274,6 +274,32 @@ func TestServerReusesEndpointManagerLifecycle(t *testing.T) {
 	}
 }
 
+func TestUnixServerEnforcesRequiredPeerCredentials(t *testing.T) {
+	socketPath := uniqueSocketPath(t, "peer-credentials")
+	service := NewCNIServer(NewStore())
+	service.requirePeerCredentials = true
+	server := startTestServerWithService(t, socketPath, service)
+	defer func() { _ = server.Stop(context.Background()) }()
+	conn, err := grpc.DialContext(context.Background(), "unix://"+socketPath,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("failed to create client connection: %v", err)
+	}
+	defer conn.Close()
+	client := nodeagentpb.NewNodeAgentCNIClient(conn)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err = client.Add(ctx, sampleAddRequest("peer-credentials", "inc-a", "10.251.1.200/24"))
+	if os.Geteuid() == 0 && os.Getegid() == 0 {
+		if err != nil {
+			t.Fatalf("root Unix peer was rejected: %v", err)
+		}
+	} else if err == nil {
+		t.Fatal("non-root Unix peer was accepted")
+	}
+}
+
 func TestRepeatedAddIsIdempotent(t *testing.T) {
 	socketPath := uniqueSocketPath(t, "idempotent-add")
 	server := startTestServer(t, socketPath)
@@ -1058,10 +1084,15 @@ func TestInterfaceNameGenerationDeterministicAndScoped(t *testing.T) {
 
 func startTestServer(t *testing.T, socketPath string) *UnixServer {
 	t.Helper()
+	return startTestServerWithService(t, socketPath, NewCNIServer(NewStore()))
+}
+
+func startTestServerWithService(t *testing.T, socketPath string, service *CNIServer) *UnixServer {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
-	server, err := StartUnixServer(ctx, socketPath, NewCNIServer(NewStore()))
+	server, err := StartUnixServer(ctx, socketPath, service)
 	if err != nil {
 		t.Fatalf("failed to start test server: %v", err)
 	}

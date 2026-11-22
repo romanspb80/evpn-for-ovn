@@ -100,3 +100,47 @@ func TestKubernetesCNIWorkloadAttestation(t *testing.T) {
 		})
 	}
 }
+
+func TestKubernetesCNIWorkloadRetirementAttestation(t *testing.T) {
+	for _, mode := range []string{"active", "not-found", "replaced", "api-unavailable", "node-replaced"} {
+		t.Run(mode, func(t *testing.T) {
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", UID: types.UID("node-uid")}}
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod-a", Namespace: "ns-a", UID: types.UID("pod-uid")}, Spec: corev1.PodSpec{NodeName: "node-a"}}
+			client := fake.NewSimpleClientset(node, pod)
+			ref := endpoint.WorkloadRef{Kind: "pod", UID: "pod-uid", Name: "pod-a", Namespace: "ns-a", NodeName: "node-a"}
+			switch mode {
+			case "not-found":
+				client.PrependReactor("get", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
+					return true, nil, apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "pod-a")
+				})
+			case "replaced":
+				client.PrependReactor("get", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
+					copiedPod := pod.DeepCopy()
+					copiedPod.UID = types.UID("new-pod-uid")
+					return true, copiedPod, nil
+				})
+			case "api-unavailable":
+				client.PrependReactor("get", "pods", func(ktesting.Action) (bool, runtime.Object, error) {
+					return true, nil, errors.New("API outage")
+				})
+			case "node-replaced":
+				client.PrependReactor("get", "nodes", func(ktesting.Action) (bool, runtime.Object, error) {
+					copiedNode := node.DeepCopy()
+					copiedNode.UID = types.UID("new-node-uid")
+					return true, copiedNode, nil
+				})
+			}
+			attestor := &KubernetesCNIWorkloadAttestor{Client: client.CoreV1(), NodeName: "node-a", NodeUID: "node-uid"}
+			retired, err := attestor.VerifyRetired(context.Background(), ref)
+			if mode == "active" && (retired || err != nil) {
+				t.Fatalf("active Pod classified retired: retired=%v err=%v", retired, err)
+			}
+			if (mode == "not-found" || mode == "replaced") && (!retired || err != nil) {
+				t.Fatalf("retired Pod UID not recognized: retired=%v err=%v", retired, err)
+			}
+			if (mode == "api-unavailable" || mode == "node-replaced") && (retired || err == nil) {
+				t.Fatalf("uncertain Kubernetes state authorized cleanup: retired=%v err=%v", retired, err)
+			}
+		})
+	}
+}

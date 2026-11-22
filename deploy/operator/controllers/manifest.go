@@ -93,6 +93,9 @@ func validateSpec(spec evpnv1.EvpnCoreSpec) error {
 	if (n.ExportConfigPath != "" || n.RemoteConfigPath != "" || n.CNIContinuityConfigPath != "") && (mode != "real-ovn-ovs" || backend != "linux-veth") {
 		return fmt.Errorf("Type-2 export/import requires real-ovn-ovs/linux-veth")
 	}
+	if n.VerifyNetlinkExportProvenance != nil && !*n.VerifyNetlinkExportProvenance && (n.ExportConfigPath == "" || n.CNIContinuityConfigPath != "" || spec.WorkerInventory != nil) {
+		return fmt.Errorf("verifyNetlinkExportProvenance=false requires an export config and is incompatible with CNI continuity or worker inventory")
+	}
 	for name, value := range map[string]string{"exportInterval": n.ExportInterval, "exportTimeout": n.ExportTimeout, "remoteInterval": n.RemoteInterval, "remoteTimeout": n.RemoteTimeout} {
 		if value == "" {
 			continue
@@ -328,6 +331,9 @@ func configureNodeAgent(obj *unstructured.Unstructured, n evpnv1.NodeAgentSpec, 
 	}
 	if placement == "external-ovn" && n.ExportConfigPath != "" {
 		args = append(args, "--evpn-export-verify-local-chassis")
+	}
+	if n.VerifyNetlinkExportProvenance != nil && !*n.VerifyNetlinkExportProvenance {
+		args = append(args, "--evpn-export-skip-netlink-provenance")
 	}
 
 	podSpec.Containers[0].Args = args

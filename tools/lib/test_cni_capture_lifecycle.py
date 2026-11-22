@@ -99,6 +99,32 @@ class CaptureLifecycleTests(unittest.TestCase):
     def setUp(self):
         self.source = HELPER.read_text()
 
+    def test_pod_veth_requires_reciprocal_indices(self):
+        pod = {"ifname": "net1", "ifindex": 17, "link_index": 18}
+        unrelated = {"ifname": "eth0", "ifindex": 2, "link_index": 17}
+        wrong_peer = {"ifname": "other", "ifindex": 18, "link_index": 19}
+        peer = {"ifname": "evp-test", "ifindex": 18, "link_index": 17}
+        with tempfile.TemporaryDirectory() as directory:
+            pod_path = Path(directory) / "pod.json"
+            worker_path = Path(directory) / "worker.json"
+            for links, expected in (([unrelated, peer], "evp-test"),
+                                    ([unrelated, wrong_peer], None),
+                                    ([peer, dict(peer, ifname="duplicate")], None)):
+                with self.subTest(links=links):
+                    pod_path.write_text(json.dumps([pod]))
+                    worker_path.write_text(json.dumps(links))
+                    result = subprocess.run(
+                        ["bash", "-ec", 'source "$1"; interop_capture_find_pod_veth "$2" "$3"',
+                         "bash", str(HELPER), str(pod_path), str(worker_path)],
+                        capture_output=True, text=True,
+                    )
+                    if expected is None:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertEqual(result.stdout, "")
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(result.stdout.strip(), expected)
+
     def test_capture_runtime_rejects_unbounded_or_invalid_values(self):
         for value in ("0", "301", "unlimited", "001"):
             with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:

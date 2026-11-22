@@ -2,8 +2,12 @@ package nodeagent
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/romanspb80/evpn-for-ovn/pkg/attachment"
@@ -34,6 +38,41 @@ type RealServerFactory interface {
 
 type defaultRealServerFactory struct{}
 
+var errCNIBackendUnavailable = errors.New("OVN/OVS startup transport unavailable")
+
+func cniBackendStartupError(err error) error {
+	for _, transient := range []error{context.DeadlineExceeded, os.ErrNotExist, io.EOF, io.ErrUnexpectedEOF,
+		client.ErrNotConnected, syscall.ECONNREFUSED, syscall.ECONNRESET, syscall.ETIMEDOUT,
+		syscall.EHOSTUNREACH, syscall.ENETUNREACH, syscall.EPIPE} {
+		if errors.Is(err, transient) {
+			return errors.Join(errCNIBackendUnavailable, err)
+		}
+	}
+	return err
+}
+
+// WaitForCNIBackends is used only by continuity-enabled startup, before serving CNI.
+func WaitForCNIBackends(ctx context.Context, attempt func(context.Context) error) error {
+	var nextLog time.Time
+	for ctx.Err() == nil {
+		err := attempt(ctx)
+		if !errors.Is(err, errCNIBackendUnavailable) {
+			return err
+		}
+		if !time.Now().Before(nextLog) {
+			fmt.Fprintln(os.Stderr, "CNI startup: OVN/OVS connection unavailable; will retry")
+			nextLog = time.Now().Add(30 * time.Second)
+		}
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+		}
+	}
+	return ctx.Err()
+}
+
 func BuildServerForOptions(ctx context.Context, store *Store, opts RuntimeOptions, realFactory RealServerFactory) (*CNIServer, func(), error) {
 	mode := strings.TrimSpace(opts.Mode)
 	if mode == "" {
@@ -61,7 +100,15 @@ func BuildServerForOptions(ctx context.Context, store *Store, opts RuntimeOption
 		if networkBackend != "linux-veth" {
 			return nil, nil, fmt.Errorf("mode %q requires --network-backend=linux-veth", mode)
 		}
-		return realFactory.Build(ctx, store, opts)
+		server, cleanup, err := realFactory.Build(ctx, store, opts)
+		if err != nil {
+			return nil, nil, err
+		}
+		if server == nil {
+			return nil, nil, errors.New("real server factory returned nil CNI server")
+		}
+		server.requirePeerCredentials = true
+		return server, cleanup, nil
 	default:
 		return nil, nil, fmt.Errorf("unsupported runtime mode %q", mode)
 	}
@@ -130,11 +177,11 @@ func newOVNNBClient(ctx context.Context, endpointAddress string) (client.Client,
 		return nil, err
 	}
 	if err := nbClient.Connect(ctx); err != nil {
-		return nil, err
+		return nil, cniBackendStartupError(err)
 	}
 	if _, err := nbClient.MonitorAll(ctx); err != nil {
 		nbClient.Close()
-		return nil, err
+		return nil, cniBackendStartupError(err)
 	}
 	return nbClient, nil
 }
@@ -159,11 +206,11 @@ func newOVSClient(ctx context.Context, endpointAddress string) (client.Client, e
 		return nil, err
 	}
 	if err := ovsClient.Connect(ctx); err != nil {
-		return nil, err
+		return nil, cniBackendStartupError(err)
 	}
 	if _, err := ovsClient.MonitorAll(ctx); err != nil {
 		ovsClient.Close()
-		return nil, err
+		return nil, cniBackendStartupError(err)
 	}
 	return ovsClient, nil
 }

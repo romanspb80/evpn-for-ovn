@@ -2,7 +2,7 @@
 set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
-gateway="${1:-192.168.249.1}"
+gateway="${1:?dedicated NAT gateway argument is required}"
 [[ "$gateway" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
 mkdir -p /etc/systemd/resolved.conf.d
 printf '[Resolve]\nDNS=%s\nDNSSEC=no\n' "$gateway" > /etc/systemd/resolved.conf.d/90-evpn-cni-lab.conf

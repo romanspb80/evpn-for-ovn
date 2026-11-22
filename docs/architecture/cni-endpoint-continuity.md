@@ -1,9 +1,10 @@
 # Durable CNI endpoint continuity
 
-**Creation-time acceptance now passes with authenticated two-stage admission.**
-Real containerd v2.0.3 Pods reach verified activation, exchange Type-2 routes
-and survive Node-Agent restart. Full speaker-replacement convergence remains
-incomplete. See [creation authority and evidence](cni-creation-authority.md).
+Authenticated two-stage admission separates creation authority from later
+runtime activation. Durable receipts govern endpoint restoration and export
+after Node-Agent restart. See [creation authority](cni-creation-authority.md)
+and [route recovery](type2-restart-ownership.md) for identity requirements;
+generalized recovery and missed-DEL operational acceptance remain incomplete.
 
 Enable the bounded node-local layer with:
 
@@ -107,14 +108,22 @@ membership guards, and an acknowledged veth index. It commits a deleted ACK
 only after independently observing resource absence. Partial/stale identities
 never authorize cleanup.
 
-Uncertain ADD/DEL results retain their pending intents. Restart and further
-mutations fail closed: no automatic inference, rollback, or tuple-based adoption
-resolves those outcomes. Administrator investigation must establish their
-outcome; the Kubernetes operator does not resolve external CNI mutation intents.
-A definitive Kubernetes Pod NotFound omits an active record from the live store
-without recreating the Pod or automatically deleting residual resources. API
-outage, UID replacement, deleting Pod, and missing runtime observations are not
-treated as NotFound.
+Uncertain ADD/DEL results retain their pending intents and do not authorize
+tuple-based adoption. The Operator does not resolve CNI mutation intents.
+
+**Missed DEL is a separate recovery path.** On startup and through periodic
+scans independent of the exporter, Node-Agent can retire an active receipt after
+definitive Pod NotFound or verification that the same name now has a different
+UID. API errors, a deletion timestamp alone, or a missing sandbox/netns do not
+prove retirement. The agent persists `cni-orphan-del`, revalidates retirement,
+and removes only the receipt's exact owned OVS and OVN objects. Pending orphan
+intents are replayed from the matching receipt before unrelated observations.
+After the DB objects are verified absent, the agent only reads host link state:
+it commits `deleted` if host absence is verified, or keeps the receipt as
+`orphan_host_unresolved`. It never deletes host veth on the orphan path. Unknown
+objects and NAD recreation alone do not authorize cleanup. Missed-DEL/orphan
+recovery has incomplete operational acceptance; see the
+[release limitations](../release/v0.1.0.md) before relying on this path.
 
 Exporter callers should gate desired native/CNI snapshots with
 `ValidateRecoveredExportEndpoints`. Native `ovn-netlink/<LSP UUID>` IDs map to

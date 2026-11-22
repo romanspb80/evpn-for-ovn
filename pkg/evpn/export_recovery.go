@@ -38,7 +38,9 @@ type exportRecoveryState struct {
 	Version            int
 	Incarnation        string
 	Receipts           []exportReceipt
-	WithdrawalRequired bool `json:",omitempty"`
+	WithdrawalRequired bool   `json:",omitempty"`
+	InventoryManaged   bool   `json:",omitempty"`
+	InventoryReady     string `json:",omitempty"`
 }
 
 type exportIntent struct {
@@ -56,6 +58,7 @@ type ExportRecovery struct {
 	applier Type2RouteApplier
 	speaker VerifiedSpeaker
 	fault   func(string) error
+	domain  ownership.Domain
 }
 
 func OpenExportRecovery(cfg ExportRecoveryConfig, source Type2RIBSource, applier Type2RouteApplier, speaker VerifiedSpeaker) (*ExportRecovery, error) {
@@ -66,7 +69,7 @@ func OpenExportRecovery(cfg ExportRecoveryConfig, source Type2RIBSource, applier
 	if err != nil {
 		return nil, err
 	}
-	r := &ExportRecovery{journal: j, source: source, applier: applier, speaker: speaker}
+	r := &ExportRecovery{journal: j, source: source, applier: applier, speaker: speaker, domain: cfg.Domain}
 	data, pending, err := j.Snapshot()
 	if err == nil && string(data) != "null" {
 		err = decodeExportRecord(data, &r.state)
@@ -83,6 +86,9 @@ func OpenExportRecovery(cfg ExportRecoveryConfig, source Type2RIBSource, applier
 }
 
 func decodeExportRecord(data []byte, target interface{}) error {
+	if err := ownership.RejectDuplicateJSONKeys(data); err != nil {
+		return err
+	}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	if err := d.Decode(target); err != nil {
@@ -105,7 +111,9 @@ func durableExportRoute(endpoint LocalEndpoint, incarnation, id string) (exportR
 }
 
 func (r *ExportRecovery) validate() error {
-	if r.state.Version != 1 || (r.state.Incarnation == "" && len(r.state.Receipts) != 0) {
+	if (r.state.Version != 1 && r.state.Version != 2) || (r.state.Incarnation == "" && len(r.state.Receipts) != 0) ||
+		(r.state.Version == 1 && (r.state.InventoryManaged || r.state.InventoryReady != "")) ||
+		(r.state.Version == 2 && !r.state.InventoryManaged) {
 		return fmt.Errorf("incompatible exporter schema/incarnation")
 	}
 	keys, ids := map[string]bool{}, map[string]bool{}
@@ -141,7 +149,7 @@ func sameExportPayload(a, b exportReceipt) bool {
 
 func (r *ExportRecovery) observation(ctx context.Context) (string, []Type2RIBPath, error) {
 	if err := r.speaker.Check(ctx); err != nil {
-		return "", nil, fmt.Errorf("%w: provider attestation: %v", ownership.ErrBlocked, err)
+		return "", nil, fmt.Errorf("%w: provider attestation: %w", ownership.ErrBlocked, err)
 	}
 	before, err := r.speaker.Incarnation()
 	if err != nil || before == "" {
@@ -149,10 +157,10 @@ func (r *ExportRecovery) observation(ctx context.Context) (string, []Type2RIBPat
 	}
 	paths, err := r.source.Snapshot(ctx)
 	if err != nil {
-		return "", nil, fmt.Errorf("%w: incomplete/unavailable RIB: %v", ownership.ErrBlocked, err)
+		return "", nil, fmt.Errorf("%w: incomplete/unavailable RIB: %w", ownership.ErrBlocked, err)
 	}
 	if err := r.speaker.Check(ctx); err != nil {
-		return "", nil, fmt.Errorf("%w: speaker changed during RIB read: %v", ownership.ErrBlocked, err)
+		return "", nil, fmt.Errorf("%w: speaker changed during RIB read: %w", ownership.ErrBlocked, err)
 	}
 	after, err := r.speaker.Incarnation()
 	if err != nil || before != after {
@@ -196,7 +204,8 @@ func (r *ExportRecovery) Recover(ctx context.Context) ([]OwnedType2Route, error)
 	if err != nil {
 		return nil, err
 	}
-	next := exportRecoveryState{Version: 1, Incarnation: current, WithdrawalRequired: r.state.WithdrawalRequired}
+	next := r.state
+	next.Incarnation, next.Receipts = current, nil
 	for _, receipt := range r.state.Receipts {
 		found := matchingExportPaths(paths, receipt)
 		if len(found) == 0 {
@@ -211,12 +220,17 @@ func (r *ExportRecovery) Recover(ctx context.Context) ([]OwnedType2Route, error)
 	if pending != nil {
 		if pending.Operation == "export-checkpoint" {
 			var checkpoint exportRecoveryState
-			if err := decodeExportRecord(pending.Payload, &checkpoint); err != nil || checkpoint.Version != 1 {
+			if err := decodeExportRecord(pending.Payload, &checkpoint); err != nil || (checkpoint.Version != 1 && checkpoint.Version != 2) {
 				return nil, fmt.Errorf("%w: invalid exporter checkpoint", ownership.ErrBlocked)
 			}
 			// A pending checkpoint may be the durable intent to enter
 			// withdrawal-only mode; recovery must never roll it back.
 			next.WithdrawalRequired = next.WithdrawalRequired || checkpoint.WithdrawalRequired
+			// A pending state-only checkpoint cannot grant advertisement.
+			// Keep any converted inventory state, but invalidate its ready grant.
+			if checkpoint.InventoryManaged {
+				next.Version, next.InventoryManaged, next.InventoryReady = 2, true, ""
+			}
 			for _, candidate := range checkpoint.Receipts {
 				known := false
 				for _, previous := range r.state.Receipts {
@@ -319,8 +333,25 @@ func (r *ExportRecovery) boundary(name string) error {
 }
 
 func (r *ExportRecovery) Add(ctx context.Context, route Type2Route) (string, error) {
+	return r.add(ctx, route, "")
+}
+
+// AddInventory requires the coordinator's matching durable FINAL grant. The
+// caller holds its authorization lock through this operation; no callback is
+// made while the export journal's mutex is held.
+func (r *ExportRecovery) AddInventory(ctx context.Context, route Type2Route, binding string) (string, error) {
+	if binding == "" {
+		return "", fmt.Errorf("%w: inventory grant required", ownership.ErrBlocked)
+	}
+	return r.add(ctx, route, binding)
+}
+
+func (r *ExportRecovery) add(ctx context.Context, route Type2Route, binding string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.state.InventoryManaged && (binding == "" || binding != r.state.InventoryReady) {
+		return "", fmt.Errorf("%w: inventory journal grant does not match export readiness", ownership.ErrBlocked)
+	}
 	if r.state.WithdrawalRequired {
 		return "", fmt.Errorf("%w: exporter is permanently fenced for withdrawal", ownership.ErrBlocked)
 	}
@@ -394,6 +425,19 @@ func (r *ExportRecovery) RequireWithdrawal() error {
 	}
 	r.state = next
 	return nil
+}
+
+// RecoverPending resolves only existing durable work before a new checkpoint.
+// In particular, a retained unacknowledged Add remains ambiguous and blocked.
+func (r *ExportRecovery) RecoverPending(ctx context.Context) error {
+	r.mu.Lock()
+	_, pending, err := r.journal.Snapshot()
+	r.mu.Unlock()
+	if err != nil || pending == nil {
+		return err
+	}
+	_, err = r.Recover(ctx)
+	return err
 }
 
 func (r *ExportRecovery) WithdrawalRequired() bool {

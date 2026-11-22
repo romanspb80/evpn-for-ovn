@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KIND_CLUSTER="framework-ovsdb-e2e-c4l"
-EVIDENCE_ROOT="${EVIDENCE_ROOT:-/tmp/framework-ovsdb-e2e-c4l-evidence}"
+EVIDENCE_ROOT="${EVIDENCE_ROOT:-${HOME}/.local/state/framework-ovsdb-e2e-c4l-evidence}"
 RUN_SUFFIX="$(python3 -c 'import secrets; print(secrets.token_hex(4))')"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-${RUN_SUFFIX}"
 EVIDENCE_DIR="${EVIDENCE_ROOT}/attempt-${RUN_ID}"
@@ -46,6 +46,7 @@ source "${ROOT}/tools/lib/cni-agent-image-test.sh"
 source "${ROOT}/tools/lib/cni-evpn-export-test.sh"
 source "${ROOT}/tools/lib/cni-evpn-frr-interop-test.sh"
 source "${ROOT}/tools/lib/containerlab-e2e.sh"
+source "${ROOT}/tools/lib/framework-ovsdb-gap-cases.sh"
 e2e_lab_acquire
 export KUBECONFIG
 k() { kubectl --kubeconfig "${KUBECONFIG}" --context "kind-${KIND_CLUSTER}" "$@"; }
@@ -74,7 +75,7 @@ fwtest() {
     -e FRAMEWORK_E2E_ACTION="${FRAMEWORK_E2E_ACTION}" \
     -e FRAMEWORK_E2E_RUN_ID="${RUN_SUFFIX}" \
     -e FRAMEWORK_E2E_LOGICAL_SWITCH="${LOGICAL_SWITCH}" \
-    -e FRAMEWORK_E2E_OVSDB_MGMT=127.0.0.1:50053 \
+    -e FRAMEWORK_E2E_OVSDB_MGMT="${OVSDB_MGMT_ADDR}" \
     "${WORKER}" /usr/local/bin/framework-nodeagent.test \
     -test.run '^TestFrameworkOVSDBEndpointLifecycle_Live$' -test.v
 }
@@ -82,8 +83,66 @@ gate() {
   GATE_STATUS["$1"]="PASS"
   printf '%s=PASS\n' "$1" | tee -a "${EVIDENCE_DIR}/acceptance-gates.txt"
 }
+collect_ovs_forwarding_snapshot() {
+  local phase="$1" bridge bridge_name output error_file interface_file
+  if ! rt ovs-vsctl br-exists "${PROVIDER_BRIDGE}" >/dev/null 2>&1; then
+    echo "cannot collect ${phase} forwarding snapshot: owned provider bridge is absent" >&2
+    return 1
+  fi
+  for bridge in br-int "${PROVIDER_BRIDGE}"; do
+    if [[ "${bridge}" == br-int ]]; then bridge_name=br-int; else bridge_name=provider; fi
+    output="${EVIDENCE_DIR}/ovs-flows-${phase}-${bridge_name}.txt"
+    error_file="${EVIDENCE_DIR}/ovs-flows-${phase}-${bridge_name}.stderr"
+    if ! rt ovs-ofctl -O OpenFlow13 dump-flows "${bridge}" >"${output}" 2>"${error_file}"; then
+      echo "failed to collect ${phase} OpenFlow flows from ${bridge}" >&2
+      cat "${error_file}" >&2 || true
+      return 1
+    fi
+    if [[ ! -s "${output}" ]]; then
+      echo "OpenFlow flow dump is empty for ${bridge} (${phase})" >&2
+      return 1
+    fi
+  done
+  interface_file="${EVIDENCE_DIR}/ovs-interfaces-${phase}-forwarding.json"
+  error_file="${EVIDENCE_DIR}/ovs-interfaces-${phase}-forwarding.stderr"
+  if ! rt ovs-vsctl --format=json --columns=name,type,options,statistics list Interface \
+    >"${interface_file}" 2>"${error_file}"; then
+    echo "failed to collect ${phase} OVS Interface counter snapshot" >&2
+    cat "${error_file}" >&2 || true
+    return 1
+  fi
+  python3 - "${interface_file}" "${TUNNEL}" "${FRR_VTEP}" "${FRAMEWORK_VNI}" <<'PY'
+import json,sys
+data=json.load(open(sys.argv[1]))
+headings=data.get("headings") or []
+required={"name","type","options","statistics"}
+assert required <= set(headings),headings
+def ovs_map(value):
+    if isinstance(value,list) and len(value)==2 and value[0]=="map":
+        return dict(value[1])
+    return value if isinstance(value,dict) else {}
+rows=[dict(zip(headings,row)) for row in data["data"]]
+matches=[row for row in rows if row["name"]==sys.argv[2]]
+assert len(matches)==1,matches
+row=matches[0]
+options=ovs_map(row["options"])
+stats=ovs_map(row["statistics"])
+assert row["type"]=="vxlan",row
+assert options.get("remote_ip")==sys.argv[3] and options.get("key")==sys.argv[4],options
+counter_names={"rx_packets","tx_packets","rx_bytes","tx_bytes"}
+assert counter_names <= set(stats),stats
+for name in counter_names:
+    assert str(stats[name]).isdecimal(),(name,stats[name])
+print("Interface snapshot contains the owned VNI/VTEP VXLAN tunnel and packet/byte counters")
+PY
+}
 write_status() {
   local rc="$1" gate
+  if [[ -n "${FRAMEWORK_OVSDB_GAP_CURRENT:-}" && -f "${EVIDENCE_DIR}/ovsdb-gap/case-results.txt" ]]; then
+    printf '%s=FAIL\n' "${FRAMEWORK_OVSDB_GAP_CURRENT}" \
+      >>"${EVIDENCE_DIR}/ovsdb-gap/case-results.txt"
+    FRAMEWORK_OVSDB_GAP_CURRENT=''
+  fi
   {
     printf 'run=%s\ncluster=%s\nresult=%s\nfailure-classification=%s\nfailure-gate=%s\n' \
       "${RUN_ID}" "${KIND_CLUSTER}" "$([[ "${rc}" == 0 ]] && echo PASS || echo FAIL)" \
@@ -93,6 +152,15 @@ write_status() {
       if [[ "${gate}" == "${FAILURE_GATE}" && "${status}" == NOT_RUN ]]; then status=FAIL; fi
       printf '%s=%s\n' "${gate}" "${status}"
     done
+    if [[ -f "${EVIDENCE_DIR}/ovsdb-gap/case-results.txt" ]]; then
+      for gate in M011 M012 M013; do
+        local status
+        status="$(grep -F "${gate}=" "${EVIDENCE_DIR}/ovsdb-gap/case-results.txt" \
+          | tail -1 | cut -d= -f2 | cut -d' ' -f1)"
+        [[ "${status}" == PASS || "${status}" == FAIL ]] || status=NOT_RUN
+        printf '%s=%s\n' "${gate}" "${status}"
+      done
+    fi
     printf 'completed-at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } >"${EVIDENCE_DIR}/run-status.txt"
 }
@@ -104,6 +172,10 @@ cleanup() {
     docker logs "${KIND_CLUSTER}-frr-capture" \
       >"${EVIDENCE_DIR}/frr-capture.log" 2>&1 || true
     docker stop --time 5 "${KIND_CLUSTER}-frr-capture" >/dev/null 2>&1 || CLEANUP_RC=1
+    for name in frr-underlay frr-vxlan remote-workload; do
+      docker cp "${KIND_CLUSTER}-frr-capture:/evidence/${name}.pcap" \
+        "${EVIDENCE_DIR}/${name}.pcap" 2>>"${EVIDENCE_DIR}/capture-preservation-errors.log" || true
+    done
     docker rm "${KIND_CLUSTER}-frr-capture" >/dev/null 2>&1 || CLEANUP_RC=1
   fi
   if [[ "${CAPTURES_RUNNING}" == 1 && -n "${AGENT_POD}" ]] &&
@@ -134,11 +206,13 @@ cleanup() {
   e2e_lab_down || CLEANUP_RC=1
   interop_cleanup || CLEANUP_RC=1
   test_image_cleanup || CLEANUP_RC=1
-  if (( CLEANUP_RC == 0 )); then
-    gate O13
-  else
-    GATE_STATUS[O13]=FAIL
-    printf 'O13=FAIL\n' | tee -a "${EVIDENCE_DIR}/acceptance-gates.txt"
+  if [[ -d "${EVIDENCE_DIR}" ]]; then
+    if (( CLEANUP_RC == 0 )); then
+      gate O13
+    else
+      GATE_STATUS[O13]=FAIL
+      printf 'O13=FAIL\n' | tee -a "${EVIDENCE_DIR}/acceptance-gates.txt"
+    fi
   fi
   if (( original_rc == 0 && CLEANUP_RC == 0 )) &&
      [[ "${PREVIOUS_ATTEMPT_PASSED}" == 1 ]]; then
@@ -170,7 +244,7 @@ if [[ -e "${EVIDENCE_ROOT}" ]]; then
     grep -Fxq "purpose=Framework OVSDB E2E evidence root" "${EVIDENCE_ROOT}/.framework-ovsdb-e2e-owner" ||
     { echo "evidence root ownership marker does not match this repository" >&2; exit 1; }
 else
-  mkdir -m 700 "${EVIDENCE_ROOT}"
+  mkdir -m 700 -p "${EVIDENCE_ROOT}"
   printf 'repository=%s\npurpose=Framework OVSDB E2E evidence root\n' "${ROOT}" \
     >"${EVIDENCE_ROOT}/.framework-ovsdb-e2e-owner"
   chmod 600 "${EVIDENCE_ROOT}/.framework-ovsdb-e2e-owner"
@@ -195,7 +269,6 @@ printf 'run=%s\ncluster=%s\nlogical-switch=%s\nstarted-at=%s\n' \
   "${RUN_ID}" "${KIND_CLUSTER}" "${LOGICAL_SWITCH}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   >"${EVIDENCE_DIR}/run-metadata.txt"
 export FRAMEWORK_E2E_RUN_ID="${RUN_SUFFIX}" FRAMEWORK_E2E_LOGICAL_SWITCH="${LOGICAL_SWITCH}"
-export FRAMEWORK_E2E_OVSDB_MGMT="127.0.0.1:50053"
 
 if kind get clusters | grep -Fxq "${KIND_CLUSTER}" ||
    docker ps -a --format '{{.Names}}' | grep -Fxq "${KIND_CLUSTER}-worker" ||
@@ -271,8 +344,6 @@ spec:
   template:
     metadata: {labels: {app: ovn-runtime}}
     spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
       nodeSelector: {kubernetes.io/hostname: "${WORKER}"}
       containers:
       - name: ovn
@@ -338,8 +409,6 @@ spec:
   template:
     metadata: {labels: {app: ovsdb-mgmt}}
     spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
       nodeSelector: {kubernetes.io/hostname: "${WORKER}"}
       containers:
       - name: ovsdb-mgmt
@@ -362,12 +431,17 @@ apiVersion: v1
 kind: Service
 metadata: {name: ovsdb-mgmt, namespace: ${NAMESPACE}}
 spec:
+  type: ClusterIP
   selector: {app: ovsdb-mgmt}
   ports:
   - {name: grpc, port: 50053, targetPort: 50053}
 EOF
 k apply -f "${EVIDENCE_DIR}/ovsdb-mgmt.yaml"
 k -n "${NAMESPACE}" rollout status deployment/ovsdb-mgmt --timeout=120s
+OVSDB_MGMT_IP="$(k -n "${NAMESPACE}" get service ovsdb-mgmt -o jsonpath='{.spec.clusterIP}')"
+[[ -n "${OVSDB_MGMT_IP}" && "${OVSDB_MGMT_IP}" != "None" ]]
+OVSDB_MGMT_ADDR="${OVSDB_MGMT_IP}:50053"
+export FRAMEWORK_E2E_OVSDB_MGMT="${OVSDB_MGMT_ADDR}"
 PROVISION_ATTEMPTED=1
 FAILURE_CLASSIFICATION=FRAMEWORK-PROVISIONING
 FAILURE_GATE=O3
@@ -697,7 +771,7 @@ gate O8
 
 FAILURE_CLASSIFICATION=PACKET-PATH
 FAILURE_GATE=O10
-REMOTE_CAPTURE_PID_FILE="/tmp/framework-ovsdb-capture-${RUN_SUFFIX}.pid"
+REMOTE_CAPTURE_PID_FILE="/run/framework-ovsdb-capture-${RUN_SUFFIX}.pid"
 docker exec -d "${FRR_CONTAINER}" sh -ec \
   "ip netns exec evpnwork sh -ec 'echo \$\$ > ${REMOTE_CAPTURE_PID_FILE}; exec sleep 86400'"
 REMOTE_WORKLOAD_PID="$(docker exec "${FRR_CONTAINER}" cat "${REMOTE_CAPTURE_PID_FILE}")"
@@ -740,17 +814,24 @@ gate O10
 
 FAILURE_CLASSIFICATION=OVN-OVS-FORWARDING
 FAILURE_GATE=O9
+collect_ovs_forwarding_snapshot before-ping
 k -n "${NAMESPACE}" exec "${AGENT_POD}" -c agent -- \
   ip netns exec "fw-${RUN_SUFFIX}-a" ping -c 3 -W 2 "${REMOTE_IP}" \
   | tee "${EVIDENCE_DIR}/endpoint-a-to-remote-ping.txt"
 docker exec "${KIND_CLUSTER}-frr-capture" nsenter -t "${REMOTE_WORKLOAD_PID}" -n \
   ping -c 3 -W 2 10.244.240.10 | tee "${EVIDENCE_DIR}/remote-to-endpoint-a-ping.txt"
+collect_ovs_forwarding_snapshot after-ping
 gate O9
+
+FAILURE_CLASSIFICATION=OVSDB-GAP-CLOSURE
+FAILURE_GATE=O9
+framework_ovsdb_gap_cases
 
 FAILURE_CLASSIFICATION=LOCAL-WITHDRAWAL
 FAILURE_GATE=O11
 FRAMEWORK_E2E_ACTION=delete-a fwtest 2>&1 | tee "${EVIDENCE_DIR}/framework-delete-a.log"
 deadline=$((SECONDS+120))
+export_after_delete_ready=0
 while (( SECONDS < deadline )); do
   ag cat /run/evpn-node-agent/export-status.json >"${EVIDENCE_DIR}/export-status-after-delete-a.json" 2>/dev/null || true
   if python3 - "${EVIDENCE_DIR}/export-status-after-delete-a.json" <<'PY' >/dev/null 2>&1
@@ -761,9 +842,10 @@ assert len((s.get("Result") or {}).get("Desired") or [])==1,s
 assert len((s.get("Result") or {}).get("Applied") or [])==1,s
 assert all((item.get("Endpoint") or item).get("MACAddress","").lower()=="0a:58:f0:01:00:0b" for item in (s.get("Result") or {}).get("Applied") or []),s
 PY
-  then break; fi
+  then export_after_delete_ready=1; break; fi
   sleep 2
 done
+[[ "${export_after_delete_ready}" == 1 ]] || { echo "exporter did not converge after endpoint deletion" >&2; exit 1; }
 docker exec "${FRR_CONTAINER}" vtysh -c 'show bgp l2vpn evpn route type macip' \
   >"${EVIDENCE_DIR}/frr-rib-after-delete-a.txt"
 ! grep -q '10.244.240.10' "${EVIDENCE_DIR}/frr-rib-after-delete-a.txt"

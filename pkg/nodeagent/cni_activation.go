@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"time"
 
 	"github.com/romanspb80/evpn-for-ovn/pkg/ownership"
@@ -34,14 +35,33 @@ func (c *cniContinuity) observeCreated(ctx context.Context, rec *endpointRecord)
 
 // Only acknowledged resources may be promoted. No Ensure operation occurs here.
 func (s *CNIServer) verifyPendingCNI(ctx context.Context) error {
+	return s.reconcileCNI(ctx, true)
+}
+
+func (s *CNIServer) reconcileCNI(ctx context.Context, rescan bool) error {
 	s.operations.Lock()
 	defer s.operations.Unlock()
-	if s.stopping || s.continuity == nil {
+	if s.stopping || s.continuity == nil || ctx.Err() != nil {
 		return nil
 	}
 	c := s.continuity
+	if err := s.retryPendingOrphanLocked(ctx, c); err != nil {
+		return fmt.Errorf("orphan intent pending retry: %w", err)
+	}
+	if !c.recovering {
+		if err := c.ready(); err != nil {
+			return err
+		}
+	}
+	var scanErr error
+	if c.recovering || rescan {
+		scanErr = s.rescanCNIReceiptsLocked(ctx, c)
+	}
+	if c.recovering || ctx.Err() != nil {
+		return scanErr
+	}
 	if err := c.ready(); err != nil {
-		return err
+		return errors.Join(scanErr, err)
 	}
 	for key, ack := range c.state.Endpoints {
 		if ack.State != "pending_creation" {
@@ -87,18 +107,48 @@ func (s *CNIServer) verifyPendingCNI(ctx context.Context) error {
 		}
 		fmt.Fprintf(os.Stderr, "CNI identity state=%s endpoint=%q reason=%q\n", ack.State, key, ack.Reason)
 	}
-	return nil
+	return scanErr
+}
+
+func (s *CNIServer) retryPendingOrphanLocked(ctx context.Context, c *cniContinuity) error {
+	_, pending, err := c.journal.Snapshot()
+	if err != nil || pending == nil || pending.Operation != "cni-orphan-del" {
+		return err
+	}
+	var ack cniEndpointACK
+	if err := decodeCNIState(pending.Payload, &ack); err != nil {
+		return fmt.Errorf("%w: invalid orphan cleanup intent", ownership.ErrBlocked)
+	}
+	key := endpointKey(ack.Identity)
+	current, ok := c.state.Endpoints[key]
+	if !ok || current.State != "active" || !reflect.DeepEqual(current, ack) {
+		return fmt.Errorf("%w: orphan cleanup intent does not match active ACK", ownership.ErrBlocked)
+	}
+	return s.cleanupOrphanLocked(ctx, c, key, ack, pending.Sequence)
 }
 
 func (s *CNIServer) runCNIVerification(ctx context.Context) {
-	ticker := time.NewTicker(time.Second)
+	s.runCNIReconciliation(ctx, time.Second, 10*time.Second)
+}
+
+func (s *CNIServer) runCNIReconciliation(ctx context.Context, tick, scanInterval time.Duration) {
+	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
+	var nextScan, nextLog time.Time
 	for {
+		now := time.Now()
+		rescan := !now.Before(nextScan)
+		if rescan {
+			nextScan = now.Add(scanInterval)
+		}
 		step, cancel := context.WithTimeout(ctx, 10*time.Second)
-		err := s.verifyPendingCNI(step)
+		err := s.reconcileCNI(step, rescan)
 		cancel()
-		if err != nil && ctx.Err() == nil {
-			fmt.Fprintf(os.Stderr, "CNI asynchronous verification blocked: %v\n", err)
+		if err == nil {
+			nextLog = time.Time{}
+		} else if ctx.Err() == nil && !time.Now().Before(nextLog) {
+			fmt.Fprintf(os.Stderr, "CNI asynchronous reconciliation blocked; will retry: %v\n", err)
+			nextLog = time.Now().Add(30 * time.Second)
 		}
 		select {
 		case <-ctx.Done():

@@ -629,7 +629,6 @@ func (s *OvsdbServer) DelLogicalSwitchPort(ctx context.Context, req *ovsdbpb.Log
 }
 
 // GetVtep retrieves a specific LSP with its clients and associated VXLAN interface.
-// Also ensures ExternalIDs["iface-id"] is set on the OVS interface for LSP association.
 func (s *OvsdbServer) GetVtep(ctx context.Context, req *ovsdbpb.GetVtepRequest) (*ovsdbpb.GetVtepResponse, error) {
 	log.Printf("gRPC GetVtep called: lspName=%s", req.LspName)
 
@@ -667,30 +666,6 @@ func (s *OvsdbServer) GetVtep(ctx context.Context, req *ovsdbpb.GetVtepRequest) 
 		}
 		log.Printf("Found associated VXLAN interface: %s (UUID=%s)", iface.Name, iface.UUID)
 
-		// Auto-fix: ensure ExternalIDs["iface-id"] is set for LSP association
-		if iface.ExternalIDs == nil || iface.ExternalIDs["iface-id"] != req.LspName {
-			log.Printf("Auto-fixing ExternalIDs for interface %s: setting iface-id=%s", iface.Name, req.LspName)
-			updIface := &vswitch.Interface{
-				ExternalIDs: map[string]string{"iface-id": req.LspName},
-			}
-			updateOps, uerr := s.ovsClient.Where(&vswitch.Interface{Name: iface.Name}).Update(updIface)
-			if uerr == nil {
-				reply, terr := s.ovsClient.Transact(ctx, updateOps...)
-				if terr != nil {
-					log.Printf("Warning: ovs transact failed updating interface external_ids: %v", terr)
-				} else {
-					for i, r := range reply {
-						if r.Error != "" {
-							log.Printf("Warning: failed to update interface external_ids op %d: %s %s", i, r.Error, r.Details)
-						} else {
-							log.Printf("Successfully updated interface %s external_ids", iface.Name)
-						}
-					}
-				}
-			} else {
-				log.Printf("Warning: failed to build update op for interface external_ids: %v", uerr)
-			}
-		}
 	} else if ifaceErr != nil {
 		log.Printf("Warning: failed to query VXLAN interface for LSP %s: %v", req.LspName, ifaceErr)
 	}

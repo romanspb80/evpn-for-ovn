@@ -311,9 +311,31 @@ EOF
   cat "${EVIDENCE_DIR}/interop-run.json"
 }
 
+interop_capture_find_pod_veth() {
+  python3 - "$1" "$2" <<'PY'
+import json,sys
+with open(sys.argv[1]) as f:
+    pod_links = json.load(f)
+if len(pod_links) != 1 or pod_links[0].get("ifname") != "net1":
+    sys.exit("expected one Pod net1 link")
+pod = pod_links[0]
+pod_index, peer_index = pod.get("ifindex"), pod.get("link_index")
+if not all(type(index) is int and index > 0 for index in (pod_index, peer_index)):
+    sys.exit("Pod net1 is missing a valid local or peer ifindex")
+with open(sys.argv[2]) as f:
+    worker_links = json.load(f)
+# ifindices are local to a netns; unrelated worker links can share link_index.
+matches = [link["ifname"] for link in worker_links
+           if link.get("ifindex") == peer_index and link.get("link_index") == pod_index]
+if len(matches) != 1:
+    sys.exit(f"expected one worker peer for Pod net1 ({pod_index}->{peer_index}), found {matches}")
+print(matches[0])
+PY
+}
+
 interop_capture_discover() {
   local phase="${1:-initial}" prefix=""
-  local pod_ifindex pod_net1_json worker_links_json frr_workload_json
+  local pod_ifindex pod_net1_json pod_link_json worker_links_json frr_workload_json
   local worker_addresses_json frr_addresses_json frr_vxlan_json frr_host_json
   local -a pod_identity remote_identity
   [[ "${phase}" == initial ]] || prefix="${phase}-"
@@ -322,9 +344,10 @@ interop_capture_discover() {
   [[ "${INTEROP_WORKER_PID}" =~ ^[0-9]+$ && "${INTEROP_FRR_PID}" =~ ^[0-9]+$ ]]
 
   pod_net1_json="${EVIDENCE_DIR}/${prefix}pod-net1-link.json"
+  pod_link_json="${EVIDENCE_DIR}/${prefix}pod-net1-link-details.json"
   interop_exec_pod ip -j addr show dev net1 | tee "${pod_net1_json}" >/dev/null
   interop_exec_pod ip -j link show dev net1 \
-    | tee "${EVIDENCE_DIR}/${prefix}pod-net1-link-details.json" >/dev/null
+    | tee "${pod_link_json}" >/dev/null
   frr_workload_json="${EVIDENCE_DIR}/${prefix}frr-workload-link.json"
   interop_exec_frr ip netns exec evpnwork ip -j addr show dev frr-work0 \
     >"${frr_workload_json}"
@@ -375,14 +398,7 @@ PY
   printf 'FRR workload: ip=%s mac=%s\n' "${REMOTE_IP}" "${REMOTE_MAC}" \
     >>"${EVIDENCE_DIR}/${prefix}endpoint-identities.txt"
 
-  INTEROP_POD_VETH="$(python3 - "${worker_links_json}" "${pod_ifindex}" <<'PY'
-import json,sys
-links=json.load(open(sys.argv[1]))
-matches=[link["ifname"] for link in links if link.get("link_index")==int(sys.argv[2])]
-assert len(matches)==1,matches
-print(matches[0])
-PY
-)"
+  INTEROP_POD_VETH="$(interop_capture_find_pod_veth "${pod_link_json}" "${worker_links_json}")" || return 1
   INTEROP_WORKER_IFACE="$(python3 - "${worker_addresses_json}" "${LOCAL_VTEP}" <<'PY'
 import json,sys
 matches=[]

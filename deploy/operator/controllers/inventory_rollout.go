@@ -63,7 +63,8 @@ func inventoryArguments(core *evpnv1.EvpnCore, uid string) []string {
 	return []string{"--worker-inventory-namespace=" + ns, "--worker-inventory-uid=" + uid,
 		"--worker-inventory-cluster-uid=" + core.Spec.WorkerInventory.ClusterUID,
 		"--worker-inventory-installation-uid=" + string(core.UID),
-		"--worker-inventory-journal=" + inventoryJournal}
+		"--worker-inventory-journal=" + inventoryJournal,
+		"--worker-inventory-recovery-file=" + inventoryJournal + "/recovery-request.json"}
 }
 
 func wireInventoryDaemonSet(objects []*unstructured.Unstructured, core *evpnv1.EvpnCore, uid string) error {

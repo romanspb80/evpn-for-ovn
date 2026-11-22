@@ -28,6 +28,8 @@ BOX_CACHE_PATH = Path(
     "boxes/generic-VAGRANTSLASH-ubuntu2204/4.3.12/amd64/libvirt/box.img")
 KERNEL_RELEASE = "6.8.0-149-generic"
 KERNEL_PACKAGE_VERSION = "6.8.0-149.149~22.04.1"
+K8GOBGP_IMAGE = "ghcr.io/purelb/k8gobgp@sha256:55da7e8c3d09fef10fc819203904acb84e43bce1011dde66031dad501e1185de"
+K8GOBGP_IMAGE_ID = "sha256:5210e18534979372154487954bad4fc00ad14758923b4ae058e6b0a5be10a7d0"
 KERNEL_PACKAGES = (
     "linux-image-6.8.0-149-generic",
     "linux-modules-6.8.0-149-generic",
@@ -237,6 +239,26 @@ def wait_for_inventory_kernel(directory, config, evidence):
     raise LabError(f"guest did not boot the pinned kernel; see {log_path}")
 
 
+def verify_pinned_image(reference, expected_id, inspect_output):
+    try:
+        images = json.loads(inspect_output)
+    except (TypeError, json.JSONDecodeError) as error:
+        raise LabError("registry-pinned image inspect was not valid JSON") from error
+    if not isinstance(images, list) or len(images) != 1:
+        raise LabError("registry-pinned image inspect must return exactly one image")
+    image = images[0]
+    if not isinstance(image, dict):
+        raise LabError("registry-pinned image inspect entry must be an object")
+    if image.get("Id") != expected_id:
+        raise LabError("registry-pinned image config ID mismatch")
+    digests = image.get("RepoDigests")
+    if not isinstance(digests, list) or not all(isinstance(d, str) for d in digests):
+        raise LabError("registry-pinned image RepoDigests must be a list of strings")
+    if reference not in digests:
+        raise LabError("exact registry RepoDigest is unavailable after image transfer")
+    return image
+
+
 def peerpidfd_probe_result(output):
     results = []
     for line in output.splitlines():
@@ -439,6 +461,11 @@ def main():
         if args.action == "image":
             with args.archive.open("rb") as stream:
                 subprocess.run([*ssh, "docker load", "--", "-T"], cwd=directory, env=env, stdin=stream, check=True)
+            command([*ssh, f"docker pull {shlex.quote(K8GOBGP_IMAGE)}"], cwd=directory,
+                    env=env, capture=False)
+            inspect = command([*ssh, f"docker image inspect {shlex.quote(K8GOBGP_IMAGE)}"],
+                              cwd=directory, env=env)
+            verify_pinned_image(K8GOBGP_IMAGE, K8GOBGP_IMAGE_ID, inspect)
             return
         if args.action in ("ctr", "gobgpd"):
             kind = args.action

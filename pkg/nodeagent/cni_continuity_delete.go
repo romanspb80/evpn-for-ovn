@@ -107,3 +107,38 @@ func (o *nativeCNIObserver) DeleteExact(ctx context.Context, ack cniEndpointACK)
 	}
 	return cniExactTransaction(ctx, live.nb, nbOps)
 }
+
+func (o *nativeCNIObserver) DeleteOrphanExact(ctx context.Context, ack cniEndpointACK) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	live, ok := o.source.(cniLiveState)
+	if !ok {
+		return errors.New("CNI orphan cleanup requires native live backend")
+	}
+	resources, err := inspectCNIOrphanResources(ctx, live, o.networks, ack)
+	if err != nil {
+		return err
+	}
+	if err := deleteCNIOrphanOVS(ctx, live.ovs, ack, resources); err != nil {
+		return fmt.Errorf("exact orphan OVS cleanup: %w", err)
+	}
+	if err := deleteCNIOrphanOVN(ctx, live.nb, ack, resources); err != nil {
+		return fmt.Errorf("exact orphan OVN cleanup after OVS completed: %w", err)
+	}
+	return nil
+}
+
+func (o *nativeCNIObserver) OrphanAbsent(ctx context.Context, ack cniEndpointACK) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	live, ok := o.source.(cniLiveState)
+	if !ok {
+		return false, errors.New("CNI orphan verification requires native live backend")
+	}
+	resources, err := inspectCNIOrphanResources(ctx, live, o.networks, ack)
+	if err != nil {
+		return false, err
+	}
+	return resources.lsp == nil && resources.iface == nil && resources.port == nil &&
+		!resources.bridgeMember && !resources.switchMember, nil
+}

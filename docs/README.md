@@ -1,66 +1,63 @@
 # Documentation
 
-EVPN-for-OVN is experimental. Start with the [project overview](../README.md)
-and [security boundary](../SECURITY.md); use live environments only in an
-isolated, disposable lab.
+EVPN for OVN is experimental. Read the [project overview](../README.md) and
+[security guidance](../SECURITY.md) before using any live example.
 
-## Getting Started
+## Start here
 
-- [Kubernetes CNI solution](solutions/kubernetes-cni/README.md): the current
-  concrete networking solution and its lifecycle.
-- [Containerlab prerequisites and secondary-CNI lab](../deploy/containerlab/README.md):
-  an experimental, disposable Kind/OVN environment, not a production installer.
-- [Vagrant secondary-CNI environment](../deploy/containerlab/vagrant-secondary/README.md).
+- [Validated Two-Chassis EVPN Type-2 use case](use-cases/README.md#two-chassis-evpn-type-2-connectivity)
+- [Use cases and scenario boundaries](../README.md#use-cases)
+- [Deployment, CNI/Multus, standalone integration and Operator operations](guides/deployment-and-integration.md)
+- [Network topology scenarios and validation limits](guides/network-topologies.md)
+- [Reliability, recovery and owned lifecycle](guides/reliability-and-lifecycle.md)
+- [Kubernetes secondary-CNI solution](solutions/kubernetes-cni/README.md)
+- [Component overview](architecture/component-overview.md)
+- [Architecture and component responsibilities](architecture/framework-architecture.md)
+- [Netlink and OVSDB integration scope](architecture/integrations.md)
+- [Deployment and Operator configuration](architecture/deployment.md)
+- [API reference](api/README.md)
+- [Security contract](security/netlink-deployment-security-contract.md)
+- [Known limitations and troubleshooting](known-issues/README.md)
 
-## Concepts and Architecture
+External-fabric interoperability is experimental; independent OVN-domain
+interconnection is planned in the [roadmap](roadmap/README.md).
 
-- [Component overview](concepts/component-overview.md): roles and interactions.
-- [Network topologies](architecture/network-topologies.md): shared OVN Geneve
-  versus independent EVPN domains.
-- [EVPN Framework Architecture](architecture/framework-architecture.md):
-  canonical core boundary, backend roles and integration limits.
-- [Integration modes](architecture/integrations.md) and
-  [diagram index](uml/README.md).
-- [Endpoint authorization](architecture/standalone-endpoint-authorization.md)
-  and [Type-2 ownership and recovery](architecture/type2-restart-ownership.md).
+## Architecture and operations
 
-## Deployment and Operations
+- [Core component boundaries](architecture/evpn-core-component-boundaries.md)
+- [Operator API and lifecycle contracts](architecture/evpn-core-operator.md)
+- [Network topology and dataplane boundaries](architecture/network-topologies.md)
+- [CNI creation authority](architecture/cni-creation-authority.md)
+- [CNI endpoint continuity and lifecycle](architecture/cni-endpoint-continuity.md)
+- [Standalone endpoint authorization](architecture/standalone-endpoint-authorization.md)
+- [Type-2 ownership and recovery](architecture/type2-restart-ownership.md)
+- [Runtime dependencies and configuration ownership](architecture/runtime-dependencies.md)
 
-- [Operator lifecycle](architecture/evpn-core-operator.md) and
-  [lab deployment](architecture/deployment.md).
-- [Runtime dependencies and provider ownership](architecture/runtime-dependencies.md).
-- [Known issues](known-issues/README.md) and [security](../SECURITY.md).
+Architecture diagrams are indexed in the [diagram guide](uml/README.md); editable
+PlantUML sources are kept beside generated SVG previews.
 
-## Configuration and API Reference
+## Testing
 
-- [API index](api/README.md): Node-Agent, EVPN and OVSDB management.
-- [Operator API and configuration](architecture/evpn-core-operator.md).
-- [Standalone authorization configuration](architecture/standalone-endpoint-authorization.md).
+- [Testing document roles and current versus historical scope](testing/README.md)
+- [Containerlab lab setup and cleanup](../deploy/containerlab/README.md)
+- [Isolated VM E2E workflow](testing/vm-e2e-lab.md)
+- [Development and testing guide](../TESTING_GUIDE.md)
+- [Live scenario diagrams, source entry points and qualification gaps](testing/lifecycle-scenarios.md)
 
-## Development and Testing
+## Limitations, contributions and release direction
 
-- [Development and Testing Guide](../TESTING_GUIDE.md): build and offline test
-  commands, acceptance scopes, and E2E workflows.
-- [Containerlab E2E laboratories](../deploy/containerlab/README.md).
-- [Type-2 route fixture](../tests/e2e/type2-fixture/README.md) and
-  [Netlink acceptance](../tests/e2e/netlink-acceptance/README.md).
-- [FRR lab peer](../frr/README.md) and
-  [test-only Remote2 fixture contract](../tools/e2e/remote2/README.md).
+- [Known limitations and safe troubleshooting](known-issues/README.md)
+- [Recovered engineering findings and unsubmitted investigations](known-issues/engineering-findings.md)
+- [Upstream Contributions](project/upstream-contributions.md)
+- [Capabilities and planned integrations](project/capability-matrix.md)
+- [Roadmap and future work, including vendor EVPN/VXLAN interoperability](roadmap/README.md)
+- [Release scope and limitations](release/v0.1.0.md)
+- [License and third-party notices](release/licensing.md)
 
-## Capability Status and Roadmap
+## Validation history
 
-- [Capability matrix](project/capability-matrix.md): status, evidence and limits.
-- [Roadmap and canonical backlog](roadmap/README.md).
-- [Integration targets](roadmap/integrations/README.md) and
-  [release gates](roadmap/release.md).
-
-## Historical Engineering Evidence
-
-- [Operator Type-2 acceptance](architecture/operator-type2-acceptance.md).
-- [External EVPN fabric evidence](testing/external-evpn-fabric.md).
-- [Historical validation record](archive/validation-record.md) and
-  [project history and evidence policy](archive/README.md).
-- [Upstream issue drafts](issues/README.md).
-
-Historical results describe their original fixtures and source identities;
-they are not a fresh validation of the current deployment.
+The [validation-history archive](internal/validation-history/README.md) is the
+canonical index of historical campaigns and release acceptance evidence.
+Current test reproduction instructions remain in the
+[Testing Guide](../TESTING_GUIDE.md); archive reports are not procedures or a
+current release scorecard.

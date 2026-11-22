@@ -1,27 +1,82 @@
-@startuml
-title Proposed / Future | independent OVN domains with GoBGP Type-2
-top to bottom direction
-skinparam backgroundColor #FCFCFD
-skinparam defaultFontName DejaVu Sans
-skinparam defaultFontSize 14
-skinparam shadowing false
-skinparam ArrowColor #475569
-skinparam rectangleBackgroundColor #F1F5F9
-skinparam rectangleBorderColor #64748B
+@startdot
+digraph independent_ovn_domains {
+  graph [rankdir=TB, compound=true, splines=ortho, nodesep=0.72, ranksep=0.48, pad=0.18,
+    bgcolor="#FCFCFD", fontname="DejaVu Sans", fontsize=15, labelloc=t,
+    label="Interconnecting independent OVN domains\nPLANNED — independent OVN-domain interoperability is not end-to-end validated"];
+  node [shape=box, style="rounded,filled", fillcolor="#F8FAFC", color="#64748B", fontcolor="#0F172A", fontname="DejaVu Sans", fontsize=12, margin="0.13,0.08"];
+  edge [fontname="DejaVu Sans", fontsize=10, arrowsize=0.7, color="#64748B"];
 
-rectangle "Domain A | independent OVN control plane\nNBDB / northd / SBDB A\nNode-Agent A + GoBGP A\novn-controller / OVS A + endpoint A" as a
-rectangle "Domain B | independent OVN control plane\nNBDB / northd / SBDB B\nNode-Agent B + GoBGP B\novn-controller / OVS B + endpoint B" as b
+  subgraph cluster_a {
+    label="SITE A — independent OVN domain"; color="#94A3B8"; style="rounded,filled"; fillcolor="#FFFFFF"; penwidth=1.2;
+    nb_a [label="OVN NBDB A", shape=cylinder, fillcolor="#EFF6FF"];
+    nd_a [label="ovn-northd A"];
+    sb_a [label="OVN SBDB A", shape=cylinder, fillcolor="#EFF6FF"];
+    ctl_a [label="ovn-controller A"];
+    work_a [label="Workload A"];
+    ovs_a [label="OVS A"];
+    vtep_a [label="VTEP A\nOVS tunnel port (planned)"];
+    agent_a [label="Node-Agent A\nreads NBDB / SBDB / OVS\nGoBGP API: AddPath / DeletePath / RIB"];
+    bgp_a [label="GoBGP A"];
+    netlink_a [label="Owned Netlink FDB / neighbor A\n(not packet forwarding)"];
 
-a -[#2563EB,dashed]- b : BGP EVPN Type-2 control
-a -[#15803D,dashed]- b : proposed external VXLAN packet path
+    nb_a -> nd_a [label="logical state", style=dashed];
+    nd_a -> sb_a [label="translated state", style=dashed];
+    sb_a -> ctl_a [label="SB programming", style=dashed];
+    ctl_a -> ovs_a [label="configures OVS", style=dashed];
+    work_a -> ovs_a [label="local forwarding", color="#334155", penwidth=1.5];
+    nb_a -> agent_a [style=dashed, constraint=false];
+    sb_a -> agent_a [style=dashed, constraint=false];
+    ovs_a -> agent_a [style=dashed, constraint=false];
+    agent_a -> bgp_a [style=dotted, dir=both, constraint=false];
+    agent_a -> netlink_a [xlabel="proposed import state", style=dotted];
+    ovs_a -> vtep_a [label="planned tunnel-port association", style=dotted,
+      color="#A16207", fontcolor="#854D0E", dir=none, constraint=false];
 
-legend bottom
-  Proposed topology; no independent-domain end-to-end validation.
-  Blue: BGP Type-2 control | Green: workload packets
-  No shared OVN NBDB / SBDB is assumed.
-  Importer owns only its exact Linux FDB / neighbor state.
-  ovn-controller observes it and programs OVS.
-  Exact route and imported-state ownership stay local.
-  Shared-OVN results do not validate this inter-domain packet path.
-endlegend
-@enduml
+    { rank=same; ovs_a; vtep_a; ovs_a -> vtep_a [style=invis, weight=50]; }
+    { rank=same; agent_a; bgp_a; agent_a -> bgp_a [style=invis, weight=50]; }
+    ovs_a -> agent_a [style=invis, weight=10];
+  }
+
+  subgraph cluster_b {
+    label="SITE B — independent OVN domain"; color="#94A3B8"; style="rounded,filled"; fillcolor="#FFFFFF"; penwidth=1.2;
+    nb_b [label="OVN NBDB B", shape=cylinder, fillcolor="#EFF6FF"];
+    nd_b [label="ovn-northd B"];
+    sb_b [label="OVN SBDB B", shape=cylinder, fillcolor="#EFF6FF"];
+    ctl_b [label="ovn-controller B"];
+    work_b [label="Workload B"];
+    ovs_b [label="OVS B"];
+    vtep_b [label="VTEP B\nOVS tunnel port (planned)"];
+    agent_b [label="Node-Agent B\nreads NBDB / SBDB / OVS\nGoBGP API: AddPath / DeletePath / RIB"];
+    bgp_b [label="GoBGP B"];
+    netlink_b [label="Owned Netlink FDB / neighbor B\n(not packet forwarding)"];
+
+    nb_b -> nd_b [label="logical state", style=dashed];
+    nd_b -> sb_b [label="translated state", style=dashed];
+    sb_b -> ctl_b [label="SB programming", style=dashed];
+    ctl_b -> ovs_b [label="configures OVS", style=dashed];
+    work_b -> ovs_b [label="local forwarding", color="#334155", penwidth=1.5];
+    nb_b -> agent_b [style=dashed, constraint=false];
+    sb_b -> agent_b [style=dashed, constraint=false];
+    ovs_b -> agent_b [style=dashed, constraint=false];
+    agent_b -> bgp_b [style=dotted, dir=both, constraint=false];
+    agent_b -> netlink_b [xlabel="proposed import state", style=dotted];
+    ovs_b -> vtep_b [label="planned tunnel-port association", style=dotted,
+      color="#A16207", fontcolor="#854D0E", dir=none, constraint=false];
+
+    { rank=same; vtep_b; ovs_b; vtep_b -> ovs_b [style=invis, weight=50]; }
+    { rank=same; bgp_b; agent_b; bgp_b -> agent_b [style=invis, weight=50]; }
+    ovs_b -> agent_b [style=invis, weight=10];
+  }
+
+  underlay [label="IP UNDERLAY\nVXLAN — PLANNED / UNVALIDATED", shape=ellipse, style=filled, fillcolor="#FEFCE8", color="#A16207"];
+  bgp_a -> bgp_b [headlabel="BGP EVPN Type-2 — PLANNED", labeldistance=2.2, labelangle=35, color="#2563EB", style=dashed, dir=both, penwidth=1.5, constraint=false];
+  vtep_a -> underlay [color="#15803D", style=dashed, dir=both, penwidth=1.5, constraint=false];
+  underlay -> vtep_b [color="#15803D", style=dashed, dir=both, penwidth=1.5, constraint=false];
+
+  legend [shape=note, style="filled", fillcolor="#F1F5F9", color="#64748B", fontsize=10,
+    label="Blue dashed: planned bidirectional BGP EVPN Type-2\lGray dashed: OVN desired state / observation / OVS configuration\lGray dotted: Node-Agent API and reconciliation\lOrange dotted: planned OVS/VTEP tunnel-port association, not forwarding\lImporter does not write SBDB or OVS OpenFlow\lDark solid: local workload forwarding\lGreen dashed: planned, unvalidated VXLAN forwarding\l"];
+  { rank=sink; legend; }
+  netlink_a -> legend [style=invis, weight=1];
+  netlink_b -> legend [style=invis, weight=1];
+}
+@enddot

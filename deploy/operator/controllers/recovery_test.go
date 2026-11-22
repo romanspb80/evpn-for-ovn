@@ -68,7 +68,7 @@ func TestSnapshotChangesDuringReconciliation(t *testing.T) {
 				setWorkloadsReady(t, r)
 				if point == "during-create" {
 					var svc corev1.Service
-					if err := raw.Get(context.Background(), client.ObjectKey{Namespace: "evpn-system", Name: "evpn-mgmt"}, &svc); err != nil {
+					if err := raw.Get(context.Background(), client.ObjectKey{Namespace: "ovn-system", Name: "ovn-ovs"}, &svc); err != nil {
 						t.Fatal(err)
 					}
 					if err := raw.Delete(context.Background(), &svc); err != nil {
@@ -95,7 +95,7 @@ func TestSnapshotChangesDuringReconciliation(t *testing.T) {
 						return c.SubResource(sub).Patch(ctx, obj, patch, opts...)
 					},
 					Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-						if point == "during-create" && !triggered && obj.GetName() == "evpn-mgmt" {
+						if point == "during-create" && !triggered && obj.GetName() == "ovn-ovs" {
 							triggered = true
 							updateIntent(t, c, core, deleting)
 						}
@@ -294,7 +294,7 @@ func TestConfirmedAbsenceAllowsOperatorRecreation(t *testing.T) {
 	withResourceUIDs(t, r)
 	reconcileCore(t, r, core)
 	var svc corev1.Service
-	key := client.ObjectKey{Name: "evpn-mgmt", Namespace: "evpn-system"}
+	key := client.ObjectKey{Name: "ovn-ovs", Namespace: "ovn-system"}
 	if err := r.Get(context.Background(), key, &svc); err != nil {
 		t.Fatal(err)
 	}
@@ -325,6 +325,7 @@ func TestDiscoveryRecoversMissingAndPartialJournalBeforeRelocation(t *testing.T)
 			withResourceUIDs(t, r)
 			reconcileCore(t, r, core)
 			current := fetchCore(t, r, core)
+			expectedInventorySize := len(current.Status.ManagedResources)
 			if partial {
 				current.Status.ManagedResources = current.Status.ManagedResources[:1]
 			} else {
@@ -344,8 +345,8 @@ func TestDiscoveryRecoversMissingAndPartialJournalBeforeRelocation(t *testing.T)
 			if err := r.Get(context.Background(), client.ObjectKey{Name: "evpn-node-agent", Namespace: "new-apps"}, &ds); !apierrors.IsNotFound(err) {
 				t.Fatal("missing journal allowed overlapping replacement")
 			}
-			if len(fetchCore(t, r, core).Status.ManagedResources) < 8 {
-				t.Fatal("historical namespace inventory not recovered")
+			if got := len(fetchCore(t, r, core).Status.ManagedResources); got != expectedInventorySize {
+				t.Fatalf("historical namespace inventory size=%d, want %d", got, expectedInventorySize)
 			}
 			reconcileCore(t, r, core)
 			if err := r.Get(context.Background(), client.ObjectKey{Name: "evpn-node-agent", Namespace: "new-apps"}, &ds); err != nil {
@@ -503,10 +504,11 @@ func TestSingleNodePlacementAndFailures(t *testing.T) {
 	}
 }
 
-func TestNamespaceEndpointsRoundTripAndChangedDefaults(t *testing.T) {
+func TestNamespaceRelocationAndChangedOVNImageDefault(t *testing.T) {
 	core := coreFixture("core", "core-uid", 1)
 	r := newTestReconciler(t, core)
 	reconcileCore(t, r, core)
+	previousOVNNamespace := "ovn-system"
 	for _, names := range [][2]string{{"custom-apps", "custom-ovn"}, {"evpn-system", "ovn-system"}, {"custom-apps", "custom-ovn"}} {
 		current := fetchCore(t, r, core)
 		current.Spec.AppNamespace, current.Spec.OvnNamespace = names[0], names[1]
@@ -516,44 +518,37 @@ func TestNamespaceEndpointsRoundTripAndChangedDefaults(t *testing.T) {
 		}
 		reconcileCore(t, r, core)
 		reconcileCore(t, r, core)
-		var ovs, bgp appsv1.Deployment
-		if err := r.Get(context.Background(), client.ObjectKey{Name: "ovsdb-mgmt", Namespace: names[0]}, &ovs); err != nil {
+		var svc corev1.Service
+		if err := r.Get(context.Background(), client.ObjectKey{Name: "ovn-ovs", Namespace: names[1]}, &svc); err != nil {
 			t.Fatal(err)
 		}
-		if err := r.Get(context.Background(), client.ObjectKey{Name: "bgp-ad-handler", Namespace: names[0]}, &bgp); err != nil {
+		var ovs appsv1.Deployment
+		if err := r.Get(context.Background(), client.ObjectKey{Name: "ovn-ovs", Namespace: names[1]}, &ovs); err != nil {
 			t.Fatal(err)
 		}
-		env := ovs.Spec.Template.Spec.Containers[0].Env
-		if env[0].Value != "tcp:ovn-ovs."+names[1]+".svc.cluster.local:6641" || env[1].Value != "tcp:ovn-ovs."+names[1]+".svc.cluster.local:6640" {
-			t.Fatal("OVN namespace round-trip endpoints stale")
+		if ovs.Namespace != names[1] {
+			t.Fatalf("OVN deployment namespace=%q want %q", ovs.Namespace, names[1])
 		}
-		if bgp.Spec.Template.Spec.Containers[0].Env[2].Value != "ovsdb-mgmt."+names[0]+".svc.cluster.local:50053" {
-			t.Fatal("app namespace round-trip endpoint stale")
+		var oldService corev1.Service
+		if err := r.Get(context.Background(), client.ObjectKey{Name: "ovn-ovs", Namespace: previousOVNNamespace}, &oldService); !apierrors.IsNotFound(err) {
+			t.Fatalf("old OVN service namespace %q was not pruned: %v", previousOVNNamespace, err)
 		}
+		previousOVNNamespace = names[1]
 	}
-	r.ManifestData = []byte(strings.ReplaceAll(string(r.ManifestData), "k8gobgp.k8gobgp-system.svc.cluster.local:50051", "changed-provider:50051"))
+	current := fetchCore(t, r, core)
+	current.Spec.OvnImage = "changed-ovn:kind"
+	current.Generation++
+	if err := r.Update(context.Background(), current); err != nil {
+		t.Fatal(err)
+	}
 	reconcileCore(t, r, core)
-	var mgmt appsv1.Deployment
-	key := client.ObjectKey{Name: "evpn-mgmt", Namespace: "custom-apps"}
-	if err := r.Get(context.Background(), key, &mgmt); err != nil {
+	var ovs appsv1.Deployment
+	key := client.ObjectKey{Name: "ovn-ovs", Namespace: "custom-ovn"}
+	if err := r.Get(context.Background(), key, &ovs); err != nil {
 		t.Fatal(err)
 	}
-	if mgmt.Spec.Template.Spec.Containers[0].Env[1].Value != "changed-provider:50051" {
-		t.Fatal("old YAML default masked changed default")
-	}
-	mgmt.Spec.Template.Spec.Containers[0].Env[1].Value = "unix:///explicit-provider.sock"
-	mgmt.Spec.Template.Spec.Containers[0].Env[0].Value = "unsupported-drift"
-	if err := r.Update(context.Background(), &mgmt); err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		reconcileCore(t, r, core)
-	}
-	if err := r.Get(context.Background(), key, &mgmt); err != nil {
-		t.Fatal(err)
-	}
-	if mgmt.Spec.Template.Spec.Containers[0].Env[1].Value != "unix:///explicit-provider.sock" || mgmt.Spec.Template.Spec.Containers[0].Env[0].Value != "k8gobgp" {
-		t.Fatal("explicit override allowlist not respected")
+	if ovs.Spec.Template.Spec.Containers[0].Image != "changed-ovn:kind" {
+		t.Fatal("changed OVN image override was not applied")
 	}
 }
 

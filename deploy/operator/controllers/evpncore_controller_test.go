@@ -157,6 +157,37 @@ func TestInvalidCandidateDoesNotBlockValidInstallation(t *testing.T) {
 	assertPhase(t, fetchCore(t, r, valid), "Reconciling")
 }
 
+func TestNetlinkExportProvenanceOptOut(t *testing.T) {
+	core := coreFixture("core", "core-uid", 1)
+	core.Spec.NodeAgent = evpnv1.NodeAgentSpec{Enabled: true, ExportConfigPath: "/run/evpn-node-agent/export.json"}
+	r := newTestReconciler(t, core)
+	key := types.NamespacedName{Namespace: "evpn-system", Name: "evpn-node-agent"}
+	key.Namespace, _ = namespaces(core.Spec)
+	check := func(want bool) {
+		t.Helper()
+		reconcileCore(t, r, core)
+		var ds appsv1.DaemonSet
+		if err := r.Get(context.Background(), key, &ds); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(strings.Join(ds.Spec.Template.Spec.Containers[0].Args, " "), "--evpn-export-skip-netlink-provenance"); got != want {
+			t.Fatalf("skip flag present = %t, want %t", got, want)
+		}
+	}
+	check(false)
+	current := fetchCore(t, r, core)
+	verify := false
+	current.Spec.NodeAgent.VerifyNetlinkExportProvenance = &verify
+	if err := r.Update(context.Background(), current); err != nil {
+		t.Fatal(err)
+	}
+	check(true)
+	current.Spec.NodeAgent.CNIContinuityConfigPath = "/run/evpn-node-agent/cni.json"
+	if err := validateSpec(current.Spec); err == nil || !strings.Contains(err.Error(), "verifyNetlinkExportProvenance=false") {
+		t.Fatalf("expected continuity conflict, got %v", err)
+	}
+}
+
 func TestNodeAgentCreateUpdateDisableAndNamespaces(t *testing.T) {
 	core := coreFixture("core", "core-uid", 1)
 	core.Spec.AppNamespace, core.Spec.OvnNamespace = "apps-custom", "ovn-custom"
@@ -188,12 +219,11 @@ func TestNodeAgentCreateUpdateDisableAndNamespaces(t *testing.T) {
 		t.Fatal("wrong cross-namespace ownership")
 	}
 	var d appsv1.Deployment
-	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "apps-custom", Name: "ovsdb-mgmt"}, &d); err != nil {
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: "ovn-custom", Name: "ovn-ovs"}, &d); err != nil {
 		t.Fatal(err)
 	}
-	if d.Spec.Template.Spec.Containers[0].Image != "app:v1" ||
-		d.Spec.Template.Spec.Containers[0].Env[0].Value != "tcp:ovn-ovs.ovn-custom.svc.cluster.local:6641" {
-		t.Fatal("app image/dependencies did not relocate")
+	if d.Spec.Template.Spec.Containers[0].Image != "ovn:v1" {
+		t.Fatal("OVN image did not relocate")
 	}
 	current := fetchCore(t, r, core)
 	current.Spec.NodeAgent.Image = "agent:v2"
@@ -263,26 +293,24 @@ func TestDisabledAndProviders(t *testing.T) {
 	}
 }
 
-func TestIdempotencyDriftAndServiceAllocations(t *testing.T) {
+func TestIdempotencyDriftAndServiceMetadata(t *testing.T) {
 	core := coreFixture("core", "core-uid", 1)
 	r := newTestReconciler(t, core)
 	reconcileCore(t, r, core)
 	var svc corev1.Service
-	key := types.NamespacedName{Namespace: "evpn-system", Name: "evpn-mgmt"}
+	key := types.NamespacedName{Namespace: "ovn-system", Name: "ovn-ovs"}
 	if err := r.Get(context.Background(), key, &svc); err != nil {
 		t.Fatal(err)
 	}
-	svc.Spec.ClusterIP, svc.Spec.ClusterIPs = "10.96.0.10", []string{"10.96.0.10"}
 	svc.Annotations["external.example/note"] = "preserve"
 	if err := r.Update(context.Background(), &svc); err != nil {
 		t.Fatal(err)
 	}
 	var d appsv1.Deployment
-	dkey := types.NamespacedName{Namespace: "evpn-system", Name: "evpn-mgmt"}
+	dkey := types.NamespacedName{Namespace: "ovn-system", Name: "ovn-ovs"}
 	if err := r.Get(context.Background(), dkey, &d); err != nil {
 		t.Fatal(err)
 	}
-	d.Spec.Template.Spec.Containers[0].Env[1].Value = "unix:///custom/gobgp.sock"
 	d.Spec.Template.Spec.Containers[0].Image = "drift:bad"
 	if err := r.Update(context.Background(), &d); err != nil {
 		t.Fatal(err)
@@ -291,14 +319,14 @@ func TestIdempotencyDriftAndServiceAllocations(t *testing.T) {
 	if err := r.Get(context.Background(), key, &svc); err != nil {
 		t.Fatal(err)
 	}
-	if svc.Spec.ClusterIP != "10.96.0.10" || svc.Annotations["external.example/note"] != "preserve" {
-		t.Fatal("server allocation/external metadata overwritten")
+	if svc.Spec.ClusterIP != "None" || svc.Annotations["external.example/note"] != "preserve" {
+		t.Fatal("headless service/external metadata overwritten")
 	}
 	if err := r.Get(context.Background(), dkey, &d); err != nil {
 		t.Fatal(err)
 	}
-	if d.Spec.Template.Spec.Containers[0].Image != "evpn4ovn/app:kind" || d.Spec.Template.Spec.Containers[0].Env[1].Value != "unix:///custom/gobgp.sock" {
-		t.Fatal("image drift/env compatibility failure")
+	if d.Spec.Template.Spec.Containers[0].Image != "evpn4ovn/ovn-ovs:kind" {
+		t.Fatal("image drift was not corrected")
 	}
 	before := d.ResourceVersion
 	coreBefore := fetchCore(t, r, core).ResourceVersion

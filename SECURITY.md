@@ -1,97 +1,62 @@
 # Experimental deployment security
 
-This project is an experimental networking Framework, not a production-qualified
-network platform. Use only a dedicated disposable Linux lab host, trusted peers
-and an isolated management network. Do not deploy the examples in a shared
-cluster or on a machine carrying production workloads or credentials.
+EVPN for OVN is experimental and is not qualified for production or shared
+clusters. Use examples only in a dedicated disposable Linux environment with
+trusted operators, peers and an isolated management network. Do not expose
+management APIs, OVN databases or privileged workloads to untrusted networks.
 
 ## Trust boundaries
 
-| Interface / component | Current boundary and required containment |
-|---|---|
-| evpn-mgmt TCP `:50052` | No TLS, authentication or authorization. Mutable speaker, peer and compatibility route operations. The checked-in kind/core manifests publish NodePort `30052`; firewall it from every untrusted network before applying them. |
-| ovsdb-mgmt TCP `:50053` | Same transport limitations; checked-in kind/core manifests publish NodePort `30053`. Firewall it from every untrusted network. Can mutate OVN and OVS; even `GetVtep` can repair OVS external IDs. |
-| GoBGP / OVN / OVSDB | Administrative control-plane interfaces. Accepted managed GoBGP tests use a node-local Unix socket. Do not expose unauthenticated TCP listeners outside the dedicated lab. |
-| NodeAgentCNI | Unix socket mode `0600`; filesystem permissions and trusted node processes are the boundary. The agent can change endpoint/network state and enter workload namespaces. |
-| Kubernetes / Operator | Examples use elevated permissions, privileged containers, host networking and host paths where needed. EvpnCore RBAC is broad and readiness is apply-only, not a security or operational health check. |
-| Containerlab / Docker | Docker and lab provisioning permissions are effectively host administration. Run only trusted source and pinned runtime inputs on a disposable host. |
+- **CNI peer authentication:** in real OVN/OVS plus Linux-veth mode, the
+  Node-Agent authenticates the connected Unix peer using root:root
+  `SO_PEERCRED` and kernel `SO_PEERPIDFD`. This is mandatory even when optional
+  continuity is disabled. Socket permissions are an additional restriction,
+  not a substitute for peer identity. A compromised host or root process is
+  outside this protection boundary.
+- **Continuity and endpoint authorization:** continuity adds caller/process,
+  CRI workload and attachment checks. Standalone export requires protected
+  administrator policy, durable fencing, OVN identity checks and explicit
+  GoBGP speaker attestation. Do not infer authorization from a route, socket,
+  health check or OVN external IDs alone.
+- **Control plane and forwarding:** GoBGP handles BGP/EVPN control-plane
+  state. OVN/OVS forwards workload packets. Linux Netlink manages state used by
+  OVN/OVS; Linux bridges are not an independent workload dataplane.
+- **Legacy management RPCs:** `evpn-mgmt` and `ovsdb-mgmt` use gRPC without
+  transport authentication or authorization. The legacy Kind compatibility
+  profile limits these services to ClusterIP, but any permitted in-cluster
+  caller remains unauthenticated. ClusterIP is not authentication or
+  multi-tenant isolation. Do not deploy this compatibility profile in a
+  shared or untrusted cluster.
+- **Supported Operator profile:** its Netlink core profile excludes the legacy
+  management services and `bgp_ad_handler`. The Operator and Node-Agent remain
+  privileged, with broad permissions and host access; constrain who can
+  create or modify their configuration and run them only on trusted nodes.
+- **External BGP peers:** authentication and filtering of remote BGP sessions
+  are separate from local speaker attestation and endpoint authorization.
+  TCP MD5 is not encryption. Use independent network controls and reviewed
+  peer policy; interoperability and production key rotation are not claimed.
+- **Host and test tooling:** Docker, Containerlab, Kubernetes administration,
+  host mounts and privileged containers effectively grant host-level control.
+  Run only reviewed source and pinned inputs on a disposable host.
 
-Containerlab management PKI is separate from application transports.
-**Framework gRPC TLS was not enabled in the historical C4.4f.2q.2 acceptance
-runs.** No authenticated Framework management acceptance is claimed.
-The [API reference](docs/api/README.md) lists implemented, unimplemented,
-compatibility-oriented and state-mutating operations.
+The benchmark-only Netlink provenance bypass is not part of the supported
+secure profile and must not be enabled for release or operational use.
 
-Do not treat ClusterIP, a container network, or a Unix socket alone as a complete
-multi-tenant security design. Enforce host/network access restrictions outside
-the example deployment. If that isolation cannot be guaranteed, do not run it.
-Before applying `deploy/kind/k8s.yaml` or the Operator core manifest, enforce
-host/perimeter firewall rules that deny untrusted access to **every node's**
-NodePorts `30052` and `30053`, and to any exposed OVN/OVSDB/GoBGP endpoints.
-Restrict pod-to-service reachability to trusted lab workloads as well; host
-firewall rules alone do not provide Kubernetes tenant isolation. Verify denial
-from an untrusted segment and intended access from the trusted lab segment.
-Do not attach this lab to a public or shared network. If these conditions cannot
-be enforced, do not apply the examples. ClusterIP and loopback-only port-forwarding
-would reduce exposure but do not add authentication.
+## Configuration and evidence handling
 
-The maintainer explicitly accepted the HIGH unauthenticated NodePort risk for
-this experimental source release **only under this dedicated-lab containment**.
-The MEDIUM broad Operator RBAC risk includes cluster-wide Secret read/write/delete
-permission: never install this Operator in a cluster holding unrelated secrets.
-These are documented residual risks, not remediated findings or validated
-production controls. Dependency security updates do not add management
-authentication or reduce deployment privileges.
-Network authentication, authorization and narrower deployment privileges remain
-[API-02 / K8S-01 roadmap work](docs/roadmap/backlog.md).
+Keep kubeconfigs, credentials, private keys, certificates, environment files,
+raw logs, packet captures and acceptance bundles out of source control and
+public artifacts. Generate fresh lab credentials locally; never reuse lab CA
+material. Captures and diagnostics can expose workload addresses and identities.
 
-The pre-release source uses gRPC 1.83.2, which includes the HTTP/2 receive-buffer
-compaction and Rapid Reset fixes, and GoBGP 4.7.0, which includes the identified
-BGP parser fixes. Keep gRPC's receive-buffer compaction enabled; do not set
-`GRPC_GO_EXPERIMENTAL_ENABLE_RECEIVE_BUFFER_COMPACTION=false`.
-The independently deployed k8gobgp image must be verified separately: changing
-the framework's client dependencies does not update that speaker or establish
-container OS-package security or live interoperability.
-
-## Three independent EVPN security boundaries
-
-| Boundary | Implemented scope / remaining acceptance |
-|---|---|
-| Remote BGP peer transport | TCP MD5 is configurable through existing k8gobgp v0.2.8 `authPasswordSecretRef`; authenticated peering has not been validated. TCP-AO interoperability, GTSM, ACLs, route policy and coordinated rotation remain [open work](docs/roadmap/backlog.md#sec-01). |
-| Local Node-Agent-to-GoBGP speaker | Speaker attestation verifies process/executable identity, protected configuration and Unix API peer identity, with ownership/incarnation fences. This does not authenticate a remote BGP neighbor or encrypt BGP traffic. |
-| Endpoint advertisement authorization | Standalone export requires protected administrator policy, an accepted revision/generation fence and authoritative OVN identity intersection. OVN external IDs alone are not permission to advertise. |
-
-MD5 and TCP-AO provide transport authentication/integrity, **not encryption**.
-GTSM, restricted TCP/179 reachability and scoped EVPN import/export policies
-remain independent controls. Protect management APIs and journals separately.
-Kubernetes peer/Secret configuration belongs to k8gobgp; the framework must not
-introduce a second neighbor writer. For existing Secret-reference semantics,
-rotation limitations and source/version evidence, see the
-[peer-security plan](docs/roadmap/upstream/bgp-peer-security.md).
-The successful standalone smoke establishes neither MD5/AO interoperability
-nor production peer security.
-
-## Credentials and generated material
-
-Generate fresh lab certificates locally with
-[`tools/generate-lab-certs.sh`](tools/generate-lab-certs.sh). Keep its output,
-kubeconfigs, keys, environment files, raw logs, packet captures and acceptance
-bundles outside source control and public artifacts. Never reuse historical lab
-CA material. Review evidence before sharing: captures and diagnostics can contain
-workload addresses, identities or credentials.
-
-## Cleanup and reproduction
-
-Read the [Containerlab ownership/recovery procedure](deploy/containerlab/README.md)
-before running a live suite. Use only exact run-owned topology receipts for
-cleanup. Never use global destroy, Docker prune, wildcard resource deletion, or
-an existing cluster as a test environment. The
-[development checks](TESTING_GUIDE.md#development-checks) do not require
-privileged live tests.
+Use the run-owned cleanup procedure in the [Containerlab guide](deploy/containerlab/README.md).
+Never use global destroy, Docker prune, wildcard resource deletion, or an
+existing cluster as a test environment. Offline tests do not require
+privileged live infrastructure.
 
 ## Reporting
 
-Do not put credentials, private keys or sensitive captures in public issues.
-For a suspected vulnerability, first request a private reporting channel from
-the maintainer without disclosing exploit details or sensitive material.
-No response-time commitment or independent security certification is implied.
+Do not include credentials, private keys or sensitive captures in public
+issues. Contact the maintainer through a private channel for suspected
+vulnerabilities; no response-time commitment or independent security
+certification is implied.

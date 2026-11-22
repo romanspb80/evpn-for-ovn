@@ -2,6 +2,7 @@
 """Disposable shared-OVN CNI test with an Operator-managed Node-Agent."""
 
 import argparse
+import copy
 from datetime import datetime, timezone
 import hashlib
 import ipaddress
@@ -24,6 +25,7 @@ import operator_ownership
 
 
 INVENTORY_SCENARIO = "operator-inventory-type2-two-worker"
+INVENTORY_GAP_CASES = frozenset({"H052", "H053", "H054", "M010"})
 EXAMPLE = fixture.ROOT / "deploy/operator/examples/two-worker"
 REMOTE_IP = "10.244.240.30"
 REMOTE_MAC = "02:00:00:00:00:30"
@@ -38,6 +40,7 @@ INVENTORY_CAPTURE_MAX_SECONDS = 120
 INVENTORY_EVIDENCE_ARTIFACTS = frozenset({
     "dataplane-forwarding.json",
     "inventory-capture-start.json",
+    "inventory-frr-workload-tools.json",
     "inventory-capture-stop.json",
     "inventory-capture-stop-command.json",
     "inventory-packet-evidence.json",
@@ -49,6 +52,8 @@ INVENTORY_EVIDENCE_ARTIFACTS = frozenset({
     "inventory-worker-b-net1-decoded.json",
     "inventory-worker-a-underlay.pcap",
     "inventory-worker-b-underlay.pcap",
+    "inventory-worker-a-geneve-underlay.pcap",
+    "inventory-worker-b-geneve-underlay.pcap",
     "inventory-frr-underlay.pcap",
     "inventory-frr-workload.pcap",
     "inventory-frr-workload-decoded.json",
@@ -56,11 +61,57 @@ INVENTORY_EVIDENCE_ARTIFACTS = frozenset({
     "ovs-dataplane-worker-b.json",
     "ovs-dataplane-after-worker-a.json",
     "ovs-dataplane-after-worker-b.json",
+    "inventory-gap-H052.json",
+    "inventory-gap-H053.json",
+    "inventory-gap-H054.json",
+    "inventory-gap-M010.json",
+    "inventory-cross-worker-a-net1.pcap",
+    "inventory-cross-worker-b-net1.pcap",
+    "inventory-cross-worker-a-net1-decoded.json",
+    "inventory-cross-worker-b-net1-decoded.json",
+    "inventory-cross-worker-captures.json",
 })
+INVENTORY_GAP_ARTIFACTS = {
+    "H052": frozenset({"inventory-gap-H052.json", "inventory-worker-a-geneve-underlay.pcap",
+                       "inventory-worker-b-geneve-underlay.pcap", "inventory-cross-worker-a-net1.pcap",
+                       "inventory-cross-worker-b-net1.pcap", "inventory-cross-worker-a-net1-decoded.json",
+                       "inventory-cross-worker-b-net1-decoded.json", "inventory-cross-worker-captures.json"}),
+    **{case: frozenset({f"inventory-gap-{case}.json"}) for case in ("H053", "H054", "M010")},
+}
+INVENTORY_BASE_ARTIFACTS = INVENTORY_EVIDENCE_ARTIFACTS - frozenset().union(*INVENTORY_GAP_ARTIFACTS.values())
+INVENTORY_PROBE_IDS = {"H052": (41000, 41001),
+                       "H053": tuple(42000 + role * 10 + phase for role in (0, 1) for phase in range(6)),
+                       "H054": (43000,),
+                       "M010": (45000,)}
+for _case, _identifiers in INVENTORY_PROBE_IDS.items():
+    INVENTORY_GAP_ARTIFACTS[_case] |= frozenset(f"inventory-probe-{identifier}.json" for identifier in _identifiers)
+INVENTORY_EVIDENCE_ARTIFACTS |= frozenset().union(*INVENTORY_GAP_ARTIFACTS.values())
+for _case in ("H053", "H054"):
+    _recovered = frozenset(
+        f"{_case}-recovered-{name}" for name in (
+            "inventory-worker-a-net1.pcap", "inventory-worker-b-net1.pcap",
+            "inventory-frr-workload.pcap", "inventory-worker-a-net1-decoded.json",
+            "inventory-worker-b-net1-decoded.json", "inventory-frr-workload-decoded.json",
+            "inventory-workload-captures.json", "inventory-cross-worker-a-net1.pcap",
+            "inventory-cross-worker-b-net1.pcap", "inventory-cross-worker-a-net1-decoded.json",
+            "inventory-cross-worker-b-net1-decoded.json", "inventory-cross-worker-captures.json",
+        )
+    )
+    INVENTORY_GAP_ARTIFACTS[_case] |= _recovered
+    INVENTORY_EVIDENCE_ARTIFACTS |= _recovered
 INVENTORY_ENDPOINTS = (
     ("10.244.240.11", "02:00:00:00:00:11"),
     ("10.244.240.12", "02:00:00:00:00:12"),
 )
+
+
+def parse_inventory_gap_cases(value):
+    cases = tuple(part.strip().upper() for part in value.split(",") if part.strip())
+    if not cases or len(set(cases)) != len(cases) or set(cases) - INVENTORY_GAP_CASES:
+        raise argparse.ArgumentTypeError(
+            "inventory gap cases must be a non-empty, duplicate-free subset of H052,H053,H054,M010"
+        )
+    return cases
 
 
 def utc_timestamp():
@@ -95,6 +146,17 @@ def verify_inventory_source_provenance(provenance_path, archive_path, environmen
         "archiveFormat": "tar",
         "archiveCommand": f"git archive --format=tar {commit}",
     }
+    kind = environment.get("EVPN_SOURCE_ARCHIVE_KIND", "commit")
+    if kind == "worktree":
+        diff_sha = environment.get("EVPN_SOURCE_WORKTREE_DIFF_SHA256", "")
+        if not re.fullmatch(r"[0-9a-f]{64}", diff_sha):
+            raise InventoryEvidenceError("MISSING_OBSERVATION", "worktree diff provenance is missing")
+        expected.update(
+            archiveCommand="git ls-files --cached --others --exclude-standard -z | sort -zu | tar --null -T - -cf -",
+            archiveKind="worktree", workingTreeDiffSHA256=diff_sha,
+        )
+    elif kind != "commit":
+        raise InventoryEvidenceError("ATTRIBUTION_UNCERTAIN", "unsupported source archive kind")
     if archive_format != "tar" or archive_command != expected["archiveCommand"] or provenance != expected:
         raise InventoryEvidenceError("ATTRIBUTION_UNCERTAIN", "source provenance does not match the guest receipt")
     with Path(archive_path).open("rb") as stream:
@@ -551,15 +613,33 @@ def parse_inventory_ping_result(output, returncode):
     transmitted, received, loss = (
         map(int, match.groups()) if match else (None, None, None)
     )
+    status = (
+        "SETUP_FAILURE" if match is None else
+        "PASS" if returncode == 0 and transmitted == 3 and received == 3 and loss == 0 else
+        "FAIL"
+    )
     return {
         "exitStatus": returncode,
         "transmitted": transmitted,
         "received": received,
         "lossPercent": loss,
-        "status": "PASS"
-        if returncode == 0 and transmitted == 3 and received == 3 and loss == 0
-        else "FAIL",
+        "status": status,
     }
+
+
+def inventory_ping_failure(node, direction, result, returncode, stderr):
+    setup_failure = result["status"] == "SETUP_FAILURE"
+    label = "could not be executed" if setup_failure else "failed"
+    return InventoryEvidenceError(
+        "WORKLOAD_STIMULUS_SETUP_FAILURE" if setup_failure else "FUNCTIONAL_DATAPLANE_FAILURE",
+        f"{node}: {direction} IPv4 ping {label}; exit={returncode}; stderr={stderr or ''}",
+    )
+
+
+def inventory_forwarding_failure_status(traffic_started, failure_class):
+    if not traffic_started or failure_class == "WORKLOAD_STIMULUS_SETUP_FAILURE":
+        return "BLOCKED"
+    return "FAIL"
 
 
 def verify_inventory_forwarding_captures(directory, endpoints):
@@ -676,11 +756,14 @@ def verify_inventory_forwarding_captures(directory, endpoints):
     return {"status": "PASS", "vni": 1000, "remoteVtep": REMOTE_VTEP, "workers": evidence}
 
 
-def verify_external_import_evidence(status, export, journal, fdb, neighbors, identity, installation, vtep):
+def verify_external_import_evidence(status, export, journal, fdb, neighbors, identity, installation, vtep,
+                                    allow_fenced_export=False):
     """Check one worker's attested speaker and acknowledged remote Type-2 state."""
     speaker = export.get("SpeakerProcess") or {}
     standalone = speaker.get("standalone") or {}
-    if (export.get("Error") or not speaker.get("PID") or not speaker.get("StartTicks") or
+    fenced = export.get("InventoryTrust") or {}
+    expected_fence = allow_fenced_export and fenced.get("Phase") == "FENCED" and fenced.get("Security") is True
+    if ((export.get("Error") and not expected_fence) or not speaker.get("PID") or not speaker.get("StartTicks") or
             standalone.get("nodeUID") != identity["nodeUID"] or
             standalone.get("installationUID") != installation or standalone.get("routerID") != vtep):
         raise fixture.IsolationError("worker speaker attestation is not established")
@@ -1109,7 +1192,7 @@ class OperatorSecondaryCNI(fixture.IsolatedSecondaryCNI):
 
     def verify_inventory_operator(self, namespace, core_name, expected_selector, *,
                                   expected_identities=None, expected_installation=None,
-                                  expected_cluster=None):
+                                  expected_cluster=None, require_fenced=False):
         """Collect Operator and host fence evidence without treating Pod readiness as acceptance."""
         core = self.get_json("-n", namespace, "get", "evpncore", core_name)
         if expected_identities is not None:
@@ -1134,7 +1217,7 @@ class OperatorSecondaryCNI(fixture.IsolatedSecondaryCNI):
                     for node in self.workers}
         operator_ownership.verify_external_ovn(
             core, lease, ds, pods, nodes, expected_selector,
-            inventory_publication=publication, inventory_journals=journals)
+            inventory_publication=publication, inventory_journals=journals, require_fenced=require_fenced)
         agent = core["spec"]["nodeAgent"]
         template = ds["spec"]["template"]["spec"]
         if (template.get("serviceAccountName") != "evpn-provider-observer" or
@@ -1508,16 +1591,26 @@ class OperatorSecondaryCNI(fixture.IsolatedSecondaryCNI):
 class OperatorInventoryType2(OperatorSecondaryCNI):
     """Clean-install inventory slice with an external FRR peer."""
 
-    def __init__(self, ctr, ctr_sha256, gobgpd, gobgpd_sha256):
+    def __init__(self, ctr, ctr_sha256, gobgpd, gobgpd_sha256, gap_cases=()):
         super().__init__(ctr, ctr_sha256)
+        evidence_root = os.environ.get("EVPN_INVENTORY_EVIDENCE_ROOT")
+        if evidence_root:
+            root = Path(evidence_root)
+            if not root.is_absolute() or root.is_symlink() or not root.is_dir():
+                raise fixture.IsolationError("inventory evidence root must be an existing absolute nonsymlink directory")
+            self.directory = root / (self.cluster + "-evidence")
+            self.kubeconfig = self.directory / "kubeconfig"
+            self.image_receipt = self.directory / "image-ownership.json"
         self.gobgpd = Path(gobgpd)
         self.gobgpd_sha256 = gobgpd_sha256
         self.cluster_uid = str(uuid.uuid4())
         self.frr = self.cluster + "-frr"
         self.forwarding_status = "NOT_REACHED"
+        self.gap_cases = frozenset(gap_cases)
 
     def record(self, name, value):
-        if name in ("failure.json", "workload-evidence-error.json", "inventory-acceptance-unknown.json"):
+        if name in ("failure.json", "workload-evidence-error.json", "inventory-acceptance-unknown.json",
+                    "inventory-capture-startup-failure.json", "inventory-frr-workload-tools.json"):
             value = redact_inventory_evidence(value)
         super().record(name, value)
 
@@ -1587,6 +1680,9 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
         fixture.run(["go", "build", "-o", build / "peerpidfd-probe",
                      "./tools/e2e/peerpidfdprobe"],
                     timeout=900, env=dict(fixture.os.environ, CGO_ENABLED="0"))
+        if "H054" in self.gap_cases:
+            fixture.run(["go", "build", "-o", build / "trustcut", "./tools/e2e/trustcut"],
+                        timeout=900, env=dict(fixture.os.environ, CGO_ENABLED="0"))
         return extra + "COPY peerpidfd-probe /usr/local/bin/peerpidfd-probe\n"
 
     def deploy_secondary_ovn(self):
@@ -1596,6 +1692,9 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
         return "/var/lib/evpn-worker/cni/journal.json"
 
     def result_status(self):
+        if self.gap_cases:
+            return ("OPERATOR_INVENTORY_GAPS_OBSERVED" if self.forwarding_status == "PASS"
+                    else "OPERATOR_INVENTORY_GAPS_INCOMPLETE")
         return ("OPERATOR_INVENTORY_TWO_WORKER_PASS" if self.forwarding_status == "PASS"
                 else "OPERATOR_INVENTORY_TWO_WORKER_PARTIAL")
 
@@ -1604,7 +1703,10 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
                 "type2": "REMOTE_IMPORT_OBSERVED", "localExport": "EXPORT_RECEIPT_AND_FRR_OBSERVED",
                 "localSpeakerRIB": "OBSERVED",
                 "liveEVPNType2": "PASS" if self.forwarding_status == "PASS" else "OBSERVED",
-                "vxlanForwarding": self.forwarding_status, "recovery": "NOT_TESTED"}
+                "vxlanForwarding": self.forwarding_status, "recovery": "NOT_TESTED" if "H053" not in self.gap_cases else "SEE_H053",
+                "gapCases": {case: json.loads((self.directory / f"inventory-gap-{case}.json").read_text())["status"]
+                             if (self.directory / f"inventory-gap-{case}.json").is_file() else "NOT_REACHED"
+                             for case in sorted(self.gap_cases)}}
 
     def apply_text(self, name, text, *, create=False):
         path = self.directory / name
@@ -1664,6 +1766,8 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
             self.docker("cp", self.ctr, f"{node}:/opt/evpn/bin/ctr")
             self.docker("cp", self.gobgpd, f"{node}:/usr/local/bin/gobgpd")
             self.docker("cp", self.directory / "build/type2rib", f"{node}:/opt/evpn/bin/type2rib")
+            if "H054" in self.gap_cases:
+                self.docker("cp", self.directory / "build/trustcut", f"{node}:/opt/evpn/bin/trustcut")
             self.worker(node, "chown", "root:root", "/opt/evpn/bin/ctr", "/usr/local/bin/gobgpd")
             self.worker(node, "chmod", "755", "/opt/evpn/bin/ctr", "/usr/local/bin/gobgpd")
             self.worker(node, "chmod", "600", "/run/containerd/containerd.sock")
@@ -1680,7 +1784,13 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
             speaker_file.write_text(speaker)
             speaker_file.chmod(0o600)
             self.docker("cp", speaker_file, f"{node}:/etc/evpn/gobgpd.yaml")
-            self.docker("cp", EXAMPLE / "gobgpd.service", f"{node}:/etc/systemd/system/evpn-e2e-gobgpd.service")
+            service_file = EXAMPLE / "gobgpd.service"
+            if "H053" in self.gap_cases:
+                # Preserve the directory inode mounted into the agent across speaker restarts.
+                service_file = self.directory / f"{node}-gobgpd.service"
+                service_file.write_text((EXAMPLE / "gobgpd.service").read_text().replace(
+                    "RuntimeDirectoryMode=0700", "RuntimeDirectoryMode=0700\nRuntimeDirectoryPreserve=yes"))
+            self.docker("cp", service_file, f"{node}:/etc/systemd/system/evpn-e2e-gobgpd.service")
             self.worker(node, "chown", "root:root", "/etc/evpn/gobgpd.yaml")
             self.worker(node, "chmod", "600", "/etc/evpn/gobgpd.yaml")
             self.worker(node, "systemctl", "daemon-reload")
@@ -1791,7 +1901,7 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
                                                   f'evpn.e2e/owner: "{self.owner}"')
         self.apply_text("inventory-core.yaml", core)
 
-    def await_inventory_acceptance(self, identities, installation):
+    def await_inventory_acceptance(self, identities, installation, *, require_fenced=False):
         last = ""
         for _ in range(180):
             try:
@@ -1799,14 +1909,15 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
                                                       {"evpn.e2e/owner": self.owner},
                                                       expected_identities=identities,
                                                       expected_installation=installation,
-                                                      expected_cluster=self.cluster_uid)
+                                                      expected_cluster=self.cluster_uid,
+                                                      require_fenced=require_fenced)
             except (fixture.IsolationError, lab.LabError, OSError, ValueError, KeyError) as error:
                 last = str(error)
                 time.sleep(1)
         self.record("inventory-acceptance-unknown.json", {"acceptance": "UNKNOWN", "error": last})
         raise fixture.IsolationError(f"inventory acceptance unconfirmed: {last}")
 
-    def await_external_import(self, node, identity, installation, vtep):
+    def await_external_import(self, node, identity, installation, vtep, require_export=True):
         last = ""
         for _ in range(180):
             try:
@@ -1819,7 +1930,7 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
                 neighbors = json.loads(self.worker(node, "ip", "-j", "neigh", "show",
                                                    "dev", "evpnbr1000").stdout)
                 verify_external_import_evidence(status, export, journal, fdb, neighbors,
-                                                identity, installation, vtep)
+                                                identity, installation, vtep, allow_fenced_export=not require_export)
                 self.record(f"external-import-{node}.json", {
                     "status": status, "export": export, "journal": journal,
                     "fdb": fdb, "neighbors": neighbors})
@@ -1829,9 +1940,11 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
                 time.sleep(1)
         raise fixture.IsolationError(f"{node}: remote Type-2 import not verified: {last}")
 
-    def create_inventory_endpoints(self, rendered, identities):
+    def create_inventory_endpoints(self, rendered, identities, *, recreate_node=None):
         names = []
         for suffix, node, (ip, mac) in zip(("a", "b"), self.workers, INVENTORY_ENDPOINTS):
+            if recreate_node is not None and node != recreate_node:
+                continue
             name = "tenant-a-worker-" + suffix
             config = {"cniVersion": "1.0.0", "name": name, "type": "evpn-cni",
                       "nodeAgentSocket": self.agent_socket(), "networkID": "tenant-a",
@@ -1850,7 +1963,14 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
                      "name": "client", "image": self.image, "imagePullPolicy": "Never",
                      "securityContext": {"capabilities": {"add": ["NET_RAW", "NET_ADMIN"]}},
                      "command": ["/bin/sh", "-c", "sleep infinity"]}]}}]}
-            self.apply_text(f"inventory-endpoint-{suffix}.json", json.dumps(objects), create=True)
+            if recreate_node is not None:
+                nad = self.get_json("-n", "evpn-system", "get", "network-attachment-definition", name)
+                if (nad["metadata"].get("labels", {}).get("evpn.e2e/owner") != self.owner or
+                        nad["spec"] != objects["items"][0]["spec"]):
+                    raise fixture.IsolationError("endpoint recreation NAD ownership/config changed")
+                objects["items"] = objects["items"][1:]
+            self.apply_text(f"inventory-endpoint-{'recreated-' if recreate_node else ''}{suffix}.json",
+                            json.dumps(objects), create=True)
             names.append((node, name, ip, mac))
         self.k("-n", "evpn-system", "wait", "--for=condition=Ready",
                *["pod/" + name for _, name, _, _ in names], "--timeout=180s")
@@ -1899,11 +2019,15 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
 
     def await_local_export(self, node, endpoint, identity, installation):
         last = ""
+        transitions = []
         for _ in range(180):
             try:
                 status = json.loads(self.worker(node, "cat", "/run/evpn-node-agent/export-status.json").stdout)
                 raw = self.worker(node, "cat", "/var/lib/evpn-worker/export/journal.json").stdout
                 journal = json.loads(raw)
+                if status.get("Error") and (not transitions or transitions[-1]["status"].get("Error") != status["Error"]):
+                    transitions.append({"status": status, "journal": journal})
+                    self.record(f"local-export-wait-{node}.json", transitions)
                 prefix = '{"Record":'
                 if not raw.startswith(prefix):
                     raise fixture.IsolationError("malformed export journal envelope")
@@ -1960,7 +2084,7 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
         self.record(f"local-rib-{node}.json", {"speaker": speaker, "paths": paths,
                                                "matchedPath": match, "receiptUUID": path_uuid})
 
-    def collect_ovs_dataplane(self, node, endpoint, expected_chassis, phase="before"):
+    def collect_ovs_dataplane(self, node, endpoint, expected_chassis, phase="before", persist=True):
         tunnels = self.runtime(node, "ovn", "ovs-vsctl", "--bare", "--columns=name", "find",
                                "Interface", "type=vxlan", "options:dst_port=4789").stdout.split()
         if len(tunnels) != 1:
@@ -2013,9 +2137,15 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
             "portCounters": ports,
             "tunnelCounters": parse_ovs_port_counters(ports, int(port)),
         }
-        record_name = (f"ovs-dataplane-{node}.json" if phase == "before"
-                       else f"ovs-dataplane-{phase}-{node}.json")
-        self.record(record_name, snapshot)
+        if len(self.workers) != 2 or node not in self.workers:
+            raise fixture.IsolationError(f"{node}: OVS evidence node is not an inventory worker")
+        alias = "worker-a" if self.workers.index(node) == 0 else "worker-b"
+        snapshot["node"] = node
+        snapshot["workerAlias"] = alias
+        record_name = (f"ovs-dataplane-{alias}.json" if phase == "before"
+                       else f"ovs-dataplane-{phase}-{alias}.json")
+        if persist:
+            self.record(record_name, snapshot)
         return snapshot
 
     def collect_linux_forwarding_counters(self):
@@ -2459,11 +2589,82 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
             deltas[node] = node_delta
         return deltas
 
-    def start_inventory_workload_captures(self, endpoints):
+    def ensure_inventory_frr_workload_tools(self):
+        state = lab.load(self.directory)
+        if (state["profile"] != "cni-inventory-frr" or state["frr"] != self.frr or
+                state["phase"] != "ready"):
+            raise fixture.IsolationError("refusing capture-tool provisioning outside the ready owned FRR lab")
+        current = lab.verify_owned(state)
+        container_id = current["containers"].get(self.frr)
+        if not container_id:
+            raise fixture.IsolationError("run-owned FRR container identity is unavailable")
+        command = [
+            "docker", "exec", self.frr, "sh", "-ec",
+            "command -v apk >/dev/null 2>&1; "
+            "needs_install=0; "
+            "command -v tcpdump >/dev/null 2>&1 || needs_install=1; "
+            "ping_help=$(ping -h 2>&1 || true); "
+            "if ! printf '%s\\n' \"$ping_help\" | grep -Eq '(^|[[:space:]])-e([[:space:],]|$)'; then needs_install=1; fi; "
+            "if [ \"$needs_install\" = 1 ]; then "
+            "printf 'provisioning=apk-add-tcpdump-iputils-ping\\n'; "
+            "timeout -s INT -k 5 90 apk add --no-cache tcpdump iputils-ping; "
+            "else printf 'provisioning=already-present\\n'; fi; "
+            "printf 'tcpdump-path='; command -v tcpdump; "
+            "printf 'tcpdump-version='; tcpdump --version 2>&1 | head -n 1; "
+            "printf 'tcpdump-package='; apk info -v tcpdump; "
+            "printf 'ping-path='; command -v ping; "
+            "printf 'ping-version='; ping -V 2>&1 | head -n 1; "
+            "printf 'ping-package='; apk info -v iputils-ping; "
+            "ping_identifier_option=$(ping -h 2>&1 | grep -E '(^|[[:space:]])-e([[:space:],]|$)' | head -n 1 || true); "
+            "[ -n \"$ping_identifier_option\" ]; "
+            "printf 'ping-identifier-option=%s\\n' \"$ping_identifier_option\"; "
+            "printf 'alpine-release='; cat /etc/alpine-release",
+        ]
+        result = self.docker(*command[1:], check=False, timeout=120)
+        evidence = {
+            "container": self.frr,
+            "containerID": container_id,
+            "command": command,
+            "returncode": result.returncode,
+            "stdout": result.stdout or "",
+            "stderr": result.stderr or "",
+            "status": "PASS" if result.returncode == 0 else "FAIL",
+        }
+        self.record("inventory-frr-workload-tools.json", evidence)
+        if result.returncode:
+            raise InventoryEvidenceError(
+                "WORKLOAD_TOOL_SETUP_FAILURE",
+                f"could not provision/verify tcpdump and iputils ping in run-owned FRR container: {result.stderr or result.stdout}",
+            )
+
+    def start_inventory_workload_captures(self, endpoints, cross_worker=False, artifact_prefix=""):
+        self.ensure_inventory_frr_workload_tools()
         capture_specs = []
+        timeout_prefix = ["timeout", "-s", "INT", "-k", "5", str(INVENTORY_CAPTURE_MAX_SECONDS)]
         for index, node in enumerate(self.workers):
             endpoint = endpoints[node]
             suffix = "a" if index == 0 else "b"
+            if cross_worker:
+                peer_node = next(candidate for candidate in self.workers if candidate != node)
+                peer = endpoints[peer_node]
+                packet_filter = (
+                    "icmp and ((src host " + endpoint["ip"] + " and dst host " + peer["ip"] + ") or "
+                    "(src host " + peer["ip"] + " and dst host " + endpoint["ip"] + "))"
+                )
+                capture_specs.append({
+                    "name": f"inventory-cross-worker-{suffix}-net1",
+                    "pcap": f"inventory-cross-worker-{suffix}-net1.pcap",
+                    "decode": f"inventory-cross-worker-{suffix}-net1-decoded.json",
+                    "expectedCount": 12,
+                    "filter": packet_filter,
+                    "command": [
+                        "kubectl", "--kubeconfig", str(self.kubeconfig), "--context", self.context,
+                        "-n", "evpn-system", "exec", endpoint["pod"], "-c", "client", "--",
+                        *timeout_prefix, "tcpdump", "--immediate-mode", "-nn", "-U", "-i", "net1",
+                        "-c", "12", "-w", "-", packet_filter,
+                    ],
+                })
+                continue
             capture_specs.append({
                 "name": f"inventory-worker-{suffix}-net1",
                 "pcap": f"inventory-worker-{suffix}-net1.pcap",
@@ -2474,9 +2675,9 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
                     "(src host " + REMOTE_IP + " and dst host " + endpoint["ip"] + "))"
                 ),
                 "command": [
-                    "kubectl", "-n", "evpn-system", "exec", endpoint["pod"], "-c", "client", "--",
-                    "timeout", "--signal=INT", "--kill-after=5s",
-                    f"{INVENTORY_CAPTURE_MAX_SECONDS}s", "tcpdump",
+                    "kubectl", "--kubeconfig", str(self.kubeconfig), "--context", self.context,
+                    "-n", "evpn-system", "exec", endpoint["pod"], "-c", "client", "--",
+                    *timeout_prefix, "tcpdump",
                     "--immediate-mode", "-nn", "-U", "-i", "net1",
                     "-c", str(INVENTORY_CAPTURE_LIMIT), "-w", "-", (
                         "icmp and ((src host " + endpoint["ip"] + " and dst host " + REMOTE_IP + ") or "
@@ -2484,25 +2685,28 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
                     ),
                 ],
             })
-        endpoint_hosts = " or ".join(f"host {endpoints[node]['ip']}" for node in self.workers)
-        capture_specs.append({
-            "name": "inventory-frr-workload",
-            "pcap": "inventory-frr-workload.pcap",
-            "decode": "inventory-frr-workload-decoded.json",
-            "expectedCount": INVENTORY_CAPTURE_LIMIT * len(self.workers),
-            "filter": f"icmp and host {REMOTE_IP} and ({endpoint_hosts})",
-            "command": [
-                "docker", "exec", self.frr, "ip", "netns", "exec", "remote-workload",
-                "timeout", "--signal=INT", "--kill-after=5s",
-                f"{INVENTORY_CAPTURE_MAX_SECONDS}s", "tcpdump",
-                "--immediate-mode", "-nn", "-U", "-i", "frr-work0",
-                "-c", str(INVENTORY_CAPTURE_LIMIT * len(self.workers)), "-w", "-",
-                f"icmp and host {REMOTE_IP} and ({endpoint_hosts})",
-            ],
-        })
+        if not cross_worker:
+            endpoint_hosts = " or ".join(f"host {endpoints[node]['ip']}" for node in self.workers)
+            capture_specs.append({
+                "name": "inventory-frr-workload",
+                "pcap": "inventory-frr-workload.pcap",
+                "decode": "inventory-frr-workload-decoded.json",
+                "expectedCount": INVENTORY_CAPTURE_LIMIT * len(self.workers),
+                "filter": f"icmp and host {REMOTE_IP} and ({endpoint_hosts})",
+                "command": [
+                    "docker", "exec", self.frr, "ip", "netns", "exec", "remote-workload",
+                    *timeout_prefix, "tcpdump",
+                    "--immediate-mode", "-nn", "-U", "-i", "frr-work0",
+                    "-c", str(INVENTORY_CAPTURE_LIMIT * len(self.workers)), "-w", "-",
+                    f"icmp and host {REMOTE_IP} and ({endpoint_hosts})",
+                ],
+            })
         captures = []
         try:
             for spec in capture_specs:
+                for key in ("pcap", "decode"):
+                    spec[key] = artifact_prefix + spec[key]
+                spec["artifactPrefix"] = artifact_prefix
                 pcap_path = self.directory / spec["pcap"]
                 if pcap_path.exists() or pcap_path.is_symlink():
                     raise fixture.IsolationError(f"refusing pre-existing capture artifact {spec['pcap']}")
@@ -2512,7 +2716,8 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
                 )
                 ready = False
                 stderr_lines = []
-                ready_deadline = time.monotonic() + 30
+                capture_started = time.monotonic()
+                ready_deadline = capture_started + 30
                 while time.monotonic() < ready_deadline:
                     if process.poll() is not None:
                         break
@@ -2537,6 +2742,21 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
                         process.kill()
                         process.wait(timeout=10)
                     stream.close()
+                    stderr_remainder = (
+                        process.stderr.read() if process.stderr is not None else ""
+                    )
+                    returncode = process.returncode
+                    self.record("inventory-capture-startup-failure.json", {
+                        "capture": spec["name"],
+                        "command": spec["command"],
+                        "elapsedSeconds": round(time.monotonic() - capture_started, 3),
+                        "startupStderrLines": stderr_lines,
+                        "trailingStderr": stderr_remainder,
+                        "returncode": returncode,
+                        "signal": -returncode if returncode is not None and returncode < 0 else None,
+                    })
+                    if process.stderr is not None:
+                        process.stderr.close()
                     raise InventoryEvidenceError(
                         "CAPTURE_SETUP_FAILURE", f"{spec['name']}: capture did not become ready"
                     )
@@ -2568,7 +2788,7 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
             raise InventoryEvidenceError("CAPTURE_SETUP_FAILURE", str(error)) from error
         return captures
 
-    def stop_inventory_workload_captures(self, captures, endpoints):
+    def stop_inventory_workload_captures(self, captures, endpoints, cross_worker_ids=None):
         decode = {}
         details = []
         failures = []
@@ -2622,7 +2842,14 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
                     )
                 validate_capture_statistics(stats, capture["expectedCount"])
                 packets = fixture.decode_icmp_pcap(self.directory / capture["pcap"])
-                if capture["name"].startswith("inventory-worker-"):
+                if capture["name"].startswith("inventory-cross-worker-"):
+                    index = 0 if capture["name"].startswith("inventory-cross-worker-a") else 1
+                    endpoint = {**endpoints[self.workers[index]], "node": self.workers[index]}
+                    decode[endpoint["node"]] = {
+                        "capture": capture["pcap"], "decodedPath": capture["decode"],
+                        "packetCount": len(packets),
+                    }
+                elif capture["name"].startswith("inventory-worker-"):
                     index = 0 if capture["name"].startswith("inventory-worker-a") else 1
                     endpoint = {**endpoints[self.workers[index]], "node": self.workers[index]}
                     summary = verify_inventory_workload_packets(packets, endpoint)
@@ -2648,7 +2875,9 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
                 failures.append(error)
             details.append(detail)
         report = {"captures": details, "decoded": decode}
-        self.record("inventory-workload-captures.json", report)
+        prefix = captures[0].get("artifactPrefix", "") if captures else ""
+        self.record(prefix + ("inventory-cross-worker-captures.json" if cross_worker_ids is not None
+                              else "inventory-workload-captures.json"), report)
         if failures:
             error = failures[0]
             if isinstance(error, InventoryEvidenceError):
@@ -2658,8 +2887,8 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
 
     def record_inventory_evidence_manifest(self, endpoints, traffic_window, workload_captures, dataplane_status):
         source = verify_inventory_source_provenance(
-            Path.home() / "evpn-for-ovn-source-provenance.json",
-            Path.home() / "evpn-for-ovn-source.tar",
+            Path(os.environ.get("EVPN_SOURCE_PROVENANCE_PATH", Path.home() / "evpn-for-ovn-source-provenance.json")),
+            Path(os.environ.get("EVPN_SOURCE_ARCHIVE_PATH", Path.home() / "evpn-for-ovn-source.tar")),
         )
         image_id = self.docker("image", "inspect", "--format", "{{.Id}}", self.image).stdout.strip()
         if not image_id.startswith("sha256:"):
@@ -2704,6 +2933,7 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
             },
             "trafficWindow": traffic_window,
             "workloadCaptureWindow": workload_captures,
+            "gapCases": list(sorted(self.gap_cases)),
             "observationContract": {
                 "workloadInterfaces": "EXPECTED_FORWARDING",
                 "ovsTunnelAndType2Flow": "EXPECTED_FORWARDING",
@@ -2713,13 +2943,14 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
             },
         }
         manifest["artifacts"] = evidence_file_manifest(
-            self.directory, sorted(INVENTORY_EVIDENCE_ARTIFACTS)
+            self.directory, sorted(INVENTORY_BASE_ARTIFACTS.union(
+                *(INVENTORY_GAP_ARTIFACTS[case] for case in self.gap_cases)))
         )
         self.record("inventory-evidence-manifest.json", manifest)
         write_inventory_manifest_checksum(self.directory)
         return manifest
 
-    def start_inventory_capture(self, endpoints):
+    def start_inventory_capture(self, endpoints, include_geneve=False):
         state_file = self.directory / "inventory-capture-state.sh"
         if state_file.exists() or state_file.is_symlink():
             raise fixture.IsolationError("refusing a pre-existing inventory capture state file")
@@ -2738,6 +2969,8 @@ class OperatorInventoryType2(OperatorSecondaryCNI):
             raise fixture.IsolationError("external FRR container PID is unavailable")
 
         outputs = ["worker-a-underlay", "worker-b-underlay", "frr-underlay"]
+        if include_geneve:
+            outputs.extend(("worker-a-geneve-underlay", "worker-b-geneve-underlay"))
         script = f"""set -eu
 ROOT={shlex.quote(str(lab.ROOT))}
 KIND_CLUSTER={shlex.quote(self.cluster)}
@@ -2756,6 +2989,14 @@ interop_capture_create_staging_dir
                 f"interop_capture_start_one inventory-worker-{suffix}-underlay {pid} "
                 f"{shlex.quote(interface)} {shlex.quote(filter_text)} {INVENTORY_CAPTURE_MAX_SECONDS}\n"
             )
+        if include_geneve:
+            for index, node, endpoint, pid in workers:
+                suffix = "a" if index == 0 else "b"
+                script += (
+                    f"interop_capture_start_one inventory-worker-{suffix}-geneve-underlay {pid} "
+                    "any 'udp port 6081' "
+                    f"{INVENTORY_CAPTURE_MAX_SECONDS}\n"
+                )
         frr_links = json.loads(self.docker("exec", self.frr, "ip", "-j", "-4", "addr").stdout)
         frr_interface = self.interface_for_address(frr_links, REMOTE_VTEP, self.frr)
         frr_filter = (f"udp port 4789 and host {REMOTE_VTEP} and "
@@ -2828,6 +3069,7 @@ exit "$rc"
         return stop
 
     def verify_inventory_forwarding(self, endpoints, identities, ovs_before):
+        baseline_endpoints = endpoints
         evidence = {"status": "IN_PROGRESS", "scenario": INVENTORY_SCENARIO, "workers": {}}
         self.forwarding_status = "IN_PROGRESS"
         self.forwarding_seeds = None
@@ -2869,7 +3111,10 @@ exit "$rc"
                     "ovs": None,
                 }
             self.record("inventory-forwarding-endpoints.json", capture_endpoints)
-            self.start_inventory_capture(endpoints)
+            if "H052" in self.gap_cases:
+                self.start_inventory_capture(endpoints, include_geneve=True)
+            else:
+                self.start_inventory_capture(endpoints)
             capture_started = True
             workload_capture_endpoints = {
                 item["node"]: item for item in capture_endpoints
@@ -2878,6 +3123,8 @@ exit "$rc"
                 workload_capture_endpoints
             )
             workload_capture_started = True
+            if "H052" in self.gap_cases:
+                self.run_inventory_cross_worker(endpoints)
             traffic_window["startedAt"] = utc_timestamp()
             traffic_window["startedMonotonicNs"] = time.monotonic_ns()
             for index, node in enumerate(self.workers):
@@ -2904,9 +3151,8 @@ exit "$rc"
                     "stdout": forward.stdout, "stderr": forward.stderr,
                 }
                 if forward_result["status"] != "PASS":
-                    raise InventoryEvidenceError(
-                        "FUNCTIONAL_DATAPLANE_FAILURE",
-                        f"{node}: workload-to-external IPv4 ping failed",
+                    raise inventory_ping_failure(
+                        node, "workload-to-external", forward_result, forward.returncode, forward.stderr
                     )
 
                 reverse = lab.command([
@@ -2924,9 +3170,8 @@ exit "$rc"
                     "stdout": reverse.stdout, "stderr": reverse.stderr,
                 }
                 if reverse_result["status"] != "PASS":
-                    raise InventoryEvidenceError(
-                        "FUNCTIONAL_DATAPLANE_FAILURE",
-                        f"{node}: external-to-workload IPv4 ping failed",
+                    raise inventory_ping_failure(
+                        node, "external-to-workload", reverse_result, reverse.returncode, reverse.stderr
                     )
             traffic_window["completedAt"] = utc_timestamp()
             traffic_window["completedMonotonicNs"] = time.monotonic_ns()
@@ -2934,8 +3179,25 @@ exit "$rc"
                 self.stop_inventory_capture(require_packets=True)
             finally:
                 capture_started = False
-            workload_capture_report = self.stop_inventory_workload_captures(workload_captures, endpoints)
+            workload_capture_report = self.stop_inventory_workload_captures(
+                workload_captures, workload_capture_endpoints
+            )
             workload_capture_started = False
+            if "H052" in self.gap_cases:
+                gap = json.loads((self.directory / "inventory-gap-H052.json").read_text())
+                try:
+                    gap["packets"] = verify_inventory_cross_worker_captures(
+                        self.directory, endpoints, {
+                            (self.workers[0], self.workers[1]): 41000,
+                            (self.workers[1], self.workers[0]): 41001,
+                        }, gap["pathIdentity"],
+                    )
+                    gap["status"] = "OBSERVED_GENEVE_SPEC_DISCREPANCY"
+                except Exception as error:
+                    gap.update(status="FAIL", error=str(error), failureClass=getattr(error, "failure_class", "MISSING_OBSERVATION"))
+                    raise
+                finally:
+                    self.record("inventory-gap-H052.json", gap)
             self.record("inventory-workload-captures.json", workload_capture_report)
             packet_evidence = json.loads(
                 (self.directory / "inventory-packet-evidence.json").read_text()
@@ -3028,14 +3290,23 @@ exit "$rc"
                     "remoteType2FlowPacketsDelta": flow_delta,
                 }
             evidence["packetEvidence"] = packet_evidence
+            installation = (self.get_json("-n", "evpn-system", "get", "evpncore", "evpn-core")["metadata"]["uid"]
+                            if self.gap_cases else None)
+            if "H054" in self.gap_cases:
+                self.run_inventory_authorization_gap(endpoints, identities, installation)
+            if "H053" in self.gap_cases:
+                endpoints = copy.deepcopy(endpoints)
+                self.run_inventory_recovery_gaps(endpoints, identities, installation)
+            if "M010" in self.gap_cases:
+                self.run_inventory_delete_gap(endpoints)
             evidence["status"] = "PASS"
             self.forwarding_status = "PASS"
-            return evidence
         except (fixture.IsolationError, lab.LabError, OSError, ValueError, KeyError, TypeError,
                 fixture.subprocess.TimeoutExpired) as error:
-            evidence["status"] = "FAIL" if traffic_started else "BLOCKED"
+            failure_class = getattr(error, "failure_class", "MISSING_OBSERVATION")
+            evidence["status"] = inventory_forwarding_failure_status(traffic_started, failure_class)
             self.forwarding_status = evidence["status"]
-            evidence["failureClass"] = getattr(error, "failure_class", "MISSING_OBSERVATION")
+            evidence["failureClass"] = failure_class
             evidence["failure"] = str(error)
             self.record("dataplane-forwarding.json", evidence)
             raise
@@ -3072,8 +3343,115 @@ exit "$rc"
                 evidence["manifestPath"] = "inventory-evidence-manifest.json"
                 self.record("dataplane-forwarding.json", evidence)
                 self.record_inventory_evidence_manifest(
-                    endpoints, traffic_window, workload_capture_report, "PASS"
+                    baseline_endpoints, traffic_window, workload_capture_report, "PASS"
                 )
+
+    def inventory_probe(self, endpoint, destination, identifier):
+        if identifier not in set().union(*map(set, INVENTORY_PROBE_IDS.values())):
+            raise fixture.IsolationError("unregistered inventory gap probe identity")
+        observed = {"identifier": identifier, "sourcePodUID": endpoint["podUID"],
+                    "sourceNode": endpoint["node"], "destination": destination,
+                    "startedAt": utc_timestamp(), "status": "IN_PROGRESS"}
+        try:
+            if destination == REMOTE_IP:
+                observed["ovsBefore"] = self.collect_ovs_dataplane(
+                    endpoint["node"], endpoint, self.inventory_identities[endpoint["node"]]["chassis"], persist=False)
+            result = self.k(
+                "-n", "evpn-system", "exec", endpoint["pod"], "-c", "client", "--",
+                "ping", "-n", "-e", str(identifier), "-I", "net1", "-c", "3", "-W", "3",
+                destination, check=False, timeout=30,
+            )
+            observed.update(parse_inventory_ping_result(result.stdout, result.returncode),
+                            stdout=result.stdout, stderr=result.stderr)
+            if observed["status"] != "PASS":
+                raise inventory_ping_failure(endpoint["node"], "gap-probe", observed,
+                                             result.returncode, result.stderr)
+            if destination == REMOTE_IP:
+                before = observed["ovsBefore"]
+                after = observed["ovsAfter"] = self.collect_ovs_dataplane(
+                    endpoint["node"], endpoint, self.inventory_identities[endpoint["node"]]["chassis"], persist=False)
+                if any(before[key] != after[key] for key in ("interface", "ofport", "ownerEvidence")):
+                    raise InventoryEvidenceError("ATTRIBUTION_UNCERTAIN", "survivor OVS tunnel identity changed")
+                observed["ovsCounterDelta"] = inventory_ovs_counter_delta(
+                    before["tunnelCounters"], after["tunnelCounters"],
+                    before["flowCounters"][REMOTE_MAC]["packets"], after["flowCounters"][REMOTE_MAC]["packets"])
+            return observed
+        except Exception as error:
+            observed.update(status="FAIL", error=str(error), failureClass=getattr(error, "failure_class", "MISSING_OBSERVATION"))
+            raise
+        finally:
+            observed["completedAt"] = utc_timestamp()
+            self.record(f"inventory-probe-{identifier}.json", observed)
+
+    def cross_worker_snapshot(self, endpoints):
+        result = {}
+        for node, endpoint in endpoints.items():
+            peer = endpoints[next(candidate for candidate in endpoints if candidate != node)]
+            interfaces = self.runtime(node, "ovn", "ovs-vsctl", "--format=json",
+                                      "--columns=name,ofport,options", "find", "Interface", "type=geneve").stdout
+            ports = self.runtime(node, "ovn", "ovs-ofctl", "dump-ports", "br-int").stdout
+            flows = self.runtime(node, "ovn", "ovs-ofctl", "dump-flows", "br-int").stdout
+            routes = self.k("-n", "evpn-system", "exec", endpoint["pod"], "-c", "client", "--",
+                            "ip", "route", "get", peer["ip"], "oif", "net1").stdout
+            if "dev net1" not in routes:
+                raise InventoryEvidenceError("ATTRIBUTION_UNCERTAIN", "cross-worker route is not net1")
+            table = json.loads(interfaces)
+            tunnel_counters = {}
+            for name, ofport, options in table["data"]:
+                if isinstance(ofport, int) and ofport > 0:
+                    tunnel_counters[name] = {"ofport": ofport, "options": options,
+                                             "counters": parse_ovs_port_counters(ports, ofport)}
+            if not tunnel_counters:
+                raise InventoryEvidenceError("MISSING_OBSERVATION", "no usable OVS Geneve tunnel")
+            result[node] = {"node": node, "podUID": endpoint["podUID"], "peer": peer["ip"],
+                            "route": routes, "geneveInterfaces": json.loads(interfaces),
+                            "tunnels": tunnel_counters, "ports": ports, "flows": flows, "observedAt": utc_timestamp()}
+        return result
+
+    def run_inventory_cross_worker(self, endpoints):
+        evidence = {"id": "H052", "status": "IN_PROGRESS", "originalExpected":
+                    "Cross-worker workload traffic with VXLAN packet identity/VNI", "probes": []}
+        captures = []
+        try:
+            switch_uuid = self.k("-n", "cni-test", "exec", "deploy/secondary-ovn-central", "--",
+                                 "ovn-nbctl", "--bare", "--columns=_uuid", "find", "Logical_Switch",
+                                 "name=tenant-a").stdout.strip()
+            datapaths = self.k("-n", "cni-test", "exec", "deploy/secondary-ovn-central", "--",
+                              "ovn-sbctl", "--format=json", "--columns=_uuid,external_ids,tunnel_key",
+                              "list", "Datapath_Binding").stdout
+            evidence["pathIdentity"] = {"datapath": fixture.datapath_tunnel_key(datapaths, switch_uuid),
+                                        "outerIPs": {node: next(address["address"] for address in
+                                                     self.get_json("get", "node", node)["status"]["addresses"]
+                                                     if address["type"] == "InternalIP") for node in self.workers}}
+            evidence["before"] = self.cross_worker_snapshot(endpoints)
+            self.record("inventory-gap-H052.json", evidence)
+            captures = self.start_inventory_workload_captures(endpoints, cross_worker=True)
+            for index, node in enumerate(self.workers):
+                peer = endpoints[self.workers[1 - index]]
+                evidence["probes"].append(self.inventory_probe(endpoints[node], peer["ip"], 41000 + index))
+                self.record("inventory-gap-H052.json", evidence)
+            evidence["after"] = self.cross_worker_snapshot(endpoints)
+            evidence["counterDeltas"] = inventory_geneve_counter_deltas(evidence["before"], evidence["after"])
+            evidence["captures"] = self.stop_inventory_workload_captures(captures, endpoints, cross_worker_ids=True)
+            captures = []
+            evidence["status"] = "AWAITING_UNDERLAY_VERIFICATION"
+        except Exception as error:
+            evidence.update(status="FAIL", failureClass=getattr(error, "failure_class", "MISSING_OBSERVATION"),
+                            error=str(error))
+            raise
+        finally:
+            for capture in captures:
+                process = capture["process"]
+                if process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=10)
+                if not capture["stream"].closed:
+                    capture["stream"].close()
+            self.record("inventory-gap-H052.json", evidence)
 
     def verify_agent_peerpidfd(self):
         pods = self.get_json("-n", "evpn-system", "get", "pods",
@@ -3100,11 +3478,230 @@ exit "$rc"
                 "pod": pod_name, "node": node, "probe": observed,
             })
 
+    def gap_snapshot(self, endpoints):
+        rib = json.loads(self.docker("exec", self.frr, "vtysh", "-c",
+                                     "show bgp l2vpn evpn route json").stdout)
+        state = {"observedAt": utc_timestamp(), "frrRIB": rib, "workers": {}}
+        for node in self.workers:
+            state["workers"][node] = {
+                "endpoint": endpoints[node],
+                "agentPods": [pod for pod in self.get_json(
+                    "-n", "evpn-system", "get", "pods", "-l", "app=evpn-node-agent")["items"]
+                              if pod["spec"].get("nodeName") == node],
+                "speakerPID": self.worker(node, "systemctl", "show", "-p", "MainPID", "--value",
+                                          "evpn-e2e-gobgpd.service").stdout.strip(),
+                "fdb": json.loads(self.worker(node, "bridge", "-j", "fdb", "show", "dev", "evpnvx1000").stdout),
+                "neighbors": json.loads(self.worker(node, "ip", "-j", "neigh", "show", "dev", "evpnbr1000").stdout),
+                "routes": json.loads(self.worker(node, "ip", "-j", "route", "show", "table", "all").stdout),
+                "export": json.loads(self.worker(node, "cat", "/run/evpn-node-agent/export-status.json").stdout),
+                "import": json.loads(self.worker(node, "cat", "/run/evpn-node-agent/import-status.json").stdout),
+                "cni": self.read_journal(node),
+                "inventoryJournal": json.loads(self.worker(node, "cat", "/var/lib/evpn-worker/inventory/journal.json").stdout),
+                "exportJournal": json.loads(self.worker(node, "cat", "/var/lib/evpn-worker/export/journal.json").stdout),
+            }
+        return state
+
+    def await_gap_routes(self, endpoints, present, absent=(), withdrawn_receipts=False):
+        last = None
+        for _ in range(90):
+            last = self.gap_snapshot(endpoints)
+            counts = {node: len(inventory_endpoint_paths(last["frrRIB"], endpoint))
+                      for node, endpoint in endpoints.items()}
+            receipts_absent = not withdrawn_receipts or all(
+                not last["workers"][node]["export"].get("Error") and
+                not (last["workers"][node]["export"].get("Result") or {}).get("Applied")
+                for node in absent)
+            if (all(counts[node] == 1 for node in present) and all(counts[node] == 0 for node in absent)
+                    and receipts_absent):
+                return last
+            time.sleep(1)
+        raise InventoryEvidenceError("ROUTE_STATE_MISMATCH", f"FRR routes did not converge: {counts}")
+
+    def run_inventory_recovery_gaps(self, endpoints, identities, installation):
+        report = {"id": "H053", "status": "IN_PROGRESS", "roles": {},
+                  "scope": "Independent Node-Agent and speaker process restarts plus per-worker BGP session loss; not a host reboot"}
+        self.record("inventory-gap-H053.json", report)
+        try:
+            for index, node in enumerate(self.workers):
+                survivor = self.workers[1 - index]
+                role = report["roles"][node] = {"survivor": survivor, "before": self.gap_snapshot(endpoints)}
+                pods = role["before"]["workers"][node]["agentPods"]
+                if len(pods) != 1 or pods[0]["metadata"].get("deletionTimestamp"):
+                    raise fixture.IsolationError("ambiguous worker agent restart target")
+                role["beforeProbe"] = self.inventory_probe(endpoints[survivor], REMOTE_IP, 42000 + index * 10)
+                self.k("-n", "evpn-system", "delete", "pod", pods[0]["metadata"]["name"],
+                       "--wait=true", "--timeout=120s")
+                role["duringAgentRestart"] = self.gap_snapshot(endpoints)
+                role["duringAgentProbe"] = self.inventory_probe(endpoints[survivor], REMOTE_IP, 42001 + index * 10)
+                self.await_inventory_acceptance(identities, installation)
+                self.await_external_import(node, identities[node], installation, endpoints[node]["vtep"])
+                self.await_local_export(node, endpoints[node], identities[node], installation)
+                role["afterAgentRestart"] = self.gap_snapshot(endpoints)
+                old_uid = pods[0]["metadata"]["uid"]
+                new_pods = role["afterAgentRestart"]["workers"][node]["agentPods"]
+                if len(new_pods) != 1 or new_pods[0]["metadata"]["uid"] == old_uid:
+                    raise fixture.IsolationError("agent restart identity did not change")
+                assert_inventory_survivor(role["before"], role["afterAgentRestart"], survivor)
+                self.record("inventory-gap-H053.json", report)
+                pid = role["afterAgentRestart"]["workers"][node]["speakerPID"]
+                if not pid.isdecimal() or int(pid) <= 1:
+                    raise fixture.IsolationError("invalid speaker pause target")
+                self.worker(node, "kill", "-STOP", pid)
+                try:
+                    for _ in range(90):
+                        paused = self.gap_snapshot(endpoints)
+                        trust = paused["workers"][node]["export"].get("InventoryTrust") or {}
+                        if trust.get("Phase") == "TEMPORARILY_UNAVAILABLE":
+                            break
+                        if trust.get("Security") and trust.get("Phase") != "RECOVERY_AUTHORIZED":
+                            raise fixture.IsolationError("same-process communication outage became a security fence")
+                        time.sleep(1)
+                    else:
+                        raise fixture.IsolationError("speaker pause was not observed as transient")
+                    role["duringSpeakerPause"] = paused
+                    assert_inventory_survivor(role["afterAgentRestart"], paused, survivor)
+                    if ((paused["workers"][node]["export"].get("Result") or {}).get("Applied") !=
+                            (role["afterAgentRestart"]["workers"][node]["export"].get("Result") or {}).get("Applied")):
+                        raise fixture.IsolationError("speaker pause unexpectedly created export ownership")
+                    self.record("inventory-gap-H053.json", report)
+                finally:
+                    self.worker(node, "kill", "-CONT", pid)
+                self.await_local_export(node, endpoints[node], identities[node], installation)
+                role["afterSpeakerPause"] = self.await_gap_routes(endpoints, self.workers)
+                paused_peer = role["afterAgentRestart"]["workers"][node]["export"]["SpeakerProcess"]
+                recovered_peer = role["afterSpeakerPause"]["workers"][node]["export"]["SpeakerProcess"]
+                if (paused_peer["PID"], paused_peer["StartTicks"]) != (recovered_peer["PID"], recovered_peer["StartTicks"]):
+                    raise fixture.IsolationError("same-process outage silently replaced the speaker")
+                recovered_trust = role["afterSpeakerPause"]["workers"][node]["export"]["InventoryTrust"]
+                if recovered_trust["Phase"] != "RECOVERY_AUTHORIZED" or recovered_trust["Security"]:
+                    raise fixture.IsolationError("speaker RPC recovery lacks automatic durable grant")
+                self.worker(node, "systemctl", "stop", "evpn-e2e-gobgpd.service")
+                try:
+                    role["duringSpeakerLoss"] = self.await_gap_routes(endpoints, [survivor], [node])
+                    assert_inventory_survivor(role["before"], role["duringSpeakerLoss"], survivor)
+                    role["duringSpeakerProbe"] = self.inventory_probe(endpoints[survivor], REMOTE_IP, 42002 + index * 10)
+                    self.record("inventory-gap-H053.json", report)
+                finally:
+                    self.worker(node, "systemctl", "start", "evpn-e2e-gobgpd.service")
+                    role["speakerStarted"] = self.gap_snapshot(endpoints)
+                    self.record("inventory-gap-H053.json", report)
+                self.await_external_import(node, identities[node], installation, endpoints[node]["vtep"])
+                self.await_local_export(node, endpoints[node], identities[node], installation)
+                role["afterSpeakerRestart"] = self.await_gap_routes(endpoints, self.workers)
+                if role["before"]["workers"][node]["speakerPID"] == role["afterSpeakerRestart"]["workers"][node]["speakerPID"]:
+                    raise fixture.IsolationError("speaker process identity did not change")
+                role["afterProbe"] = self.inventory_probe(endpoints[node], REMOTE_IP, 42003 + index * 10)
+                self.docker("exec", self.frr, "vtysh", "-c", "configure terminal", "-c", "router bgp 64512",
+                            "-c", "neighbor " + endpoints[node]["vtep"] + " shutdown")
+                try:
+                    role["duringBGPLoss"] = self.await_gap_routes(endpoints, [survivor], [node])
+                    assert_inventory_survivor(role["afterSpeakerRestart"], role["duringBGPLoss"], survivor)
+                    role["duringBGPProbe"] = self.inventory_probe(endpoints[survivor], REMOTE_IP, 42004 + index * 10)
+                    self.record("inventory-gap-H053.json", report)
+                finally:
+                    self.docker("exec", self.frr, "vtysh", "-c", "configure terminal", "-c", "router bgp 64512",
+                                "-c", "no neighbor " + endpoints[node]["vtep"] + " shutdown")
+                self.await_external_import(node, identities[node], installation, endpoints[node]["vtep"])
+                role["afterBGPRestore"] = self.await_gap_routes(endpoints, self.workers)
+                role["recoveredProbe"] = self.inventory_probe(endpoints[node], REMOTE_IP, 42005 + index * 10)
+                assert_inventory_survivor(role["before"], role["afterBGPRestore"], survivor)
+                role["endpointLifecycle"] = self.run_inventory_endpoint_outage(
+                    endpoints, identities, installation, node, survivor)
+                role["status"] = "PASS"
+                self.record("inventory-gap-H053.json", report)
+            report["dataplane"] = self.verify_inventory_recovered_dataplane(endpoints, "H053")
+            report["status"] = "PASS"
+        except Exception as error:
+            report.update(status="FAIL", error=str(error), failureClass=getattr(error, "failure_class", "MISSING_OBSERVATION"))
+            try:
+                report["failureSnapshot"] = self.gap_snapshot(endpoints)
+            except Exception as diagnostic_error:
+                report["failureSnapshotError"] = str(diagnostic_error)
+            raise
+        finally:
+            self.record("inventory-gap-H053.json", report)
+
+    def run_inventory_delete_gap(self, endpoints):
+        a, b = self.workers
+        report = {"id": "M010", "status": "IN_PROGRESS"}
+        sentinels = []
+        try:
+            for node in self.workers:
+                existing = json.loads(self.worker(node, "ip", "-j", "route", "show", "exact", "203.0.113.254/32").stdout)
+                if existing:
+                    raise fixture.IsolationError("refusing pre-existing foreign sentinel route")
+                self.worker(node, "ip", "route", "add", "blackhole", "203.0.113.254/32", "proto", "186")
+                sentinels.append(node)
+            before = self.gap_snapshot(endpoints)
+            report["before"] = before
+            self.record("inventory-gap-M010.json", report)
+            pod = self.get_json("-n", "evpn-system", "get", "pod", endpoints[a]["pod"])
+            if (pod["metadata"]["uid"] != endpoints[a]["podUID"] or
+                    pod["metadata"].get("labels", {}).get("evpn.e2e/owner") != self.owner):
+                raise fixture.IsolationError("endpoint deletion identity/owner changed")
+            self.k("-n", "evpn-system", "delete", "pod", endpoints[a]["pod"], "--wait=true", "--timeout=120s")
+            report["deletedCNIJournal"], _ = self.wait_journal(a, endpoints[a]["podUID"], "deleted")
+            report["during"] = self.gap_snapshot(endpoints)
+            self.record("inventory-gap-M010.json", report)
+            after = self.await_gap_routes(endpoints, [b], [a], withdrawn_receipts=True)
+            report["after"] = after
+            assert_inventory_survivor(before, after, b)
+            for node in self.workers:
+                if inventory_remote_kernel(before["workers"][node]) != inventory_remote_kernel(after["workers"][node]):
+                    raise fixture.IsolationError("foreign imported endpoint kernel state changed after local deletion")
+                old_routes = [row for row in before["workers"][node]["routes"] if row.get("dst") in ("203.0.113.254", "203.0.113.254/32")]
+                new_routes = [row for row in after["workers"][node]["routes"] if row.get("dst") in ("203.0.113.254", "203.0.113.254/32")]
+                if len(old_routes) != 1 or old_routes != new_routes:
+                    raise fixture.IsolationError("foreign sentinel route changed")
+            remaining = self.k("-n", "cni-test", "exec", "deploy/secondary-ovn-central", "--", "ovn-nbctl",
+                               "--bare", "--columns=_uuid", "find", "Logical_Switch_Port",
+                               "name=" + endpoints[a]["lsp"]).stdout.strip()
+            if remaining:
+                raise fixture.IsolationError("deleted endpoint exact LSP still exists")
+            for table, binary, scope, selector in (
+                ("Port_Binding", "ovn-sbctl", None, "logical_port=" + endpoints[a]["lsp"]),
+                ("Interface", "ovs-vsctl", a, "external_ids:evpn.framework/workload-uid=" + endpoints[a]["podUID"]),
+            ):
+                args = (binary, "--bare", "--columns=_uuid", "find", table, selector)
+                output = (self.runtime(scope, "ovn", *args).stdout if scope else self.k(
+                    "-n", "cni-test", "exec", "deploy/secondary-ovn-central", "--", *args).stdout)
+                if output.strip():
+                    raise fixture.IsolationError("deleted endpoint exact " + table + " remains")
+            receipts = (after["workers"][a]["export"].get("Result") or {}).get("Applied") or []
+            if receipts:
+                raise fixture.IsolationError("deleted endpoint local advertisement receipt remains")
+            report["survivorProbe"] = self.inventory_probe(endpoints[b], REMOTE_IP, 45000)
+            report["status"] = "PASS"
+        except Exception as error:
+            report.update(status="FAIL", error=str(error), failureClass=getattr(error, "failure_class", "MISSING_OBSERVATION"))
+            raise
+        finally:
+            self.record("inventory-gap-M010.json", report)
+            for node in sentinels:
+                self.worker(node, "ip", "route", "del", "blackhole", "203.0.113.254/32", "proto", "186")
+
+    def run_inventory_authorization_gap(self, endpoints, identities, installation):
+        import inventory_trust_cases
+        inventory_trust_cases.run_startup_withdrawal(self, endpoints, identities, installation)
+        inventory_trust_cases.run_authorization(self, endpoints, identities, installation)
+
+    def run_inventory_endpoint_outage(self, endpoints, identities, installation, node, survivor):
+        import inventory_trust_cases
+        return inventory_trust_cases.endpoint_outage(self, endpoints, identities, installation, node, survivor)
+
+    def verify_inventory_recovered_dataplane(self, endpoints, case):
+        import inventory_trust_cases
+        return inventory_trust_cases.verify_dataplane(self, endpoints, case)
+
     def test_endpoints(self):
+        for case in sorted(self.gap_cases):
+            self.record(f"inventory-gap-{case}.json", {"id": case, "status": "NOT_REACHED"})
         self.install_operator(create_baseline_core=False)
         identities = self.discover_inventory_workers()
+        self.inventory_identities = identities
         installation = self.prepare_disabled_core()
         rendered = self.prepare_inventory_workers(identities, installation)
+        self.inventory_rendered = rendered
         self.provision_external_frr(rendered)
         self.activate_inventory_core(rendered)
         self.await_inventory_acceptance(identities, installation)
@@ -3124,6 +3721,225 @@ exit "$rc"
         self.verify_inventory_forwarding(endpoints, identities, ovs_before)
 
 
+def inventory_negative_publications(data):
+    result = {}
+    for label in ("untrusted-worker", "untrusted-vtep", "untrusted-policy-generation"):
+        candidate = dict(data)
+        inventory = json.loads(data["inventory.json"])
+        if label == "untrusted-worker":
+            inventory["workers"][0]["nodeUID"] = "11111111-1111-4111-8111-111111111111"
+        elif label == "untrusted-vtep":
+            inventory["workers"][0]["localVTEP"] = "198.18.30.254"
+        else:
+            inventory["revision"] = 0
+            candidate["revision"] = "0"
+        candidate["inventory.json"] = json.dumps(inventory, separators=(",", ":"))
+        candidate["sha256"] = hashlib.sha256(candidate["inventory.json"].encode()).hexdigest()
+        result[label] = candidate
+    return result
+
+
+def inventory_endpoint_paths(rib, endpoint):
+    matches = []
+    for item in (rib.get(endpoint["vtep"] + ":1000") or {}).values():
+        if not isinstance(item, dict):
+            continue
+        for group in item.get("paths", []):
+            for path in group:
+                if path.get("routeType") == 2 and path.get("mac") == endpoint["mac"] and path.get("ip") == endpoint["ip"]:
+                    matches.append({key: path.get(key) for key in (
+                        "routeType", "mac", "ip", "ethTag", "peerId", "nexthops", "extendedCommunity")})
+    return matches
+
+
+def inventory_remote_kernel(worker):
+    return {
+        "fdb": sorted((row["mac"].lower(), row.get("dst"), row.get("state"), tuple(sorted(row.get("flags", []))))
+                      for row in worker["fdb"] if row.get("mac", "").lower() == REMOTE_MAC),
+        "neighbors": sorted((row["dst"], row.get("lladdr", "").lower(), tuple(sorted(row.get("state", []))))
+                            for row in worker["neighbors"] if row.get("dst") == REMOTE_IP),
+    }
+
+
+def inventory_table_rows(rows):
+    normalized = []
+    for row in rows:
+        value = dict(row)
+        for key in ("flags", "state"):
+            if isinstance(value.get(key), list):
+                value[key] = sorted(value[key])
+        normalized.append(json.dumps(value, sort_keys=True, separators=(",", ":")))
+    return sorted(normalized)
+
+
+def inventory_all_type2_paths(rib):
+    result = []
+    for rd, routes in rib.items():
+        if not isinstance(routes, dict):
+            continue
+        for nlri, item in routes.items():
+            if not isinstance(item, dict):
+                continue
+            for group in item.get("paths", []):
+                for path in group:
+                    if path.get("routeType") == 2:
+                        result.append({"rd": rd, "nlri": nlri, **{key: path.get(key) for key in (
+                            "routeType", "mac", "ip", "ethTag", "peerId", "nexthops", "extendedCommunity")}})
+    return inventory_table_rows(result)
+
+
+def assert_inventory_no_mutation(before, after):
+    if inventory_all_type2_paths(before["frrRIB"]) != inventory_all_type2_paths(after["frrRIB"]):
+        raise InventoryEvidenceError("UNAUTHORIZED_BGP_MUTATION", "Type-2 RIB changed during negative authorization")
+    for node in before["workers"]:
+        for table in ("fdb", "neighbors", "routes"):
+            if inventory_table_rows(before["workers"][node][table]) != inventory_table_rows(after["workers"][node][table]):
+                raise InventoryEvidenceError("UNAUTHORIZED_KERNEL_MUTATION", node + ": " + table + " changed during negative authorization")
+
+
+def assert_inventory_survivor(before, after, node):
+    old, new = before["workers"][node], after["workers"][node]
+    paths = inventory_endpoint_paths(before["frrRIB"], old["endpoint"])
+    if len(paths) != 1 or paths != inventory_endpoint_paths(after["frrRIB"], new["endpoint"]):
+        raise InventoryEvidenceError("SURVIVOR_ROUTE_MUTATION", node + ": survivor BGP route changed")
+    if inventory_remote_kernel(old) != inventory_remote_kernel(new) or not all(inventory_remote_kernel(old).values()):
+        raise InventoryEvidenceError("SURVIVOR_KERNEL_MUTATION", node + ": imported foreign endpoint changed")
+    old_receipts = (old["export"].get("Result") or {}).get("Applied") or []
+    new_receipts = (new["export"].get("Result") or {}).get("Applied") or []
+    if old_receipts != new_receipts or len(old_receipts) != 1:
+        raise InventoryEvidenceError("SURVIVOR_RECEIPT_MUTATION", node + ": owned export receipt changed")
+    old_cni = old["cni"]["Record"]["State"]["Endpoints"]
+    new_cni = new["cni"]["Record"]["State"]["Endpoints"]
+    if ({key: value.get("Receipt") for key, value in old_cni.items()} !=
+            {key: value.get("Receipt") for key, value in new_cni.items()}):
+        raise InventoryEvidenceError("SURVIVOR_RECEIPT_MUTATION", node + ": CNI resource receipts changed")
+
+
+def inventory_geneve_counter_deltas(before, after):
+    result = {}
+    for node, observation in before.items():
+        old, new = observation["tunnels"], after[node]["tunnels"]
+        if old.keys() != new.keys():
+            raise InventoryEvidenceError("ATTRIBUTION_UNCERTAIN", "OVS Geneve tunnel set changed")
+        deltas = {}
+        for name, tunnel in old.items():
+            if any(tunnel[key] != new[name][key] for key in ("ofport", "options")):
+                raise InventoryEvidenceError("ATTRIBUTION_UNCERTAIN", "OVS Geneve tunnel identity changed")
+            delta = {key: new[name]["counters"][key] - tunnel["counters"][key]
+                     for key in ("rxPackets", "txPackets")}
+            if any(value < 0 for value in delta.values()):
+                raise InventoryEvidenceError("COUNTER_MISMATCH", "OVS Geneve counter moved backwards")
+            deltas[name] = delta
+        if not any(all(value > 0 for value in delta.values()) for delta in deltas.values()):
+            raise InventoryEvidenceError("COUNTER_MISMATCH", "OVS Geneve RX/TX did not advance")
+        result[node] = deltas
+    return result
+
+
+def verify_inventory_cross_worker_captures(directory, endpoints, identifiers, path_identity=None):
+    if len(endpoints) != 2 or len(identifiers) != 2:
+        raise InventoryEvidenceError("ATTRIBUTION_UNCERTAIN", "cross-worker capture requires exactly two workers")
+    decoded = {}
+    for index, node in enumerate(endpoints):
+        endpoint = endpoints[node]
+        peer_node = next(candidate for candidate in endpoints if candidate != node)
+        peer = endpoints[peer_node]
+        name = f"inventory-cross-worker-{chr(ord('a') + index)}-net1.pcap"
+        path = Path(directory) / name
+        if path.is_symlink() or not path.is_file():
+            raise InventoryEvidenceError("INCOMPLETE_CAPTURE", f"{node}: cross-worker endpoint capture is missing")
+        packets = fixture.decode_icmp_pcap(path)
+        expected = set()
+        for source_node, destination_node in identifiers:
+            identifier = identifiers[(source_node, destination_node)]
+            for kind, src, dst in ((8, endpoints[source_node]["ip"], endpoints[destination_node]["ip"]),
+                                   (0, endpoints[destination_node]["ip"], endpoints[source_node]["ip"])):
+                expected.update((src, dst, kind, identifier, sequence) for sequence in (1, 2, 3))
+        actual = [(packet.get("source"), packet.get("destination"), packet.get("icmpType"),
+                   packet.get("icmpIdentifier"), packet.get("icmpSequence")) for packet in packets]
+        if len(actual) != 12 or set(actual) != expected:
+            raise InventoryEvidenceError("ATTRIBUTION_UNCERTAIN", "endpoint capture does not prove both exact probe directions")
+        probe_id = identifiers[(node, peer_node)]
+        requests = [p for p in packets if p.get("icmpIdentifier") == probe_id and
+                    p.get("icmpType") == 8 and p.get("source") == endpoint["ip"] and
+                    p.get("destination") == peer["ip"]]
+        replies = [p for p in packets if p.get("icmpIdentifier") == probe_id and
+                   p.get("icmpType") == 0 and p.get("source") == peer["ip"] and
+                   p.get("destination") == endpoint["ip"]]
+        for label, observed in (("request", requests), ("reply", replies)):
+            if len(observed) != 3 or {p.get("icmpSequence") for p in observed} != {1, 2, 3}:
+                raise InventoryEvidenceError(
+                    "FUNCTIONAL_DATAPLANE_FAILURE",
+                    f"{node}: cross-worker {label} capture does not prove three identified packets",
+                )
+        decoded[node] = {
+            "capture": name,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "peerNode": peer_node,
+            "endpoint": {"ip": endpoint["ip"], "mac": endpoint["mac"]},
+            "peer": {"ip": peer["ip"], "mac": peer["mac"]},
+            "icmpIdentifier": probe_id,
+            "requests": sorted(p["icmpSequence"] for p in requests),
+            "replies": sorted(p["icmpSequence"] for p in replies),
+            "packets": packets,
+        }
+        lab.write(Path(directory) / f"inventory-cross-worker-{chr(ord('a') + index)}-net1-decoded.json", packets)
+
+    geneve = {}
+    for index, node in enumerate(endpoints):
+        name = f"inventory-worker-{chr(ord('a') + index)}-geneve-underlay.pcap"
+        path = Path(directory) / name
+        if path.is_symlink() or not path.is_file():
+            raise InventoryEvidenceError("INCOMPLETE_CAPTURE", "missing worker Geneve underlay capture")
+        packets = fixture.decode_geneve_pcap(path)
+        relevant = [p for p in packets if p.get("icmpIdentifier") in identifiers.values()]
+        if path_identity:
+            outer_ips = set(path_identity["outerIPs"].values())
+            vni = path_identity["datapath"]["tunnelKey"]
+            if any(packet["vni"] != vni or
+                   {packet["outerSource"], packet["outerDestination"]} != outer_ips for packet in relevant):
+                raise InventoryEvidenceError("ATTRIBUTION_UNCERTAIN", "Geneve VNI or outer worker identity mismatch")
+        geneve[node] = {
+            "capture": name,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "packets": relevant,
+        }
+    geneve_packets = [packet for item in geneve.values() for packet in item["packets"]]
+    if not geneve_packets:
+        raise InventoryEvidenceError(
+            "ATTRIBUTION_UNCERTAIN", "endpoint traffic passed but no matching Geneve underlay packet was captured",
+        )
+    nodes = list(endpoints)
+    for source_node, destination_node in ((nodes[0], nodes[1]), (nodes[1], nodes[0])):
+        source = endpoints[source_node]
+        destination = endpoints[destination_node]
+        identifier = identifiers[(source_node, destination_node)]
+        for kind, src, dst in ((8, source["ip"], destination["ip"]),
+                               (0, destination["ip"], source["ip"])):
+            for capture_node, capture in geneve.items():
+                observed = [packet for packet in capture["packets"]
+                            if packet.get("icmpIdentifier") == identifier and
+                            packet.get("icmpType") == kind and
+                            packet.get("innerSource") == src and
+                            packet.get("innerDestination") == dst]
+                if {packet.get("icmpSequence") for packet in observed} != {1, 2, 3}:
+                    raise InventoryEvidenceError(
+                        "ATTRIBUTION_UNCERTAIN", f"{capture_node}: Geneve underlay does not prove {source_node}->{destination_node} {kind} packets",
+                    )
+    return {
+        "status": "PASS",
+        "overlayProtocol": "Geneve",
+        "workloads": decoded,
+        "geneveUnderlay": geneve,
+        "observedGeneveVNIs": sorted({packet.get("vni") for packet in geneve_packets}),
+        "expectedVXLANVNI": 1000,
+        "protocolClarification": (
+            "This shared OVN NB/SB workload path was observed as Geneve; the inventory VNI-1000 "
+            "VXLAN assertion applies to the separate external FRR path."
+        ),
+    }
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", choices=("secondary-cni", INVENTORY_SCENARIO), default="secondary-cni")
@@ -3137,10 +3953,12 @@ def main(argv=None):
     parser.add_argument("--continuity-ctr-sha256", help="administrator-pinned SHA256 of ctr")
     parser.add_argument("--inventory-gobgpd", help="administrator-provided standalone GoBGP executable")
     parser.add_argument("--inventory-gobgpd-sha256", help="administrator-pinned SHA256 of GoBGP executable")
+    parser.add_argument("--inventory-gap-cases", type=parse_inventory_gap_cases, default=(),
+                        help="opt-in comma-separated H052,H053,H054,M010; leaves baseline behavior unchanged")
     args = parser.parse_args(argv)
     if args.verify_inventory_captures:
         if (args.check_config or args.confirm_disposable_host or args.continuity_ctr or
-                args.continuity_ctr_sha256 or args.inventory_gobgpd or args.inventory_gobgpd_sha256):
+                args.continuity_ctr_sha256 or args.inventory_gobgpd or args.inventory_gobgpd_sha256 or args.inventory_gap_cases):
             parser.error("--verify-inventory-captures cannot be combined with live-run options")
         directory = Path(args.verify_inventory_captures[0])
         config_path = Path(args.verify_inventory_captures[1])
@@ -3155,7 +3973,7 @@ def main(argv=None):
     if args.scenario == INVENTORY_SCENARIO:
         if args.check_config:
             if (args.confirm_disposable_host or args.continuity_ctr or args.continuity_ctr_sha256
-                    or args.inventory_gobgpd or args.inventory_gobgpd_sha256):
+                    or args.inventory_gobgpd or args.inventory_gobgpd_sha256 or args.inventory_gap_cases):
                 parser.error("--check-config is offline and cannot be combined with live-run options")
             print(json.dumps(inventory_configuration(json.loads(Path(args.check_config).read_text())), indent=2))
             return
@@ -3169,9 +3987,10 @@ def main(argv=None):
                 parser.error("inventory execution requires existing ctr and gobgpd binaries with matching SHA256 pins")
         with lab.exclusive():
             OperatorInventoryType2(args.continuity_ctr, args.continuity_ctr_sha256,
-                                   args.inventory_gobgpd, args.inventory_gobgpd_sha256).run()
+                                   args.inventory_gobgpd, args.inventory_gobgpd_sha256,
+                                   gap_cases=args.inventory_gap_cases).run()
         return
-    if args.inventory_gobgpd or args.inventory_gobgpd_sha256:
+    if args.inventory_gobgpd or args.inventory_gobgpd_sha256 or args.inventory_gap_cases:
         parser.error("--inventory-gobgpd options require the inventory scenario")
     if args.check_config:
         parser.error("--check-config requires the inventory Type-2 scenario")

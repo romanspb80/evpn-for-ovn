@@ -1,0 +1,71 @@
+@startuml
+title Missed CNI DEL versus Kubernetes API outage | implemented contract
+autonumber
+skinparam backgroundColor #FCFCFD
+skinparam shadowing false
+skinparam defaultFontName DejaVu Sans
+skinparam defaultFontSize 14
+skinparam maxMessageSize 180
+skinparam sequenceArrowColor #2F5D7C
+skinparam participantBackgroundColor #EAF4FF
+
+actor "Fixture / lifecycle authority" as T
+participant "Node-Agent\ncontinuity / orphan scan" as A
+database "Durable CNI journal\nactive ACK + exact receipts" as J
+participant "Kubernetes API" as K
+participant "Owned OVN / OVS\nobjects + host link" as R
+participant "Type-2 exporter /\nGoBGP" as E
+
+note over T,E
+  Explanatory implemented path; dedicated operational acceptance is incomplete.
+  The agent/speaker restart profiles do not inject these two scenarios.
+end note
+
+A -> J : reopen matching ownership domain;\nreplay pending orphan intent before other ACKs
+== Distinct retirement and uncertainty branches ==
+alt confirmed Pod retirement, DEL withheld
+  T -> K : retire original Pod; independently confirm exact UID
+  A -> K : verify Node identity and original Pod retirement
+  K --> A : definitive NotFound or replacement Pod UID
+  A -> J : persist cni-orphan-del with matching active ACK
+  A -> K : revalidate retirement immediately before deletion
+  K --> A : original Pod still retired
+  A -> R : delete exact receipt-owned OVS objects,\nthen exact owned OVN LSP; verify DB absence
+  R --> A : matching DB objects absent
+  A -> R : read host-link absence only
+  alt host absence verified
+    A -> J : commit deleted acknowledgement
+  else host remains or host absence uncertain
+    A -> J : commit orphan_host_unresolved + reason
+    A -> A : never delete orphan host veth;\nretain unresolved ownership for investigation
+  end
+  A -> A : remove retired endpoint from active store
+  E -> A : validate continuity and authoritative desired endpoints
+  note over A,E
+    Export reconciliation is separately gated by current authority,
+    complete observations, journal state and exact path receipts.
+    Orphan cleanup is not an unconditional BGP withdrawal command.
+  end note
+else Kubernetes API unavailable / incomplete identity evidence
+  T -> K : inject API unavailability separately
+  A -> K : current Pod / Node observation
+  K --> A : error, not Pod retirement
+  A -> A : report observation failure; preserve unresolved state
+  A -> E : no authorized empty snapshot from API error
+  E -> E : retain owned advertisements; block unsafe mutation
+  note over A,R
+    No withdrawal, adoption or cleanup authority from API error,
+    deletion timestamp alone, or missing sandbox/netns.
+  end note
+end
+
+== Qualification requires separate before/after evidence ==
+T -> J : compare intents, ACKs and ownership domain
+T -> R : verify exact owned absence / unresolved host;\nindependently compare foreign survivors
+T -> E : compare path receipts and actual routes;\ncheck later forwarding and scoped cleanup where permitted
+
+legend bottom center
+  Source contract and offline tests, not live run results.
+  Unknown resources and replacement workloads must not be adopted or deleted.
+endlegend
+@enduml

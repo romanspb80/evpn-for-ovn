@@ -44,7 +44,7 @@ digraph Modules {
     style="rounded,filled"; color="#D8E2ED"; fillcolor="#F8FAFC"; margin=12;
     bgp_adapter [label=<<B>GoBGP route adapter</B><BR/><FONT POINT-SIZE="8">RIB snapshots · AddPath UUID · exact withdrawal</FONT>>, fillcolor="#E8F1FF"];
     netlink [label=<<B>Netlink-Programmed</B><BR/><FONT POINT-SIZE="8">primary · owned Linux integration state</FONT>>, fillcolor="#E8F1FF"];
-    ovsdb [label=<<B>OVSDB-Programmed</B><BR/><FONT POINT-SIZE="8">experimental · separate ownership path</FONT>>, fillcolor="#FFF2DE"];
+    ovsdb [label=<<B>OVSDB-Programmed</B><BR/><FONT POINT-SIZE="8">maintenance / testing only</FONT><BR/><FONT POINT-SIZE="8">outside v0.1.0 deployment</FONT>>, fillcolor="#FFF2DE"];
     {rank=same; bgp_adapter; netlink; ovsdb;}
     bgp_adapter -> netlink -> ovsdb [style=invis, weight=15];
   }
@@ -71,7 +71,7 @@ digraph Modules {
   routes -> recovery [color="#4479B6", label="durable mutations"];
   routes -> bgp_adapter [color="#397AB5", label="Type-2 operations"];
   routes -> netlink [color="#4479B6", label="selected backend"];
-  routes -> ovsdb [color="#B8873B", label="alternative backend"];
+  routes -> ovsdb [color="#B8873B", label="maintenance / testing"];
   endpoints -> ovn [color="#7C8B9C", label="NB / local attachment"];
   bgp_adapter -> gobgp [color="#397AB5", label="gRPC RIB / paths"];
   provider -> gobgp [color="#7C8B9C", label="speaker config", constraint=false];

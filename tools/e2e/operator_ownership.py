@@ -41,7 +41,7 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def verify_inventory_evidence(core, publication, daemonset, nodes, journals):
+def verify_inventory_evidence(core, publication, daemonset, nodes, journals, *, require_fenced=False):
     """Compare publication and committed local fences; not runtime or packet proof."""
     spec, meta = core["spec"], core["metadata"]
     inventory = spec["workerInventory"]
@@ -91,6 +91,11 @@ def verify_inventory_evidence(core, publication, daemonset, nodes, journals):
                 "--worker-inventory-cluster-uid=" + cluster,
                 "--worker-inventory-installation-uid=" + uid,
                 "--worker-inventory-journal=/var/lib/evpn-node-agent/inventory"}
+    recovery_arg = "--worker-inventory-recovery-file=/var/lib/evpn-node-agent/inventory/recovery-request.json"
+    recovery_enabled = recovery_arg in args
+    require(not require_fenced or recovery_enabled, "security fence requires recovery-enabled inventory")
+    if recovery_enabled:
+        expected.add(recovery_arg)
     actual = [arg for arg in args if arg.startswith("--worker-inventory-")]
     require(len(actual) == len(expected) and set(actual) == expected, "inventory arguments differ")
     marker = '"workers":['
@@ -119,11 +124,24 @@ def verify_inventory_evidence(core, publication, daemonset, nodes, journals):
                 isinstance(record.get("Sequence"), int) and record["Sequence"] > 0,
                 "inventory journal domain or sequence mismatch")
         state = record["State"]
-        require(state.get("version") == 1 and state.get("clusterUID") == cluster and
+        require(state.get("version") == (2 if recovery_enabled else 1) and state.get("clusterUID") == cluster and
                 state.get("installationUID") == uid and state.get("nodeName") == name and
                 state.get("nodeUID") == worker["nodeUID"] and state.get("revision") == inventory["revision"] and
                 state.get("digest") == digest and state.get("workerDigest") == worker_hashes[name],
                 "inventory fence does not match publication")
+        if recovery_enabled:
+            trust = state.get("trust") or {}
+            if require_fenced:
+                require(trust.get("Publication") == namespace + "/evpn-worker-inventory/" + cm_meta["uid"] and
+                        trust.get("Phase") == "FENCED" and trust.get("Security") is True and
+                        trust.get("Binding") is None,
+                        "accepted publication must retain the security fence")
+                continue
+            require(trust.get("Publication") == namespace + "/evpn-worker-inventory/" + cm_meta["uid"] and
+                    trust.get("Phase") in ("AUTHORIZED", "RECOVERY_AUTHORIZED") and
+                    (trust.get("Phase") != "RECOVERY_AUTHORIZED" or
+                     (trust.get("Binding") or {}).get("Digest") == digest),
+                    "inventory recovery authorization is not current")
 
 
 def verify(objects, lease, agent_pod, worker):
@@ -185,7 +203,8 @@ def verify(objects, lease, agent_pod, worker):
 
 
 def verify_external_ovn(core, lease, daemonset, pods, nodes, expected_selector, *,
-                        require_continuity=True, inventory_publication=None, inventory_journals=None):
+                        require_continuity=True, inventory_publication=None, inventory_journals=None,
+                        require_fenced=False):
     """Verify the Kubernetes ownership chain, not node-local recovery or forwarding."""
     require(len(nodes) >= 2 and bool(expected_selector), "two nodes and a nonempty selector are required")
     node_names = [node.get("metadata", {}).get("name") for node in nodes]
@@ -215,7 +234,8 @@ def verify_external_ovn(core, lease, daemonset, pods, nodes, expected_selector, 
                     "inventory conditions: " + json.dumps(comparison, sort_keys=True))
         require(status.get("ready", False) is False and status.get("phase") == "Reconciling",
                 "inventory status must not claim runtime acceptance")
-        verify_inventory_evidence(core, inventory_publication, daemonset, nodes, inventory_journals)
+        verify_inventory_evidence(core, inventory_publication, daemonset, nodes, inventory_journals,
+                                  require_fenced=require_fenced)
     else:
         require(inventory_publication is None and inventory_journals is None and
                 status.get("ready") is True and status.get("phase") == "Ready",

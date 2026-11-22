@@ -576,6 +576,36 @@ class OperatorRunnerTests(unittest.TestCase):
             )["status"],
             "FAIL",
         )
+        invalid_ping = runner.parse_inventory_ping_result(
+            "", 2
+        )
+        self.assertEqual(invalid_ping["status"], "SETUP_FAILURE")
+        self.assertIsNone(invalid_ping["transmitted"])
+        self.assertEqual(
+            runner.parse_inventory_ping_result(
+                "ping: unrecognized option: e\n", 1
+            )["status"],
+            "SETUP_FAILURE",
+        )
+        setup_error = runner.inventory_ping_failure(
+            "worker-a", "external-to-workload", invalid_ping, 1,
+            "ping: unrecognized option: e\n",
+        )
+        self.assertEqual(setup_error.failure_class, "WORKLOAD_STIMULUS_SETUP_FAILURE")
+        self.assertIn("unrecognized option: e", str(setup_error))
+        self.assertEqual(
+            runner.inventory_forwarding_failure_status(True, setup_error.failure_class), "BLOCKED"
+        )
+        packet_loss = runner.parse_inventory_ping_result(
+            "3 packets transmitted, 0 received, 100% packet loss\n", 1
+        )
+        loss_error = runner.inventory_ping_failure(
+            "worker-a", "external-to-workload", packet_loss, 1, ""
+        )
+        self.assertEqual(loss_error.failure_class, "FUNCTIONAL_DATAPLANE_FAILURE")
+        self.assertEqual(
+            runner.inventory_forwarding_failure_status(True, loss_error.failure_class), "FAIL"
+        )
 
     def test_linux_link_counter_parser_requires_exact_link_and_complete_stats(self):
         stats = {"rx": {"packets": 7, "bytes": 600, "errors": 0, "dropped": 1},
@@ -726,6 +756,52 @@ class OperatorRunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(isolated.IsolationError, "missing or unsafe"):
                 runner.evidence_file_manifest(path, ["inventory-worker-b-net1.pcap"])
 
+    def test_inventory_ovs_evidence_uses_worker_aliases_for_complete_final_manifest(self):
+        instance = runner.OperatorInventoryType2("ctr", "a" * 64, "gobgpd", "b" * 64)
+        instance.workers = ["cni-sec-8fe5b811-worker", "cni-sec-8fe5b811-worker2"]
+        remote_flow = f"cookie=0x1, n_packets=4, dl_dst={runner.REMOTE_MAC} actions=output:5"
+
+        def runtime_outputs(endpoint_mac, chassis):
+            values = ("vxlan0", "br-int", "5", "{}", "{}", chassis,
+                      f"{remote_flow}\ncookie=0x2, n_packets=3, dl_dst={endpoint_mac} actions=output:1",
+                      "  port  5: rx pkts=7, bytes=0\n           tx pkts=9, bytes=0")
+            return [types.SimpleNamespace(stdout=value) for value in values]
+
+        with tempfile.TemporaryDirectory() as directory:
+            instance.directory = Path(directory)
+            outputs = []
+            for _phase in ("before", "after"):
+                for index, _node in enumerate(instance.workers):
+                    outputs.extend(runtime_outputs(f"02:00:00:00:00:1{index + 1}", f"chassis-{index}"))
+            with mock.patch.object(instance, "runtime", side_effect=outputs):
+                for phase in ("before", "after"):
+                    for index, node in enumerate(instance.workers):
+                        snapshot = instance.collect_ovs_dataplane(
+                            node, {"mac": f"02:00:00:00:00:1{index + 1}"}, f"chassis-{index}", phase=phase
+                        )
+                        self.assertEqual(snapshot["node"], node)
+                        self.assertEqual(snapshot["workerAlias"], "worker-a" if index == 0 else "worker-b")
+            ovs_required = {
+                f"ovs-dataplane{suffix}-worker-{alias}.json"
+                for suffix in ("", "-after") for alias in ("a", "b")
+            }
+            self.assertEqual({path.name for path in instance.directory.iterdir()}, ovs_required)
+            recorded = json.loads((instance.directory / "ovs-dataplane-after-worker-b.json").read_text())
+            self.assertEqual(recorded["node"], instance.workers[1])
+            for name in runner.INVENTORY_EVIDENCE_ARTIFACTS - ovs_required:
+                (instance.directory / name).write_bytes(b"fixture")
+            artifacts = runner.evidence_file_manifest(
+                instance.directory, sorted(runner.INVENTORY_EVIDENCE_ARTIFACTS)
+            )
+            self.assertEqual({item["path"] for item in artifacts}, set(runner.INVENTORY_EVIDENCE_ARTIFACTS))
+            (instance.directory / "ovs-dataplane-worker-a.json").unlink()
+            with self.assertRaisesRegex(isolated.IsolationError,
+                                        "missing or unsafe: ovs-dataplane-worker-a.json"):
+                runner.evidence_file_manifest(instance.directory, sorted(runner.INVENTORY_EVIDENCE_ARTIFACTS))
+        with self.assertRaisesRegex(isolated.IsolationError, "not an inventory worker"), \
+                mock.patch.object(instance, "runtime", side_effect=runtime_outputs("02:00:00:00:00:11", "x")):
+            instance.collect_ovs_dataplane("foreign-node", {"mac": "02:00:00:00:00:11"}, "x")
+
     def test_inventory_manifest_has_separate_final_checksum(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
@@ -772,6 +848,18 @@ class OperatorRunnerTests(unittest.TestCase):
                 )
             with self.assertRaisesRegex(isolated.IsolationError, "missing"):
                 runner.verify_inventory_source_provenance(receipt, archive, {})
+            worktree = dict(provenance, archiveKind="worktree", workingTreeDiffSHA256="d" * 64,
+                            archiveCommand="git ls-files --cached --others --exclude-standard -z | sort -zu | tar --null -T - -cf -")
+            worktree_environment = dict(environment, EVPN_SOURCE_ARCHIVE_KIND="worktree",
+                                       EVPN_SOURCE_WORKTREE_DIFF_SHA256="d" * 64,
+                                       EVPN_SOURCE_ARCHIVE_COMMAND=worktree["archiveCommand"])
+            receipt.write_text(json.dumps(worktree))
+            self.assertEqual(runner.verify_inventory_source_provenance(receipt, archive, worktree_environment), worktree)
+            with self.assertRaisesRegex(isolated.IsolationError, "receipt"):
+                runner.verify_inventory_source_provenance(receipt, archive, environment)
+            worktree_environment.pop("EVPN_SOURCE_WORKTREE_DIFF_SHA256")
+            with self.assertRaisesRegex(isolated.IsolationError, "diff provenance"):
+                runner.verify_inventory_source_provenance(receipt, archive, worktree_environment)
             receipt.unlink()
             with self.assertRaisesRegex(isolated.IsolationError, "missing/unsafe"):
                 runner.verify_inventory_source_provenance(receipt, archive, environment)
@@ -1626,6 +1714,522 @@ class OperatorRunnerTests(unittest.TestCase):
         self.assertEqual(details["liveEVPNType2"], "PASS")
         self.assertEqual(details["vxlanForwarding"], "PASS")
         self.assertEqual(details["recovery"], "NOT_TESTED")
+
+    def test_inventory_capture_start_failure_records_stderr_command_and_exit_status(self):
+        instance = runner.OperatorInventoryType2(None, None, "gobgpd", None)
+        instance.kubeconfig = Path("/run-owned/kubeconfig")
+        instance.context = "kind-owned-cluster"
+        instance.workers = ["worker-a", "worker-b"]
+        instance.frr = "frr"
+        instance.directory = mock.MagicMock()
+        pcap_path = mock.MagicMock()
+        pcap_path.exists.return_value = False
+        pcap_path.is_symlink.return_value = False
+        pcap_path.open.return_value = io.BytesIO()
+        instance.directory.__truediv__.return_value = pcap_path
+        process = mock.MagicMock()
+        process.stderr = io.StringIO("tcpdump: net1: No such device\n")
+        process.returncode = 2
+        process.poll.return_value = 2
+        process.wait.return_value = 2
+        endpoints = {
+            "worker-a": {"ip": "10.244.1.2", "pod": "client-a"},
+            "worker-b": {"ip": "10.244.2.2", "pod": "client-b"},
+        }
+
+        with mock.patch.dict(runner.fixture.os.environ, {"KUBECONFIG": "/ambient/kubeconfig"}), \
+                mock.patch.object(instance, "ensure_inventory_frr_workload_tools"), \
+                mock.patch.object(runner.subprocess, "Popen", return_value=process) as popen, \
+                mock.patch.object(instance, "record") as record:
+            with self.assertRaisesRegex(
+                    runner.InventoryEvidenceError, "inventory-worker-a-net1: capture did not become ready"):
+                instance.start_inventory_workload_captures(endpoints)
+
+        command = popen.call_args.args[0]
+        self.assertEqual(
+            command[:6],
+            ["kubectl", "--kubeconfig", str(instance.kubeconfig), "--context", instance.context, "-n"],
+        )
+        self.assertNotIn("/ambient/kubeconfig", command)
+        timeout_index = command.index("timeout")
+        self.assertEqual(
+            command[timeout_index:timeout_index + 7],
+            ["timeout", "-s", "INT", "-k", "5", str(runner.INVENTORY_CAPTURE_MAX_SECONDS), "tcpdump"],
+        )
+        self.assertIn("-i", command)
+        self.assertIn("net1", command)
+        tcpdump_index = command.index("tcpdump")
+        self.assertEqual(
+            command[command.index("-c", tcpdump_index) + 1],
+            str(runner.INVENTORY_CAPTURE_LIMIT),
+        )
+        record.assert_called_once()
+        name, evidence = record.call_args.args
+        self.assertEqual(name, "inventory-capture-startup-failure.json")
+        self.assertEqual(evidence["capture"], "inventory-worker-a-net1")
+        self.assertEqual(evidence["command"], command)
+        self.assertEqual(evidence["trailingStderr"], "tcpdump: net1: No such device\n")
+        self.assertEqual(evidence["returncode"], 2)
+        self.assertIsNone(evidence["signal"])
+
+    def test_inventory_workload_capture_timeout_prefix_is_portable_for_all_targets(self):
+        instance = runner.OperatorInventoryType2(None, None, "gobgpd", None)
+        instance.kubeconfig = Path("/run-owned/kubeconfig")
+        instance.context = "kind-owned-cluster"
+        instance.workers = ["worker-a", "worker-b"]
+        instance.frr = "frr"
+        instance.directory = mock.MagicMock()
+        pcap_path = mock.MagicMock()
+        pcap_path.exists.return_value = False
+        pcap_path.is_symlink.return_value = False
+        pcap_path.open.side_effect = lambda *_args, **_kwargs: io.BytesIO()
+        instance.directory.__truediv__.return_value = pcap_path
+        processes = []
+
+        def ready_process(*_args, **_kwargs):
+            process = mock.MagicMock()
+            process.stderr = io.StringIO("listening on net1\n")
+            process.poll.return_value = None
+            processes.append(process)
+            return process
+
+        endpoints = {
+            "worker-a": {"ip": "10.244.1.2", "pod": "client-a"},
+            "worker-b": {"ip": "10.244.2.2", "pod": "client-b"},
+        }
+        with mock.patch.object(instance, "ensure_inventory_frr_workload_tools") as ensure_tool, \
+                mock.patch.object(runner.subprocess, "Popen", side_effect=ready_process) as popen, \
+                mock.patch.object(runner.select, "select", return_value=([object()], [], [])):
+            captures = instance.start_inventory_workload_captures(endpoints)
+
+        ensure_tool.assert_called_once_with()
+        expected_prefix = [
+            "timeout", "-s", "INT", "-k", "5", str(runner.INVENTORY_CAPTURE_MAX_SECONDS), "tcpdump",
+        ]
+        self.assertEqual(len(captures), 3)
+        self.assertEqual(popen.call_count, 3)
+        expected_counts = [runner.INVENTORY_CAPTURE_LIMIT, runner.INVENTORY_CAPTURE_LIMIT,
+                           runner.INVENTORY_CAPTURE_LIMIT * len(instance.workers)]
+        for index, call in enumerate(popen.call_args_list):
+            command = call.args[0]
+            timeout_index = command.index("timeout")
+            self.assertEqual(command[timeout_index:timeout_index + len(expected_prefix)], expected_prefix)
+            tcpdump_index = command.index("tcpdump", timeout_index)
+            self.assertEqual(command[command.index("-c", tcpdump_index) + 1], str(expected_counts[index]))
+            if index < len(instance.workers):
+                endpoint_ip = endpoints[instance.workers[index]]["ip"]
+                self.assertEqual(command[-1],
+                                 f"icmp and ((src host {endpoint_ip} and dst host {runner.REMOTE_IP}) or "
+                                 f"(src host {runner.REMOTE_IP} and dst host {endpoint_ip}))")
+                self.assertEqual(command[command.index("-i", tcpdump_index) + 1], "net1")
+            else:
+                self.assertEqual(command[-1],
+                                 f"icmp and host {runner.REMOTE_IP} and "
+                                 "(host 10.244.1.2 or host 10.244.2.2)")
+                self.assertEqual(command[command.index("-i", tcpdump_index) + 1], "frr-work0")
+
+    def test_inventory_workload_capture_verification_uses_endpoints_with_icmp_identifiers(self):
+        instance = runner.OperatorInventoryType2(None, None, "gobgpd", None)
+        instance.workers = ["worker-a", "worker-b"]
+        instance.frr = "run-owned-frr"
+        instance.directory = Path("/run-owned/inventory-evidence")
+        endpoints = {
+            "worker-a": {"pod": "client-a", "podUID": "uid-a", "ip": "10.244.1.2",
+                         "mac": "02:00:00:00:00:0a", "vtep": "172.18.0.2"},
+            "worker-b": {"pod": "client-b", "podUID": "uid-b", "ip": "10.244.2.2",
+                         "mac": "02:00:00:00:00:0b", "vtep": "172.18.0.3"},
+        }
+
+        class StopReached(Exception):
+            pass
+
+        passing = types.SimpleNamespace(returncode=0, stdout="", stderr="")
+        with mock.patch.object(instance, "record"), \
+                mock.patch.object(instance, "seed_forwarding_state"), \
+                mock.patch.object(instance, "collect_linux_forwarding_counters", return_value={}), \
+                mock.patch.object(instance, "collect_worker_linux_state", return_value={}), \
+                mock.patch.object(instance, "observe_inventory_workload_interfaces", return_value={}), \
+                mock.patch.object(instance, "start_inventory_capture"), \
+                mock.patch.object(instance, "stop_inventory_capture"), \
+                mock.patch.object(instance, "start_inventory_workload_captures", return_value=[]), \
+                mock.patch.object(instance, "k", return_value=passing), \
+                mock.patch.object(runner.lab, "command", return_value=passing), \
+                mock.patch.object(runner, "parse_inventory_ping_result",
+                                  return_value={"status": "PASS"}), \
+                mock.patch.object(instance, "stop_inventory_workload_captures",
+                                  side_effect=StopReached) as stop:
+            with self.assertRaises(StopReached):
+                instance.verify_inventory_forwarding(endpoints, {}, {})
+
+        captures, verified = stop.call_args.args
+        self.assertEqual(captures, [])
+        for index, node in enumerate(instance.workers):
+            self.assertEqual(verified[node]["node"], node)
+            self.assertEqual(verified[node]["icmpIdentifiers"], {
+                "workerToExternal": 20000 + index, "externalToWorker": 30000 + index,
+            })
+            for key, value in endpoints[node].items():
+                self.assertEqual(verified[node][key], value)
+            self.assertNotIn("icmpIdentifiers", endpoints[node])
+
+    def test_inventory_frr_workload_tools_are_provisioned_only_in_verified_run_owned_container(self):
+        instance = runner.OperatorInventoryType2(None, None, "gobgpd", None)
+        instance.directory = Path("/run-owned/inventory-evidence")
+        instance.frr = "run-owned-frr"
+        state = {"profile": "cni-inventory-frr", "frr": instance.frr, "phase": "ready"}
+        result = types.SimpleNamespace(
+            returncode=0,
+            stdout=("provisioning=apk-add-tcpdump-iputils-ping\n"
+                    "tcpdump-path=/usr/sbin/tcpdump\n"
+                    "tcpdump-version=tcpdump version 4.99.5\n"
+                    "tcpdump-package=tcpdump-4.99.5-r0\n"
+                    "ping-path=/usr/bin/ping\n"
+                    "ping-version=ping from iputils 20250605\n"
+                    "ping-package=iputils-ping-20250605-r0\n"
+                    "ping-identifier-option=-e identifier\n"
+                    "alpine-release=3.22.1\n"),
+            stderr="",
+        )
+        with mock.patch.object(runner.lab, "load", return_value=state) as load, \
+                mock.patch.object(runner.lab, "verify_owned", return_value={
+                    "containers": {instance.frr: "container-sha"}
+                }) as verify_owned, \
+                mock.patch.object(instance, "docker", return_value=result) as docker, \
+                mock.patch.object(instance, "record") as record:
+            instance.ensure_inventory_frr_workload_tools()
+
+        load.assert_called_once_with(instance.directory)
+        verify_owned.assert_called_once_with(state)
+        docker.assert_called_once()
+        args, kwargs = docker.call_args
+        self.assertEqual(args[:2], ("exec", instance.frr))
+        self.assertIn("apk add --no-cache tcpdump iputils-ping", args[-1])
+        self.assertIn("if ! printf '%s\\n' \"$ping_help\" | grep -Eq", args[-1])
+        self.assertIn("needs_install=1", args[-1])
+        self.assertIn("timeout -s INT -k 5 90", args[-1])
+        self.assertIn("tcpdump --version", args[-1])
+        self.assertIn("apk info -v tcpdump", args[-1])
+        self.assertIn("ping -h", args[-1])
+        self.assertIn("ping -V", args[-1])
+        self.assertIn("apk info -v iputils-ping", args[-1])
+        self.assertIn("grep -Eq '(^|[[:space:]])-e([[:space:],]|$)'", args[-1])
+        self.assertEqual(kwargs, {"check": False, "timeout": 120})
+        name, evidence = record.call_args.args
+        self.assertEqual(name, "inventory-frr-workload-tools.json")
+        self.assertEqual(evidence["containerID"], "container-sha")
+        self.assertIn("tcpdump-package=tcpdump-4.99.5-r0", evidence["stdout"])
+        self.assertIn("ping-package=iputils-ping-20250605-r0", evidence["stdout"])
+        self.assertIn("ping-identifier-option=-e identifier", evidence["stdout"])
+
+    def test_inventory_frr_workload_tools_refuse_unowned_lab_before_install(self):
+        instance = runner.OperatorInventoryType2(None, None, "gobgpd", None)
+        instance.directory = Path("/run-owned/inventory-evidence")
+        instance.frr = "foreign-frr"
+        state = {"profile": "foreign-profile", "frr": instance.frr, "phase": "ready"}
+        with mock.patch.object(runner.lab, "load", return_value=state), \
+                mock.patch.object(instance, "docker") as docker:
+            with self.assertRaisesRegex(runner.fixture.IsolationError, "refusing capture-tool provisioning"):
+                instance.ensure_inventory_frr_workload_tools()
+        docker.assert_not_called()
+
+
+class InventoryGapTests(unittest.TestCase):
+    def test_candidate_rejection_requires_current_generation_condition(self):
+        import inventory_trust_cases
+
+        core = {"metadata": {"generation": 5}, "status": {
+            "phase": "Degraded", "reason": "human-readable validation error", "observedGeneration": 5,
+            "conditions": [{"type": "Degraded", "status": "True", "reason": "ReconcileFailed", "observedGeneration": 5}]}}
+        self.assertTrue(inventory_trust_cases.candidate_rejected(core))
+        core["status"]["conditions"][0]["observedGeneration"] = 4
+        self.assertFalse(inventory_trust_cases.candidate_rejected(core))
+        core["status"]["conditions"][0]["observedGeneration"] = 5
+        core["status"]["observedGeneration"] = 4
+        self.assertFalse(inventory_trust_cases.candidate_rejected(core))
+
+    def test_recovery_capture_payload_requires_exact_marker_and_reply(self):
+        import inventory_trust_cases
+
+        payload = ((b"\x00" * 16) + (20000).to_bytes(2, "big") * 20).hex()
+        packets = [{"icmpIdentifier": 20000, "icmpSequence": sequence, "payload": payload}
+                   for sequence in (1, 2, 3) for _ in range(2)]
+        inventory_trust_cases.assert_probe_payloads(packets)
+        changed = json.loads(json.dumps(packets))
+        changed[-1]["payload"] = "00" * 56
+        with self.assertRaisesRegex(isolated.IsolationError, "marker"):
+            inventory_trust_cases.assert_probe_payloads(changed)
+        with self.assertRaisesRegex(isolated.IsolationError, "request/reply"):
+            inventory_trust_cases.assert_probe_payloads(packets[:-1])
+
+    def test_inventory_evidence_root_keeps_owned_paths_together(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+                runner.os.environ, {"EVPN_INVENTORY_EVIDENCE_ROOT": directory}):
+            instance = runner.OperatorInventoryType2(None, None, "gobgpd", None)
+            self.assertEqual(instance.directory.parent, Path(directory))
+            self.assertEqual(instance.kubeconfig, instance.directory / "kubeconfig")
+            self.assertEqual(instance.image_receipt, instance.directory / "image-ownership.json")
+
+    def test_gap_selector_is_explicit_and_bounded(self):
+        self.assertEqual(runner.parse_inventory_gap_cases("h052,M010"), ("H052", "M010"))
+        for value in ("", "H052,H052", "M011", "H052,UNKNOWN"):
+            with self.assertRaises(runner.argparse.ArgumentTypeError):
+                runner.parse_inventory_gap_cases(value)
+        instance = runner.OperatorInventoryType2(None, None, "gobgpd", None)
+        self.assertFalse(instance.gap_cases)
+
+    def test_gap_selector_refuses_other_scenarios_and_offline_modes(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            for args in (("--inventory-gap-cases", "H052"),
+                         ("--scenario", runner.INVENTORY_SCENARIO, "--check-config", "absent.json",
+                          "--inventory-gap-cases", "H054")):
+                with self.assertRaises(SystemExit):
+                    runner.main(list(args))
+
+    def test_baseline_manifest_does_not_require_opt_in_gap_artifacts(self):
+        self.assertFalse(any(name.startswith(("inventory-gap-", "inventory-probe-", "inventory-cross-worker-"))
+                             for name in runner.INVENTORY_BASE_ARTIFACTS))
+        self.assertNotIn("inventory-worker-a-geneve-underlay.pcap", runner.INVENTORY_BASE_ARTIFACTS)
+        self.assertEqual(runner.INVENTORY_EVIDENCE_ARTIFACTS,
+                         runner.INVENTORY_BASE_ARTIFACTS.union(*runner.INVENTORY_GAP_ARTIFACTS.values()))
+        for case, identifiers in runner.INVENTORY_PROBE_IDS.items():
+            for identifier in identifiers:
+                self.assertIn(f"inventory-probe-{identifier}.json", runner.INVENTORY_GAP_ARTIFACTS[case])
+
+    def test_negative_publications_preserve_original_and_name_each_axis(self):
+        data = {"inventory.json": json.dumps({"revision": 1, "workers": [
+            {"nodeUID": "original", "localVTEP": "198.18.30.2"}]}), "revision": "1", "sha256": "original"}
+        original = dict(data)
+        cases = runner.inventory_negative_publications(data)
+        self.assertEqual(data, original)
+        self.assertEqual(set(cases), {"untrusted-worker", "untrusted-vtep", "untrusted-policy-generation"})
+        for case in cases.values():
+            self.assertEqual(case["sha256"], hashlib.sha256(case["inventory.json"].encode()).hexdigest())
+            self.assertNotEqual(case, original)
+
+    def test_geneve_counters_require_identity_and_both_directions(self):
+        before = {"actual-worker": {"tunnels": {"ovn-peer": {
+            "ofport": 5, "options": ["map", [["remote_ip", "172.18.0.3"]]],
+            "counters": {"rxPackets": 10, "txPackets": 20}}}}}
+        after = json.loads(json.dumps(before))
+        after["actual-worker"]["tunnels"]["ovn-peer"]["counters"] = {"rxPackets": 16, "txPackets": 26}
+        delta = runner.inventory_geneve_counter_deltas(before, after)
+        self.assertEqual(delta["actual-worker"]["ovn-peer"], {"rxPackets": 6, "txPackets": 6})
+        for key, value in (("rxPackets", 10), ("txPackets", 19)):
+            bad = json.loads(json.dumps(after))
+            bad["actual-worker"]["tunnels"]["ovn-peer"]["counters"][key] = value
+            with self.assertRaises(runner.InventoryEvidenceError):
+                runner.inventory_geneve_counter_deltas(before, bad)
+        after["actual-worker"]["tunnels"]["ovn-peer"]["ofport"] = 6
+        with self.assertRaisesRegex(runner.InventoryEvidenceError, "identity"):
+            runner.inventory_geneve_counter_deltas(before, after)
+
+    @staticmethod
+    def packet_fixture():
+        endpoints = {node: {"ip": ip, "mac": mac} for node, (ip, mac) in
+                     zip(("actual-a", "actual-b"), runner.INVENTORY_ENDPOINTS)}
+        identifiers = {("actual-a", "actual-b"): 41000, ("actual-b", "actual-a"): 41001}
+        packets, geneve = [], []
+        for (src, dst), identifier in identifiers.items():
+            for kind, source, destination in ((8, src, dst), (0, dst, src)):
+                for seq in (1, 2, 3):
+                    packets.append({"source": endpoints[source]["ip"], "destination": endpoints[destination]["ip"],
+                                    "icmpType": kind, "icmpIdentifier": identifier, "icmpSequence": seq})
+                    geneve.append({"innerSource": endpoints[source]["ip"], "innerDestination": endpoints[destination]["ip"],
+                                   "outerSource": "172.18.0.2", "outerDestination": "172.18.0.3", "vni": 7,
+                                   "icmpType": kind, "icmpIdentifier": identifier, "icmpSequence": seq})
+        identity = {"datapath": {"tunnelKey": 7}, "outerIPs": {"actual-a": "172.18.0.2", "actual-b": "172.18.0.3"}}
+        return endpoints, identifiers, packets, geneve, identity
+
+    def verify_packets(self, packets=None, geneve=None, identity=None, missing=None):
+        endpoints, identifiers, expected_packets, expected_geneve, expected_identity = self.packet_fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for alias in ("a", "b"):
+                for name in (f"inventory-cross-worker-{alias}-net1.pcap", f"inventory-worker-{alias}-geneve-underlay.pcap"):
+                    if name != missing:
+                        (root / name).write_bytes(b"mock pcap bytes")
+            with mock.patch.object(runner.fixture, "decode_icmp_pcap", return_value=expected_packets if packets is None else packets), \
+                    mock.patch.object(runner.fixture, "decode_geneve_pcap", return_value=expected_geneve if geneve is None else geneve):
+                return runner.verify_inventory_cross_worker_captures(
+                    root, endpoints, identifiers, expected_identity if identity is None else identity)
+
+    def test_cross_worker_exact_packets_report_geneve_not_vxlan(self):
+        result = self.verify_packets()
+        self.assertEqual(result["overlayProtocol"], "Geneve")
+        self.assertEqual(result["observedGeneveVNIs"], [7])
+        self.assertIn("shared OVN", result["protocolClarification"])
+
+    def test_cross_worker_rejects_missing_reverse_wrong_id_and_duplicates(self):
+        _, _, packets, _, _ = self.packet_fixture()
+        for candidate in (packets[:6], packets + packets[:1], [{**packet, "icmpIdentifier": 999} for packet in packets]):
+            with self.assertRaises(runner.InventoryEvidenceError):
+                self.verify_packets(packets=candidate)
+
+    def test_cross_worker_rejects_wrong_vni_outer_identity_and_missing_capture(self):
+        _, _, _, geneve, _ = self.packet_fixture()
+        for field, value in (("vni", 1000), ("outerSource", "198.18.30.4"), ("icmpSequence", 9)):
+            with self.assertRaises(runner.InventoryEvidenceError):
+                self.verify_packets(geneve=[{**packet, field: value} for packet in geneve])
+        with self.assertRaises(runner.InventoryEvidenceError):
+            self.verify_packets(missing="inventory-worker-b-geneve-underlay.pcap")
+
+    def test_gap_probe_propagates_identifier_and_uses_owned_kubectl_wrapper(self):
+        instance = runner.OperatorInventoryType2(None, None, "gobgpd", None)
+        endpoint = {"pod": "owned-pod", "podUID": "uid", "node": "actual-worker"}
+        instance.inventory_identities = {"actual-worker": {"chassis": "chassis"}}
+        ovs = {"interface": "vxlan0", "ofport": 5, "ownerEvidence": {"systemID": "chassis"},
+               "tunnelCounters": {"rxPackets": 10, "txPackets": 20},
+               "flowCounters": {runner.REMOTE_MAC: {"packets": 10}}}
+        after = {**ovs, "tunnelCounters": {"rxPackets": 13, "txPackets": 23},
+                 "flowCounters": {runner.REMOTE_MAC: {"packets": 13}}}
+        with mock.patch.object(instance, "k", return_value=types.SimpleNamespace(
+                stdout="3 packets transmitted, 3 received, 0% packet loss", stderr="", returncode=0)) as invoke, \
+                mock.patch.object(instance, "collect_ovs_dataplane", side_effect=[ovs, after]), \
+                mock.patch.object(instance, "record") as record:
+            result = instance.inventory_probe(endpoint, runner.REMOTE_IP, 42001)
+        self.assertEqual(result["identifier"], 42001)
+        self.assertEqual(invoke.call_args.args[:6], ("-n", "evpn-system", "exec", "owned-pod", "-c", "client"))
+        self.assertIn("42001", invoke.call_args.args)
+        self.assertEqual(result["ovsCounterDelta"]["rxPackets"], 3)
+        self.assertEqual(record.call_args.args[0], "inventory-probe-42001.json")
+
+    def test_gap_probe_failure_is_not_reported_pass(self):
+        instance = runner.OperatorInventoryType2(None, None, "gobgpd", None)
+        instance.inventory_identities = {"n": {"chassis": "chassis"}}
+        with mock.patch.object(instance, "k", return_value=types.SimpleNamespace(
+                stdout="3 packets transmitted, 0 received, 100% packet loss", stderr="", returncode=1)), \
+                mock.patch.object(instance, "collect_ovs_dataplane", return_value={}), \
+                mock.patch.object(instance, "record") as record:
+            with self.assertRaises(runner.InventoryEvidenceError):
+                instance.inventory_probe({"pod": "p", "podUID": "u", "node": "n"}, runner.REMOTE_IP, 45000)
+        self.assertEqual(record.call_args.args[1]["status"], "FAIL")
+
+    @staticmethod
+    def survivor_fixture():
+        endpoint = {"vtep": "198.18.30.3", "mac": "02:00:00:00:00:12", "ip": "10.244.240.12"}
+        path = {"routeType": 2, "mac": endpoint["mac"], "ip": endpoint["ip"], "peerId": endpoint["vtep"],
+                "nexthops": [{"ip": endpoint["vtep"]}], "extendedCommunity": {"string": "RT:64512:1000 ET:8"}}
+        worker = {"endpoint": endpoint,
+                  "fdb": [{"mac": runner.REMOTE_MAC, "dst": runner.REMOTE_VTEP, "state": "permanent", "flags": ["self", "extern_learn"]}],
+                  "neighbors": [{"dst": runner.REMOTE_IP, "lladdr": runner.REMOTE_MAC, "state": ["NOARP"]}],
+                  "export": {"Result": {"Applied": [{"PathUUID": "owned"}]}},
+                  "cni": {"Record": {"State": {"Endpoints": {"endpoint": {"Receipt": {"LSPUUID": "lsp"}}}}}}}
+        return {"workers": {"worker-b": worker}, "frrRIB": {endpoint["vtep"] + ":1000": {"nlri": {"paths": [[path]]}}}}
+
+    def test_survivor_assertion_checks_route_kernel_export_and_cni_receipts(self):
+        before = self.survivor_fixture()
+        runner.assert_inventory_survivor(before, json.loads(json.dumps(before)), "worker-b")
+        variants = []
+        for field in ("fdb", "neighbors"):
+            after = json.loads(json.dumps(before))
+            after["workers"]["worker-b"][field] = []
+            variants.append(after)
+        after = json.loads(json.dumps(before))
+        after["frrRIB"] = {}
+        variants.append(after)
+        after = json.loads(json.dumps(before))
+        after["workers"]["worker-b"]["export"]["Result"]["Applied"][0]["PathUUID"] = "foreign"
+        variants.append(after)
+        after = json.loads(json.dumps(before))
+        after["workers"]["worker-b"]["cni"]["Record"]["State"]["Endpoints"]["endpoint"]["Receipt"]["LSPUUID"] = "replacement"
+        variants.append(after)
+        for after in variants:
+            with self.assertRaises(runner.InventoryEvidenceError):
+                runner.assert_inventory_survivor(before, after, "worker-b")
+
+    def test_negative_no_mutation_checks_new_foreign_rows_not_just_existing_endpoint(self):
+        before = self.survivor_fixture()
+        before["workers"]["worker-b"]["routes"] = [{"dst": "198.18.30.0/24", "dev": "eth1"}]
+        runner.assert_inventory_no_mutation(before, json.loads(json.dumps(before)))
+        for table in ("fdb", "neighbors", "routes"):
+            after = json.loads(json.dumps(before))
+            after["workers"]["worker-b"][table].append({"dst": "198.18.30.254"})
+            with self.assertRaises(runner.InventoryEvidenceError):
+                runner.assert_inventory_no_mutation(before, after)
+        after = json.loads(json.dumps(before))
+        path = {"routeType": 2, "mac": "02:00:00:00:00:99", "ip": "10.244.240.99"}
+        after["frrRIB"]["198.18.30.254:1000"] = {"hostile-nlri": {"paths": [[path]]}}
+        with self.assertRaisesRegex(runner.InventoryEvidenceError, "RIB changed"):
+            runner.assert_inventory_no_mutation(before, after)
+
+    def test_recovery_reverses_roles_and_restores_each_speaker_and_bgp_session(self):
+        instance = runner.OperatorInventoryType2(None, None, "gobgpd", None)
+        instance.workers = ["worker-a", "worker-b"]
+        endpoints = {node: {"node": node, "podUID": node, "vtep": f"198.18.30.{index + 2}"}
+                     for index, node in enumerate(instance.workers)}
+        epoch = {node: 0 for node in instance.workers}
+        pids = {node: 100 + index for index, node in enumerate(instance.workers)}
+        paused = set()
+
+        def snapshot(*_):
+            return {"workers": {node: {"agentPods": [{"metadata": {"name": node + "-agent", "uid": str(epoch[node])}}],
+                                       "speakerPID": str(pids[node]),
+                                       "export": {"SpeakerProcess": {"PID": pids[node], "StartTicks": str(pids[node])},
+                                                  "InventoryTrust": {"Phase": "TEMPORARILY_UNAVAILABLE" if node in paused else "RECOVERY_AUTHORIZED",
+                                                                     "Security": False}}}
+                                for node in instance.workers}}
+
+        def k(*args, **_):
+            if args[2:4] == ("delete", "pod"):
+                epoch[args[4].removesuffix("-agent")] += 1
+
+        def worker(node, *args, **_):
+            if args[:2] == ("kill", "-STOP"):
+                paused.add(node)
+            elif args[:2] == ("kill", "-CONT"):
+                paused.remove(node)
+            elif args[1] == "start":
+                pids[node] += 10
+
+        with mock.patch.object(instance, "gap_snapshot", side_effect=snapshot), \
+                mock.patch.object(instance, "await_gap_routes", side_effect=snapshot), \
+                mock.patch.object(instance, "inventory_probe", return_value={"status": "PASS"}) as probes, \
+                mock.patch.object(instance, "k", side_effect=k), \
+                mock.patch.object(instance, "worker", side_effect=worker) as workers, \
+                mock.patch.object(instance, "docker") as docker, \
+                mock.patch.object(instance, "record") as record, \
+                mock.patch.object(instance, "await_inventory_acceptance"), \
+                mock.patch.object(instance, "await_external_import"), \
+                mock.patch.object(instance, "await_local_export"), \
+                mock.patch.object(instance, "run_inventory_endpoint_outage", return_value={"status": "PASS"}) as lifecycle, \
+                mock.patch.object(instance, "verify_inventory_recovered_dataplane", return_value={"status": "PASS"}), \
+                mock.patch.object(runner, "assert_inventory_survivor"):
+            instance.run_inventory_recovery_gaps(endpoints, {node: {} for node in instance.workers}, "installation")
+        report = record.call_args.args[1]
+        self.assertEqual(report["status"], "PASS")
+        self.assertEqual(set(report["roles"]), set(instance.workers))
+        self.assertEqual({call.args[2] for call in probes.call_args_list}, set(runner.INVENTORY_PROBE_IDS["H053"]))
+        self.assertEqual(workers.call_count, 8)
+        self.assertEqual(docker.call_count, 4)
+        self.assertEqual(lifecycle.call_count, 2)
+
+    def test_recovery_failure_records_failed_case_and_starts_stopped_speaker(self):
+        instance = runner.OperatorInventoryType2(None, None, "gobgpd", None)
+        instance.workers = ["a", "b"]
+        initial = {"workers": {node: {"agentPods": [{"metadata": {"name": node, "uid": "old"}}],
+                                       "speakerPID": "100",
+                                       "export": {"SpeakerProcess": {"PID": 100, "StartTicks": "1"},
+                                                  "InventoryTrust": {"Phase": "RECOVERY_AUTHORIZED", "Security": False}}}
+                               for node in instance.workers}}
+        replacement = json.loads(json.dumps(initial))
+        replacement["workers"]["a"]["agentPods"][0]["metadata"]["uid"] = "new"
+        paused = json.loads(json.dumps(replacement))
+        paused["workers"]["a"]["export"]["InventoryTrust"]["Phase"] = "TEMPORARILY_UNAVAILABLE"
+        with mock.patch.object(instance, "gap_snapshot", side_effect=[initial, initial, replacement, paused, replacement, replacement]), \
+                mock.patch.object(instance, "await_gap_routes", side_effect=[replacement, runner.InventoryEvidenceError("ROUTE_STATE_MISMATCH", "withdrawal missing")]), \
+                mock.patch.object(instance, "inventory_probe", return_value={}), \
+                mock.patch.object(instance, "k"), mock.patch.object(instance, "worker") as worker, \
+                mock.patch.object(instance, "record") as record, \
+                mock.patch.object(instance, "await_inventory_acceptance"), \
+                mock.patch.object(instance, "await_external_import"), \
+                mock.patch.object(instance, "await_local_export"), \
+                mock.patch.object(runner, "assert_inventory_survivor"):
+            with self.assertRaises(runner.InventoryEvidenceError):
+                instance.run_inventory_recovery_gaps({node: {"vtep": node} for node in instance.workers}, {node: {} for node in instance.workers}, "installation")
+        worker.assert_any_call("a", "systemctl", "start", "evpn-e2e-gobgpd.service")
+        self.assertEqual(record.call_args.args[1]["status"], "FAIL")
+        self.assertIn("speakerStarted", record.call_args.args[1]["roles"]["a"])
+        self.assertEqual(record.call_args.args[1]["failureSnapshot"], replacement)
 
 
 if __name__ == "__main__":

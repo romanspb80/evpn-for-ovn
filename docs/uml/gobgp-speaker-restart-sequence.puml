@@ -1,0 +1,57 @@
+@startuml
+title GoBGP speaker restart | bounded Operator Type-2 fixture contract
+autonumber
+skinparam backgroundColor #FCFCFD
+skinparam shadowing false
+skinparam defaultFontName DejaVu Sans
+skinparam defaultFontSize 14
+skinparam maxMessageSize 180
+skinparam sequenceArrowColor #2F5D7C
+skinparam participantBackgroundColor #EAF4FF
+
+actor "Test runner" as T
+participant "k8gobgp provider\nconfiguration / DaemonSet" as K
+participant "Node-Agent\nType-2 loops" as A
+database "Original export /\nimport journals" as J
+participant "GoBGP\nUnix peer / RIB" as G
+participant "FRR peer + OVN/OVS\npacket path" as P
+
+== Record original ownership ==
+T -> A : collect fresh export status and speaker incarnation
+T -> K : retain BGPConfiguration UID / spec / generation
+A -> J : exact acknowledged export UUID receipts
+
+== Replace speaker; keep agent and journals ==
+T -> K : delete exact provider Pod; wait for new Pod
+K -> G : launch replacement managed gobgpd
+A -> G : reconnect to actual Unix peer;\nverify process and provider attestation
+alt current identity and authoritative recovery evidence valid
+  A -> J : reconcile old-incarnation receipts under recovery gates
+  A -> G : re-advertise eligible local Type-2 paths
+  G --> A : fresh acknowledged path UUIDs
+  A -> J : commit new receipts; do not transfer old UUID authority
+  G -> P : BGP EVPN Type-2 updates
+  A -> G : fresh complete stable remote RIB observations
+  A -> A : reconcile receipt-owned Netlink integration state
+else failed attestation, incomplete reads or ownership conflict
+  A -> A : explicit blocked/error status; freeze unsafe mutations
+end
+
+== Independent runner checks ==
+T -> A : newer RUNNING status; changed speaker identity;\n4 fresh UUIDs disjoint from old set; 1 imported route
+T -> K : assert unchanged configuration UID / spec / generation
+T -> P : verify received local route and captured\nbidirectional OVN/OVS VXLAN traffic
+P --> T : packet attribution, not just Established BGP
+
+== Later endpoint retirement and cleanup ==
+T -> A : normal CNI endpoint retirement
+A -> G : DeletePath exact current owned UUIDs
+G -> P : BGP withdrawal for retired endpoint
+T -> P : verify exact absence and surviving routes / traffic
+T -> T : drain owned state; perform guarded fixture cleanup
+
+legend bottom center
+  Speaker replacement is distinct from agent restart and combined restart.
+  This explains implemented checks, not a service-availability guarantee.
+endlegend
+@enduml

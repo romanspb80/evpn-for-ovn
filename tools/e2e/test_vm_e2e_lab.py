@@ -109,6 +109,43 @@ class DomainSafetyTests(unittest.TestCase):
             with self.assertRaisesRegex(lab.LabError, "does not match"):
                 lab.source_archive_provenance(archive_path, repository)
 
+    def test_pinned_image_requires_exact_repo_digest_and_config_id(self):
+        inspected = json.dumps([{
+            "Id": lab.K8GOBGP_IMAGE_ID,
+            "RepoDigests": [lab.K8GOBGP_IMAGE],
+        }])
+        self.assertEqual(
+            lab.verify_pinned_image(lab.K8GOBGP_IMAGE, lab.K8GOBGP_IMAGE_ID, inspected)["Id"],
+            lab.K8GOBGP_IMAGE_ID,
+        )
+
+    def test_pinned_image_rejects_tag_only_archive_load(self):
+        inspected = json.dumps([{
+            "Id": lab.K8GOBGP_IMAGE_ID,
+            "RepoDigests": [],
+        }])
+        with self.assertRaisesRegex(lab.LabError, "RepoDigest"):
+            lab.verify_pinned_image(lab.K8GOBGP_IMAGE, lab.K8GOBGP_IMAGE_ID, inspected)
+
+    def test_pinned_image_rejects_config_id_mismatch(self):
+        inspected = json.dumps([{
+            "Id": "sha256:" + "0" * 64,
+            "RepoDigests": [lab.K8GOBGP_IMAGE],
+        }])
+        with self.assertRaisesRegex(lab.LabError, "config ID mismatch"):
+            lab.verify_pinned_image(lab.K8GOBGP_IMAGE, lab.K8GOBGP_IMAGE_ID, inspected)
+
+    def test_pinned_image_rejects_malformed_inspect(self):
+        for inspected in ("not json", "{}", "[]", "[null]"):
+            with self.subTest(inspected=inspected), self.assertRaises(lab.LabError):
+                lab.verify_pinned_image(lab.K8GOBGP_IMAGE, lab.K8GOBGP_IMAGE_ID, inspected)
+
+    def test_pinned_image_rejects_malformed_repo_digests(self):
+        for digests in (None, lab.K8GOBGP_IMAGE, [None]):
+            inspected = json.dumps([{"Id": lab.K8GOBGP_IMAGE_ID, "RepoDigests": digests}])
+            with self.subTest(digests=digests), self.assertRaisesRegex(lab.LabError, "list of strings"):
+                lab.verify_pinned_image(lab.K8GOBGP_IMAGE, lab.K8GOBGP_IMAGE_ID, inspected)
+
     def test_kernel_reconnect_waits_for_the_pinned_release_not_just_ssh(self):
         config = {"name": NAME, "pool": "pool", "network": "isolated",
                   "gateway": "192.168.248.1", "network_address": "192.168.248.0/24",

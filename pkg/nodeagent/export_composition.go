@@ -17,12 +17,36 @@ type exportPlatformBinding interface {
 }
 
 type cniExportBinding struct {
-	server   *CNIServer
-	observer *CNIEndpointObserver
+	server                *CNIServer
+	observer              *CNIEndpointObserver
+	skipNetlinkProvenance bool
+}
+
+func ValidateNetlinkExportBenchmark(cfg evpn.ExporterConfig) error {
+	if cfg.Recovery != nil {
+		return fmt.Errorf("skipping Netlink export provenance is incompatible with durable export recovery")
+	}
+	for _, network := range cfg.Networks {
+		if cfg.Enabled && network.Enabled && network.ExportSource() == "ovn-netlink" {
+			return nil
+		}
+	}
+	return fmt.Errorf("skipping Netlink export provenance requires enabled ovn-netlink export")
 }
 
 func (*cniExportBinding) beginCycle() {}
 func (b *cniExportBinding) prepare(cfg evpn.ExporterConfig) error {
+	if b.skipNetlinkProvenance && cfg.Enabled {
+		if err := ValidateNetlinkExportBenchmark(cfg); err != nil {
+			return err
+		}
+		b.server.operations.Lock()
+		hasContinuity := b.server.continuity != nil
+		b.server.operations.Unlock()
+		if hasContinuity {
+			return fmt.Errorf("skipping Netlink export provenance is incompatible with CNI continuity")
+		}
+	}
 	if !cfg.Enabled || cfg.Recovery == nil {
 		return nil
 	}
@@ -44,7 +68,11 @@ func (b *cniExportBinding) buildObserver(cfg evpn.ExporterConfig, source liveExp
 	for _, network := range cfg.Networks {
 		if network.Enabled && network.ExportSource() == "ovn-netlink" {
 			var err error
-			native, err = evpn.NewLocalOVNNetlinkObserver(cfg, &nativeOVNPorts{source: source, config: cfg})
+			if b.skipNetlinkProvenance {
+				native, err = evpn.NewLocalOVNNetlinkBenchmarkObserver(cfg)
+			} else {
+				native, err = evpn.NewLocalOVNNetlinkObserver(cfg, &nativeOVNPorts{source: source, config: cfg})
+			}
 			if err != nil {
 				return nil, native, err
 			}

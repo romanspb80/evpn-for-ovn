@@ -17,6 +17,7 @@ import (
 	"github.com/romanspb80/evpn-for-ovn/pkg/evpn"
 	"github.com/romanspb80/evpn-for-ovn/pkg/workerinventory"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	coreclient "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
@@ -31,6 +32,7 @@ type InventoryGateOptions struct {
 	Namespace, ConfigMapUID, ClusterUID, InstallationUID string
 	JournalDirectory, ExportConfigPath, ImportConfigPath string
 	ContinuityConfigPath, OVSDBEndpoint, SBEndpoint      string
+	RecoveryFile                                         string
 }
 
 type inventorySource interface {
@@ -47,6 +49,7 @@ type InventoryGate struct {
 	continuity CNIContinuityConfig
 	importer   RemoteRuntimeConfig
 	fence      *workerinventory.Fence
+	blocked    error
 	chassis    func(context.Context, string) error
 	speaker    func(context.Context, workerinventory.Worker) error
 	loadExport func(string) (evpn.ExporterConfig, error)
@@ -86,6 +89,10 @@ func OpenInventoryGate(opts InventoryGateOptions) (*InventoryGate, error) {
 		return nil, fmt.Errorf("inventory in-cluster credentials: %w", err)
 	}
 	config.Timeout = 5 * time.Second
+	// Each Add and both reconciliation loops independently revalidate the
+	// publication and Node. The client-go default (5 QPS) can exhaust the
+	// mutation's deadline on its own token bucket, after AddPath succeeded.
+	config.QPS, config.Burst = 20, 40
 	client, err := coreclient.NewForConfig(config)
 	if err != nil {
 		return nil, err
@@ -97,15 +104,23 @@ func OpenInventoryGate(opts InventoryGateOptions) (*InventoryGate, error) {
 	g := &InventoryGate{source: client, options: opts, nodeName: node, nodeUID: continuity.Domain.NodeUID,
 		continuity: continuity, importer: importer, fence: fence, loadExport: LoadExporterConfig,
 		loadImport: LoadRemoteRuntimeConfig, loadCNI: LoadCNIContinuityConfig, checkVTEP: validateLocalExportConfig}
+	if opts.RecoveryFile != "" {
+		if !filepath.IsAbs(opts.RecoveryFile) || filepath.Clean(opts.RecoveryFile) != opts.RecoveryFile {
+			return nil, errors.Join(fmt.Errorf("recovery file requires a clean absolute path"), fence.Close())
+		}
+		if err := fence.EnableTrust(opts.Namespace + "/" + inventoryConfigMap + "/" + opts.ConfigMapUID); err != nil {
+			return nil, errors.Join(err, fence.Close())
+		}
+	}
 	g.chassis = func(ctx context.Context, expected string) error {
 		ovs, err := newOVSClient(ctx, opts.OVSDBEndpoint)
 		if err != nil {
-			return err
+			return inventoryChassisConnectionFailure(ctx, err)
 		}
 		defer ovs.Close()
 		sb, err := newExportSBClient(ctx, opts.SBEndpoint)
 		if err != nil {
-			return err
+			return inventoryChassisConnectionFailure(ctx, err)
 		}
 		defer sb.Close()
 		return verifyLocalOVNChassis(ctx, ovs, sb, expected)
@@ -121,6 +136,18 @@ func OpenInventoryGate(opts InventoryGateOptions) (*InventoryGate, error) {
 		return errors.Join(err, conn.Close(), continuity.Close())
 	}
 	return g, nil
+}
+
+// libovsdb connection setup can discard context error identity. No chassis
+// identity has been observed when establishing the connection itself failed.
+func inventoryChassisConnectionFailure(ctx context.Context, err error) error {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return &inventoryFailure{Cause: "observation-canceled", Err: errors.Join(err, ctx.Err())}
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return &inventoryFailure{Cause: "chassis-observation-unavailable", Err: errors.Join(err, ctx.Err())}
+	}
+	return err
 }
 
 func (g *InventoryGate) Close() error {
@@ -147,25 +174,63 @@ func (g *InventoryGate) ValidateContinuity(cfg CNIContinuityConfig) error {
 func (g *InventoryGate) check(ctx context.Context, expectedExport *evpn.ExporterConfig, expectedImport *RemoteRuntimeConfig) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.checkLocked(ctx, expectedExport, expectedImport)
+}
+
+func (g *InventoryGate) checkLocked(ctx context.Context, expectedExport *evpn.ExporterConfig, expectedImport *RemoteRuntimeConfig) (result error) {
+	if g.blocked != nil {
+		return g.blocked
+	}
+	stage := "publication-access"
+	defer func() {
+		if result != nil && g.options.RecoveryFile != "" {
+			var classified *inventoryFailure
+			if !errors.As(result, &classified) {
+				if errors.Is(ctx.Err(), context.Canceled) && errors.Is(result, context.Canceled) {
+					result = &inventoryFailure{Cause: "observation-canceled", Err: result}
+				} else {
+					result = &inventoryFailure{Cause: stage, Security: true, Err: result}
+				}
+			}
+			cause, security := inventoryFailureClass(result)
+			if cause == "observation-canceled" && !security {
+				return
+			}
+			if err := g.fence.Deny(cause, security, result.Error()); err != nil {
+				g.blocked = errors.Join(result, err)
+				result = g.blocked
+			}
+		}
+	}()
 	cm, err := g.source.ConfigMaps(g.options.Namespace).Get(ctx, inventoryConfigMap, metav1.GetOptions{})
 	if err != nil {
+		if apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || errors.Is(err, context.DeadlineExceeded) {
+			return &inventoryFailure{Cause: "inventory-api-unavailable", Err: err}
+		}
 		return fmt.Errorf("inventory publication unavailable: %w", err)
 	}
+	stage = "publication-integrity"
 	in, err := verifyInventoryPublication(cm, g.options)
 	if err != nil {
 		return err
 	}
+	stage = "node-authority"
 	node, err := g.source.Nodes().Get(ctx, g.nodeName, metav1.GetOptions{})
 	if err != nil {
+		if apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || errors.Is(err, context.DeadlineExceeded) {
+			return &inventoryFailure{Cause: "inventory-api-unavailable", Err: err}
+		}
 		return fmt.Errorf("inventory Node lookup: %w", err)
 	}
 	if err := verifyInventoryNode(node, g.nodeName, g.nodeUID); err != nil {
 		return err
 	}
+	stage = "worker-assignment"
 	worker, err := in.Select(g.nodeName, g.nodeUID)
 	if err != nil {
 		return err
 	}
+	stage = "runtime-configuration"
 	exporter, err := g.loadExport(g.options.ExportConfigPath)
 	if err != nil {
 		return fmt.Errorf("load inventory exporter configuration: %w", err)
@@ -191,12 +256,18 @@ func (g *InventoryGate) check(ctx context.Context, expectedExport *evpn.Exporter
 	if err := g.checkVTEP(exporter); err != nil {
 		return err
 	}
+	stage = "chassis-identity"
 	if err := g.chassis(ctx, worker.Chassis); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return &inventoryFailure{Cause: "chassis-observation-unavailable", Err: err}
+		}
 		return fmt.Errorf("inventory local chassis verification: %w", err)
 	}
+	stage = "speaker-identity"
 	if err := g.speaker(ctx, worker); err != nil {
 		return fmt.Errorf("inventory speaker attestation: %w", err)
 	}
+	stage = "inventory-high-water-mark"
 	if _, err := g.fence.Accept(in); err != nil {
 		return fmt.Errorf("inventory durable acceptance: %w", err)
 	}

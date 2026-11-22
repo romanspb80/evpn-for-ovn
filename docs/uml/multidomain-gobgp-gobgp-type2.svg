@@ -1,43 +1,354 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" contentScriptType="application/ecmascript" contentStyleType="text/css" height="425px" preserveAspectRatio="none" style="width:509px;height:425px;background:#FCFCFD;" version="1.1" viewBox="0 0 509 425" width="509px" zoomAndPan="magnify"><defs/><g><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="462" x="27.5" y="12.9951">Proposed / Future | independent OVN domains with GoBGP Type-2</text><!--MD5=[f83ae91a690dfc657e1c5fbbd818f13d]
-entity a--><rect fill="#F1F5F9" height="85.1875" style="stroke: #64748B; stroke-width: 1.5;" width="316" x="6.5" y="24.2969"/><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="296" x="16.5" y="47.292">Domain A | independent OVN control plane</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="166" x="16.5" y="63.5889">NBDB / northd / SBDB A</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="179" x="16.5" y="79.8857">Node-Agent A + GoBGP A</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="245" x="16.5" y="96.1826">ovn-controller / OVS A + endpoint A</text><!--MD5=[5d12e840fb55afd9ed7b3559a638e8f7]
-entity b--><rect fill="#F1F5F9" height="85.1875" style="stroke: #64748B; stroke-width: 1.5;" width="317" x="6" y="187.2969"/><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="297" x="16" y="210.292">Domain B | independent OVN control plane</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="167" x="16" y="226.5889">NBDB / northd / SBDB B</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="181" x="16" y="242.8857">Node-Agent B + GoBGP B</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="247" x="16" y="259.1826">ovn-controller / OVS B + endpoint B</text><!--MD5=[a3deb68e4aebbeb113ddd128f6b25b58]
-link a to b--><path d="M78.9,109.4469 C68.73,117.9169 59.76,127.8269 53.5,139.2969 C43.43,157.7669 52.28,173.8469 68.6,187.0769 " fill="none" id="a-b" style="stroke: #2563EB; stroke-width: 1.0; stroke-dasharray: 7.0,7.0;"/><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="175" x="54.5" y="153.292">BGP EVPN Type-2 control</text><!--MD5=[a3deb68e4aebbeb113ddd128f6b25b58]
-link a to b--><path d="M215.44,109.5469 C223.21,118.4869 230.1,128.5169 234.5,139.2969 C241.51,156.4669 233.93,173.0969 221.53,187.2569 " fill="none" id="a-b-1" style="stroke: #15803D; stroke-width: 1.0; stroke-dasharray: 7.0,7.0;"/><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="260" x="237.5" y="153.292">proposed external VXLAN packet path</text><rect fill="#DDDDDD" height="124.0781" rx="5" ry="5" style="stroke: #000000; stroke-width: 1.0;" width="473" x="21.5" y="290.2969"/><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="461" x="27.5" y="308.292">Proposed topology; no independent-domain end-to-end validation.</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="360" x="27.5" y="324.5889">Blue: BGP Type-2 control | Green: workload packets</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="290" x="27.5" y="340.8857">No shared OVN NBDB / SBDB is assumed.</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="382" x="27.5" y="357.1826">Importer owns only its exact Linux FDB / neighbor state.</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="312" x="27.5" y="373.4795">ovn-controller observes it and programs OVS.</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="361" x="27.5" y="389.7764">Exact route and imported-state ownership stay local.</text><text fill="#000000" font-family="DejaVu Sans" font-size="14" lengthAdjust="spacingAndGlyphs" textLength="450" x="27.5" y="406.0732">Shared-OVN results do not validate this inter-domain packet path.</text><!--MD5=[7b79c3f270552cd50142c7b111b77080]
-@startuml
-title Proposed / Future | independent OVN domains with GoBGP Type-2
-top to bottom direction
-skinparam backgroundColor #FCFCFD
-skinparam defaultFontName DejaVu Sans
-skinparam defaultFontSize 14
-skinparam shadowing false
-skinparam ArrowColor #475569
-skinparam rectangleBackgroundColor #F1F5F9
-skinparam rectangleBorderColor #64748B
-
-rectangle "Domain A | independent OVN control plane\nNBDB / northd / SBDB A\nNode-Agent A + GoBGP A\novn-controller / OVS A + endpoint A" as a
-rectangle "Domain B | independent OVN control plane\nNBDB / northd / SBDB B\nNode-Agent B + GoBGP B\novn-controller / OVS B + endpoint B" as b
-
-a -[#2563EB,dashed]- b : BGP EVPN Type-2 control
-a -[#15803D,dashed]- b : proposed external VXLAN packet path
-
-legend bottom
-  Proposed topology; no independent-domain end-to-end validation.
-  Blue: BGP Type-2 control | Green: workload packets
-  No shared OVN NBDB / SBDB is assumed.
-  Importer owns only its exact Linux FDB / neighbor state.
-  ovn-controller observes it and programs OVS.
-  Exact route and imported-state ownership stay local.
-  Shared-OVN results do not validate this inter-domain packet path.
-endlegend
-@enduml
-
-PlantUML version 1.2020.02(Sun Mar 01 10:22:07 WET 2020)
-(GPL source distribution)
-Java Runtime: OpenJDK Runtime Environment
-JVM: OpenJDK 64-Bit Server VM
-Java Version: 21.0.13.0.3+1-1-24.04.1-Ubuntu
-Operating System: Linux
-Default Encoding: UTF-8
-Language: en
-Country: US
---></g></svg>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+ "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<!-- Generated by graphviz version 2.43.0 (0)
+ -->
+<!-- Title: independent_ovn_domains Pages: 1 -->
+<svg width="1198pt" height="821pt"
+ viewBox="0.00 0.00 1197.92 820.66" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(12.96 807.7)">
+<title>independent_ovn_domains</title>
+<polygon fill="#fcfcfd" stroke="transparent" points="-12.96,12.96 -12.96,-807.7 1184.96,-807.7 1184.96,12.96 -12.96,12.96"/>
+<text text-anchor="middle" x="586" y="-778.74" font-family="DejaVu Sans" font-size="15.00">Interconnecting independent OVN domains</text>
+<text text-anchor="middle" x="586" y="-761.74" font-family="DejaVu Sans" font-size="15.00">PLANNED — independent OVN&#45;domain interoperability is not end&#45;to&#45;end validated</text>
+<g id="clust1" class="cluster">
+<title>cluster_a</title>
+<path fill="#ffffff" stroke="#94a3b8" stroke-width="1.2" d="M20,-170.74C20,-170.74 556,-170.74 556,-170.74 562,-170.74 568,-176.74 568,-182.74 568,-182.74 568,-732.74 568,-732.74 568,-738.74 562,-744.74 556,-744.74 556,-744.74 20,-744.74 20,-744.74 14,-744.74 8,-738.74 8,-732.74 8,-732.74 8,-182.74 8,-182.74 8,-176.74 14,-170.74 20,-170.74"/>
+<text text-anchor="middle" x="288" y="-728.74" font-family="DejaVu Sans" font-size="15.00">SITE A — independent OVN domain</text>
+</g>
+<g id="clust4" class="cluster">
+<title>cluster_b</title>
+<path fill="#ffffff" stroke="#94a3b8" stroke-width="1.2" d="M616,-170.74C616,-170.74 1152,-170.74 1152,-170.74 1158,-170.74 1164,-176.74 1164,-182.74 1164,-182.74 1164,-732.74 1164,-732.74 1164,-738.74 1158,-744.74 1152,-744.74 1152,-744.74 616,-744.74 616,-744.74 610,-744.74 604,-738.74 604,-732.74 604,-732.74 604,-182.74 604,-182.74 604,-176.74 610,-170.74 616,-170.74"/>
+<text text-anchor="middle" x="884" y="-728.74" font-family="DejaVu Sans" font-size="15.00">SITE B — independent OVN domain</text>
+</g>
+<!-- nb_a -->
+<g id="node1" class="node">
+<title>nb_a</title>
+<path fill="#eff6ff" stroke="#64748b" d="M264.5,-708.47C264.5,-710.27 243.21,-711.74 217,-711.74 190.79,-711.74 169.5,-710.27 169.5,-708.47 169.5,-708.47 169.5,-679.01 169.5,-679.01 169.5,-677.21 190.79,-675.74 217,-675.74 243.21,-675.74 264.5,-677.21 264.5,-679.01 264.5,-679.01 264.5,-708.47 264.5,-708.47"/>
+<path fill="none" stroke="#64748b" d="M264.5,-708.47C264.5,-706.66 243.21,-705.19 217,-705.19 190.79,-705.19 169.5,-706.66 169.5,-708.47"/>
+<text text-anchor="middle" x="217" y="-690.64" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">OVN NBDB A</text>
+</g>
+<!-- nd_a -->
+<g id="node2" class="node">
+<title>nd_a</title>
+<path fill="#f8fafc" stroke="#64748b" d="M253.5,-628.74C253.5,-628.74 180.5,-628.74 180.5,-628.74 174.5,-628.74 168.5,-622.74 168.5,-616.74 168.5,-616.74 168.5,-604.74 168.5,-604.74 168.5,-598.74 174.5,-592.74 180.5,-592.74 180.5,-592.74 253.5,-592.74 253.5,-592.74 259.5,-592.74 265.5,-598.74 265.5,-604.74 265.5,-604.74 265.5,-616.74 265.5,-616.74 265.5,-622.74 259.5,-628.74 253.5,-628.74"/>
+<text text-anchor="middle" x="217" y="-607.64" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">ovn&#45;northd A</text>
+</g>
+<!-- nb_a&#45;&gt;nd_a -->
+<g id="edge1" class="edge">
+<title>nb_a&#45;&gt;nd_a</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M217,-675.73C217,-675.73 217,-636 217,-636"/>
+<polygon fill="#64748b" stroke="#64748b" points="219.45,-636 217,-629 214.55,-636 219.45,-636"/>
+<text text-anchor="middle" x="247.5" y="-649.74" font-family="DejaVu Sans" font-size="10.00">logical state</text>
+</g>
+<!-- agent_a -->
+<g id="node8" class="node">
+<title>agent_a</title>
+<path fill="#f8fafc" stroke="#64748b" d="M252,-304.74C252,-304.74 28,-304.74 28,-304.74 22,-304.74 16,-298.74 16,-292.74 16,-292.74 16,-265.74 16,-265.74 16,-259.74 22,-253.74 28,-253.74 28,-253.74 252,-253.74 252,-253.74 258,-253.74 264,-259.74 264,-265.74 264,-265.74 264,-292.74 264,-292.74 264,-298.74 258,-304.74 252,-304.74"/>
+<text text-anchor="middle" x="140" y="-289.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">Node&#45;Agent A</text>
+<text text-anchor="middle" x="140" y="-276.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">reads NBDB / SBDB / OVS</text>
+<text text-anchor="middle" x="140" y="-263.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">GoBGP API: AddPath / DeletePath / RIB</text>
+</g>
+<!-- nb_a&#45;&gt;agent_a -->
+<g id="edge6" class="edge">
+<title>nb_a&#45;&gt;agent_a</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M169.38,-693C146.93,-693 125,-693 125,-693 125,-693 125,-311.81 125,-311.81"/>
+<polygon fill="#64748b" stroke="#64748b" points="127.45,-311.81 125,-304.81 122.55,-311.81 127.45,-311.81"/>
+</g>
+<!-- sb_a -->
+<g id="node3" class="node">
+<title>sb_a</title>
+<path fill="#eff6ff" stroke="#64748b" d="M264,-542.47C264,-544.27 242.93,-545.74 217,-545.74 191.07,-545.74 170,-544.27 170,-542.47 170,-542.47 170,-513.01 170,-513.01 170,-511.21 191.07,-509.74 217,-509.74 242.93,-509.74 264,-511.21 264,-513.01 264,-513.01 264,-542.47 264,-542.47"/>
+<path fill="none" stroke="#64748b" d="M264,-542.47C264,-540.66 242.93,-539.19 217,-539.19 191.07,-539.19 170,-540.66 170,-542.47"/>
+<text text-anchor="middle" x="217" y="-524.64" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">OVN SBDB A</text>
+</g>
+<!-- nd_a&#45;&gt;sb_a -->
+<g id="edge2" class="edge">
+<title>nd_a&#45;&gt;sb_a</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M217,-592.73C217,-592.73 217,-553 217,-553"/>
+<polygon fill="#64748b" stroke="#64748b" points="219.45,-553 217,-546 214.55,-553 219.45,-553"/>
+<text text-anchor="middle" x="256" y="-566.74" font-family="DejaVu Sans" font-size="10.00">translated state</text>
+</g>
+<!-- ctl_a -->
+<g id="node4" class="node">
+<title>ctl_a</title>
+<path fill="#f8fafc" stroke="#64748b" d="M262,-462.74C262,-462.74 172,-462.74 172,-462.74 166,-462.74 160,-456.74 160,-450.74 160,-450.74 160,-438.74 160,-438.74 160,-432.74 166,-426.74 172,-426.74 172,-426.74 262,-426.74 262,-426.74 268,-426.74 274,-432.74 274,-438.74 274,-438.74 274,-450.74 274,-450.74 274,-456.74 268,-462.74 262,-462.74"/>
+<text text-anchor="middle" x="217" y="-441.64" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">ovn&#45;controller A</text>
+</g>
+<!-- sb_a&#45;&gt;ctl_a -->
+<g id="edge3" class="edge">
+<title>sb_a&#45;&gt;ctl_a</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M217,-509.73C217,-509.73 217,-470 217,-470"/>
+<polygon fill="#64748b" stroke="#64748b" points="219.45,-470 217,-463 214.55,-470 219.45,-470"/>
+<text text-anchor="middle" x="258" y="-483.74" font-family="DejaVu Sans" font-size="10.00">SB programming</text>
+</g>
+<!-- sb_a&#45;&gt;agent_a -->
+<g id="edge7" class="edge">
+<title>sb_a&#45;&gt;agent_a</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M169.82,-527C155.03,-527 142.5,-527 142.5,-527 142.5,-527 142.5,-311.82 142.5,-311.82"/>
+<polygon fill="#64748b" stroke="#64748b" points="144.95,-311.82 142.5,-304.82 140.05,-311.82 144.95,-311.82"/>
+</g>
+<!-- ovs_a -->
+<g id="node6" class="node">
+<title>ovs_a</title>
+<path fill="#f8fafc" stroke="#64748b" d="M59.5,-378.74C59.5,-378.74 28.5,-378.74 28.5,-378.74 22.5,-378.74 16.5,-372.74 16.5,-366.74 16.5,-366.74 16.5,-354.74 16.5,-354.74 16.5,-348.74 22.5,-342.74 28.5,-342.74 28.5,-342.74 59.5,-342.74 59.5,-342.74 65.5,-342.74 71.5,-348.74 71.5,-354.74 71.5,-354.74 71.5,-366.74 71.5,-366.74 71.5,-372.74 65.5,-378.74 59.5,-378.74"/>
+<text text-anchor="middle" x="44" y="-357.64" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">OVS A</text>
+</g>
+<!-- ctl_a&#45;&gt;ovs_a -->
+<g id="edge4" class="edge">
+<title>ctl_a&#45;&gt;ovs_a</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M212,-426.41C212,-403.99 212,-369 212,-369 212,-369 78.74,-369 78.74,-369"/>
+<polygon fill="#64748b" stroke="#64748b" points="78.74,-366.55 71.74,-369 78.74,-371.45 78.74,-366.55"/>
+<text text-anchor="middle" x="247" y="-400.74" font-family="DejaVu Sans" font-size="10.00">configures OVS</text>
+</g>
+<!-- work_a -->
+<g id="node5" class="node">
+<title>work_a</title>
+<path fill="#f8fafc" stroke="#64748b" d="M95.5,-462.74C95.5,-462.74 32.5,-462.74 32.5,-462.74 26.5,-462.74 20.5,-456.74 20.5,-450.74 20.5,-450.74 20.5,-438.74 20.5,-438.74 20.5,-432.74 26.5,-426.74 32.5,-426.74 32.5,-426.74 95.5,-426.74 95.5,-426.74 101.5,-426.74 107.5,-432.74 107.5,-438.74 107.5,-438.74 107.5,-450.74 107.5,-450.74 107.5,-456.74 101.5,-462.74 95.5,-462.74"/>
+<text text-anchor="middle" x="64" y="-441.64" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">Workload A</text>
+</g>
+<!-- work_a&#45;&gt;ovs_a -->
+<g id="edge5" class="edge">
+<title>work_a&#45;&gt;ovs_a</title>
+<path fill="none" stroke="#334155" stroke-width="1.5" d="M46,-426.51C46,-426.51 46,-385.93 46,-385.93"/>
+<polygon fill="#334155" stroke="#334155" stroke-width="1.5" points="48.45,-385.93 46,-378.93 43.55,-385.93 48.45,-385.93"/>
+<text text-anchor="middle" x="107.5" y="-400.74" font-family="DejaVu Sans" font-size="10.00">local forwarding</text>
+</g>
+<!-- vtep_a -->
+<g id="node7" class="node">
+<title>vtep_a</title>
+<path fill="#f8fafc" stroke="#64748b" d="M440,-379.74C440,-379.74 290,-379.74 290,-379.74 284,-379.74 278,-373.74 278,-367.74 278,-367.74 278,-353.74 278,-353.74 278,-347.74 284,-341.74 290,-341.74 290,-341.74 440,-341.74 440,-341.74 446,-341.74 452,-347.74 452,-353.74 452,-353.74 452,-367.74 452,-367.74 452,-373.74 446,-379.74 440,-379.74"/>
+<text text-anchor="middle" x="365" y="-364.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">VTEP A</text>
+<text text-anchor="middle" x="365" y="-351.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">OVS tunnel port (planned)</text>
+</g>
+<!-- ovs_a&#45;&gt;vtep_a -->
+<g id="edge11" class="edge">
+<title>ovs_a&#45;&gt;vtep_a</title>
+<path fill="none" stroke="#a16207" stroke-dasharray="1,5" d="M71.65,-360C116.96,-360 208.91,-360 277.85,-360"/>
+<text text-anchor="middle" x="174.75" y="-352" font-family="DejaVu Sans" font-size="10.00" fill="#854d0e">planned tunnel&#45;port association</text>
+</g>
+<!-- ovs_a&#45;&gt;vtep_a -->
+<!-- ovs_a&#45;&gt;agent_a -->
+<g id="edge8" class="edge">
+<title>ovs_a&#45;&gt;agent_a</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M34.83,-342.65C34.83,-342.65 34.83,-312.01 34.83,-312.01"/>
+<polygon fill="#64748b" stroke="#64748b" points="37.28,-312.01 34.83,-305.01 32.38,-312.01 37.28,-312.01"/>
+</g>
+<!-- ovs_a&#45;&gt;agent_a -->
+<!-- underlay -->
+<g id="node21" class="node">
+<title>underlay</title>
+<ellipse fill="#fefce8" stroke="#a16207" cx="626" cy="-133.87" rx="164.1" ry="26.74"/>
+<text text-anchor="middle" x="626" y="-137.27" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">IP UNDERLAY</text>
+<text text-anchor="middle" x="626" y="-124.27" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">VXLAN — PLANNED / UNVALIDATED</text>
+</g>
+<!-- vtep_a&#45;&gt;underlay -->
+<g id="edge30" class="edge">
+<title>vtep_a&#45;&gt;underlay</title>
+<path fill="none" stroke="#15803d" stroke-width="1.5" stroke-dasharray="5,2" d="M446,-334.71C446,-334.71 446,-133 446,-133 446,-133 454.97,-133 454.97,-133"/>
+<polygon fill="#15803d" stroke="#15803d" stroke-width="1.5" points="443.55,-334.71 446,-341.71 448.45,-334.71 443.55,-334.71"/>
+<polygon fill="#15803d" stroke="#15803d" stroke-width="1.5" points="454.97,-135.45 461.97,-133 454.97,-130.55 454.97,-135.45"/>
+</g>
+<!-- bgp_a -->
+<g id="node9" class="node">
+<title>bgp_a</title>
+<path fill="#f8fafc" stroke="#64748b" d="M428,-297.24C428,-297.24 380,-297.24 380,-297.24 374,-297.24 368,-291.24 368,-285.24 368,-285.24 368,-273.24 368,-273.24 368,-267.24 374,-261.24 380,-261.24 380,-261.24 428,-261.24 428,-261.24 434,-261.24 440,-267.24 440,-273.24 440,-273.24 440,-285.24 440,-285.24 440,-291.24 434,-297.24 428,-297.24"/>
+<text text-anchor="middle" x="404" y="-276.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">GoBGP A</text>
+</g>
+<!-- agent_a&#45;&gt;bgp_a -->
+<g id="edge9" class="edge">
+<title>agent_a&#45;&gt;bgp_a</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="1,5" d="M271.27,-285C271.27,-285 360.86,-285 360.86,-285"/>
+<polygon fill="#64748b" stroke="#64748b" points="360.86,-287.45 367.86,-285 360.86,-282.55 360.86,-287.45"/>
+<polygon fill="#64748b" stroke="#64748b" points="271.27,-282.55 264.27,-285 271.27,-287.45 271.27,-282.55"/>
+</g>
+<!-- agent_a&#45;&gt;bgp_a -->
+<!-- netlink_a -->
+<g id="node10" class="node">
+<title>netlink_a</title>
+<path fill="#f8fafc" stroke="#64748b" d="M340,-216.74C340,-216.74 154,-216.74 154,-216.74 148,-216.74 142,-210.74 142,-204.74 142,-204.74 142,-190.74 142,-190.74 142,-184.74 148,-178.74 154,-178.74 154,-178.74 340,-178.74 340,-178.74 346,-178.74 352,-184.74 352,-190.74 352,-190.74 352,-204.74 352,-204.74 352,-210.74 346,-216.74 340,-216.74"/>
+<text text-anchor="middle" x="247" y="-201.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">Owned Netlink FDB / neighbor A</text>
+<text text-anchor="middle" x="247" y="-188.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">(not packet forwarding)</text>
+</g>
+<!-- agent_a&#45;&gt;netlink_a -->
+<g id="edge10" class="edge">
+<title>agent_a&#45;&gt;netlink_a</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="1,5" d="M203,-253.45C203,-253.45 203,-223.9 203,-223.9"/>
+<polygon fill="#64748b" stroke="#64748b" points="205.45,-223.9 203,-216.9 200.55,-223.9 205.45,-223.9"/>
+<text text-anchor="middle" x="148.5" y="-241.68" font-family="DejaVu Sans" font-size="10.00">proposed import state</text>
+</g>
+<!-- bgp_b -->
+<g id="node19" class="node">
+<title>bgp_b</title>
+<path fill="#f8fafc" stroke="#64748b" d="M780,-297.24C780,-297.24 732,-297.24 732,-297.24 726,-297.24 720,-291.24 720,-285.24 720,-285.24 720,-273.24 720,-273.24 720,-267.24 726,-261.24 732,-261.24 732,-261.24 780,-261.24 780,-261.24 786,-261.24 792,-267.24 792,-273.24 792,-273.24 792,-285.24 792,-285.24 792,-291.24 786,-297.24 780,-297.24"/>
+<text text-anchor="middle" x="756" y="-276.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">GoBGP B</text>
+</g>
+<!-- bgp_a&#45;&gt;bgp_b -->
+<g id="edge29" class="edge">
+<title>bgp_a&#45;&gt;bgp_b</title>
+<path fill="none" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="5,2" d="M447.02,-279C447.02,-279 712.77,-279 712.77,-279"/>
+<polygon fill="#2563eb" stroke="#2563eb" stroke-width="1.5" points="712.77,-281.45 719.77,-279 712.77,-276.55 712.77,-281.45"/>
+<polygon fill="#2563eb" stroke="#2563eb" stroke-width="1.5" points="447.02,-276.55 440.02,-279 447.02,-281.45 447.02,-276.55"/>
+<text text-anchor="middle" x="458.04" y="-289.12" font-family="DejaVu Sans" font-size="10.00">BGP EVPN Type&#45;2 — PLANNED</text>
+</g>
+<!-- legend -->
+<g id="node22" class="node">
+<title>legend</title>
+<polygon fill="#f1f5f9" stroke="#64748b" points="747.5,-89 376.5,-89 376.5,0 753.5,0 753.5,-83 747.5,-89"/>
+<polyline fill="none" stroke="#64748b" points="747.5,-89 747.5,-83 "/>
+<polyline fill="none" stroke="#64748b" points="753.5,-83 747.5,-83 "/>
+<text text-anchor="start" x="385.5" y="-75" font-family="DejaVu Sans" font-size="10.00" fill="#0f172a">Blue dashed: planned bidirectional BGP EVPN Type&#45;2</text>
+<text text-anchor="start" x="385.5" y="-64" font-family="DejaVu Sans" font-size="10.00" fill="#0f172a">Gray dashed: OVN desired state / observation / OVS configuration</text>
+<text text-anchor="start" x="385.5" y="-53" font-family="DejaVu Sans" font-size="10.00" fill="#0f172a">Gray dotted: Node&#45;Agent API and reconciliation</text>
+<text text-anchor="start" x="385.5" y="-42" font-family="DejaVu Sans" font-size="10.00" fill="#0f172a">Orange dotted: planned OVS/VTEP tunnel&#45;port association, not forwarding</text>
+<text text-anchor="start" x="385.5" y="-31" font-family="DejaVu Sans" font-size="10.00" fill="#0f172a">Importer does not write SBDB or OVS OpenFlow</text>
+<text text-anchor="start" x="385.5" y="-20" font-family="DejaVu Sans" font-size="10.00" fill="#0f172a">Dark solid: local workload forwarding</text>
+<text text-anchor="start" x="385.5" y="-9" font-family="DejaVu Sans" font-size="10.00" fill="#0f172a">Green dashed: planned, unvalidated VXLAN forwarding</text>
+</g>
+<!-- netlink_a&#45;&gt;legend -->
+<!-- nb_b -->
+<g id="node11" class="node">
+<title>nb_b</title>
+<path fill="#eff6ff" stroke="#64748b" d="M1038.5,-708.47C1038.5,-710.27 1017.21,-711.74 991,-711.74 964.79,-711.74 943.5,-710.27 943.5,-708.47 943.5,-708.47 943.5,-679.01 943.5,-679.01 943.5,-677.21 964.79,-675.74 991,-675.74 1017.21,-675.74 1038.5,-677.21 1038.5,-679.01 1038.5,-679.01 1038.5,-708.47 1038.5,-708.47"/>
+<path fill="none" stroke="#64748b" d="M1038.5,-708.47C1038.5,-706.66 1017.21,-705.19 991,-705.19 964.79,-705.19 943.5,-706.66 943.5,-708.47"/>
+<text text-anchor="middle" x="991" y="-690.64" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">OVN NBDB B</text>
+</g>
+<!-- nd_b -->
+<g id="node12" class="node">
+<title>nd_b</title>
+<path fill="#f8fafc" stroke="#64748b" d="M1027.5,-628.74C1027.5,-628.74 954.5,-628.74 954.5,-628.74 948.5,-628.74 942.5,-622.74 942.5,-616.74 942.5,-616.74 942.5,-604.74 942.5,-604.74 942.5,-598.74 948.5,-592.74 954.5,-592.74 954.5,-592.74 1027.5,-592.74 1027.5,-592.74 1033.5,-592.74 1039.5,-598.74 1039.5,-604.74 1039.5,-604.74 1039.5,-616.74 1039.5,-616.74 1039.5,-622.74 1033.5,-628.74 1027.5,-628.74"/>
+<text text-anchor="middle" x="991" y="-607.64" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">ovn&#45;northd B</text>
+</g>
+<!-- nb_b&#45;&gt;nd_b -->
+<g id="edge15" class="edge">
+<title>nb_b&#45;&gt;nd_b</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M991,-675.73C991,-675.73 991,-636 991,-636"/>
+<polygon fill="#64748b" stroke="#64748b" points="993.45,-636 991,-629 988.55,-636 993.45,-636"/>
+<text text-anchor="middle" x="1021.5" y="-649.74" font-family="DejaVu Sans" font-size="10.00">logical state</text>
+</g>
+<!-- agent_b -->
+<g id="node18" class="node">
+<title>agent_b</title>
+<path fill="#f8fafc" stroke="#64748b" d="M1132,-304.74C1132,-304.74 908,-304.74 908,-304.74 902,-304.74 896,-298.74 896,-292.74 896,-292.74 896,-265.74 896,-265.74 896,-259.74 902,-253.74 908,-253.74 908,-253.74 1132,-253.74 1132,-253.74 1138,-253.74 1144,-259.74 1144,-265.74 1144,-265.74 1144,-292.74 1144,-292.74 1144,-298.74 1138,-304.74 1132,-304.74"/>
+<text text-anchor="middle" x="1020" y="-289.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">Node&#45;Agent B</text>
+<text text-anchor="middle" x="1020" y="-276.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">reads NBDB / SBDB / OVS</text>
+<text text-anchor="middle" x="1020" y="-263.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">GoBGP API: AddPath / DeletePath / RIB</text>
+</g>
+<!-- nb_b&#45;&gt;agent_b -->
+<g id="edge20" class="edge">
+<title>nb_b&#45;&gt;agent_b</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M943.11,-693C924.99,-693 908.67,-693 908.67,-693 908.67,-693 908.67,-311.81 908.67,-311.81"/>
+<polygon fill="#64748b" stroke="#64748b" points="911.12,-311.81 908.67,-304.81 906.22,-311.81 911.12,-311.81"/>
+</g>
+<!-- sb_b -->
+<g id="node13" class="node">
+<title>sb_b</title>
+<path fill="#eff6ff" stroke="#64748b" d="M1038,-542.47C1038,-544.27 1016.93,-545.74 991,-545.74 965.07,-545.74 944,-544.27 944,-542.47 944,-542.47 944,-513.01 944,-513.01 944,-511.21 965.07,-509.74 991,-509.74 1016.93,-509.74 1038,-511.21 1038,-513.01 1038,-513.01 1038,-542.47 1038,-542.47"/>
+<path fill="none" stroke="#64748b" d="M1038,-542.47C1038,-540.66 1016.93,-539.19 991,-539.19 965.07,-539.19 944,-540.66 944,-542.47"/>
+<text text-anchor="middle" x="991" y="-524.64" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">OVN SBDB B</text>
+</g>
+<!-- nd_b&#45;&gt;sb_b -->
+<g id="edge16" class="edge">
+<title>nd_b&#45;&gt;sb_b</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M991,-592.73C991,-592.73 991,-553 991,-553"/>
+<polygon fill="#64748b" stroke="#64748b" points="993.45,-553 991,-546 988.55,-553 993.45,-553"/>
+<text text-anchor="middle" x="1030" y="-566.74" font-family="DejaVu Sans" font-size="10.00">translated state</text>
+</g>
+<!-- ctl_b -->
+<g id="node14" class="node">
+<title>ctl_b</title>
+<path fill="#f8fafc" stroke="#64748b" d="M1036,-462.74C1036,-462.74 946,-462.74 946,-462.74 940,-462.74 934,-456.74 934,-450.74 934,-450.74 934,-438.74 934,-438.74 934,-432.74 940,-426.74 946,-426.74 946,-426.74 1036,-426.74 1036,-426.74 1042,-426.74 1048,-432.74 1048,-438.74 1048,-438.74 1048,-450.74 1048,-450.74 1048,-456.74 1042,-462.74 1036,-462.74"/>
+<text text-anchor="middle" x="991" y="-441.64" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">ovn&#45;controller B</text>
+</g>
+<!-- sb_b&#45;&gt;ctl_b -->
+<g id="edge17" class="edge">
+<title>sb_b&#45;&gt;ctl_b</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M991,-509.73C991,-509.73 991,-470 991,-470"/>
+<polygon fill="#64748b" stroke="#64748b" points="993.45,-470 991,-463 988.55,-470 993.45,-470"/>
+<text text-anchor="middle" x="1032" y="-483.74" font-family="DejaVu Sans" font-size="10.00">SB programming</text>
+</g>
+<!-- sb_b&#45;&gt;agent_b -->
+<g id="edge21" class="edge">
+<title>sb_b&#45;&gt;agent_b</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M943.76,-527C931.34,-527 921.33,-527 921.33,-527 921.33,-527 921.33,-311.82 921.33,-311.82"/>
+<polygon fill="#64748b" stroke="#64748b" points="923.78,-311.82 921.33,-304.82 918.88,-311.82 923.78,-311.82"/>
+</g>
+<!-- ovs_b -->
+<g id="node16" class="node">
+<title>ovs_b</title>
+<path fill="#f8fafc" stroke="#64748b" d="M1035.5,-378.74C1035.5,-378.74 1004.5,-378.74 1004.5,-378.74 998.5,-378.74 992.5,-372.74 992.5,-366.74 992.5,-366.74 992.5,-354.74 992.5,-354.74 992.5,-348.74 998.5,-342.74 1004.5,-342.74 1004.5,-342.74 1035.5,-342.74 1035.5,-342.74 1041.5,-342.74 1047.5,-348.74 1047.5,-354.74 1047.5,-354.74 1047.5,-366.74 1047.5,-366.74 1047.5,-372.74 1041.5,-378.74 1035.5,-378.74"/>
+<text text-anchor="middle" x="1020" y="-357.64" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">OVS B</text>
+</g>
+<!-- ctl_b&#45;&gt;ovs_b -->
+<g id="edge18" class="edge">
+<title>ctl_b&#45;&gt;ovs_b</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M1020,-426.51C1020,-426.51 1020,-385.93 1020,-385.93"/>
+<polygon fill="#64748b" stroke="#64748b" points="1022.45,-385.93 1020,-378.93 1017.55,-385.93 1022.45,-385.93"/>
+<text text-anchor="middle" x="1035" y="-400.74" font-family="DejaVu Sans" font-size="10.00">configures OVS</text>
+</g>
+<!-- work_b -->
+<g id="node15" class="node">
+<title>work_b</title>
+<path fill="#f8fafc" stroke="#64748b" d="M869.5,-462.74C869.5,-462.74 806.5,-462.74 806.5,-462.74 800.5,-462.74 794.5,-456.74 794.5,-450.74 794.5,-450.74 794.5,-438.74 794.5,-438.74 794.5,-432.74 800.5,-426.74 806.5,-426.74 806.5,-426.74 869.5,-426.74 869.5,-426.74 875.5,-426.74 881.5,-432.74 881.5,-438.74 881.5,-438.74 881.5,-450.74 881.5,-450.74 881.5,-456.74 875.5,-462.74 869.5,-462.74"/>
+<text text-anchor="middle" x="838" y="-441.64" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">Workload B</text>
+</g>
+<!-- work_b&#45;&gt;ovs_b -->
+<g id="edge19" class="edge">
+<title>work_b&#45;&gt;ovs_b</title>
+<path fill="none" stroke="#334155" stroke-width="1.5" d="M838,-426.41C838,-403.99 838,-369 838,-369 838,-369 985.36,-369 985.36,-369"/>
+<polygon fill="#334155" stroke="#334155" stroke-width="1.5" points="985.36,-371.45 992.36,-369 985.36,-366.55 985.36,-371.45"/>
+<text text-anchor="middle" x="893.5" y="-400.74" font-family="DejaVu Sans" font-size="10.00">local forwarding</text>
+</g>
+<!-- vtep_b -->
+<g id="node17" class="node">
+<title>vtep_b</title>
+<path fill="#f8fafc" stroke="#64748b" d="M774,-379.74C774,-379.74 624,-379.74 624,-379.74 618,-379.74 612,-373.74 612,-367.74 612,-367.74 612,-353.74 612,-353.74 612,-347.74 618,-341.74 624,-341.74 624,-341.74 774,-341.74 774,-341.74 780,-341.74 786,-347.74 786,-353.74 786,-353.74 786,-367.74 786,-367.74 786,-373.74 780,-379.74 774,-379.74"/>
+<text text-anchor="middle" x="699" y="-364.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">VTEP B</text>
+<text text-anchor="middle" x="699" y="-351.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">OVS tunnel port (planned)</text>
+</g>
+<!-- ovs_b&#45;&gt;vtep_b -->
+<g id="edge25" class="edge">
+<title>ovs_b&#45;&gt;vtep_b</title>
+<path fill="none" stroke="#a16207" stroke-dasharray="1,5" d="M992.35,-360C947.04,-360 855.09,-360 786.15,-360"/>
+<text text-anchor="middle" x="889.25" y="-352" font-family="DejaVu Sans" font-size="10.00" fill="#854d0e">planned tunnel&#45;port association</text>
+</g>
+<!-- ovs_b&#45;&gt;agent_b -->
+<g id="edge22" class="edge">
+<title>ovs_b&#45;&gt;agent_b</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M1010.83,-342.65C1010.83,-342.65 1010.83,-312.01 1010.83,-312.01"/>
+<polygon fill="#64748b" stroke="#64748b" points="1013.28,-312.01 1010.83,-305.01 1008.38,-312.01 1013.28,-312.01"/>
+</g>
+<!-- ovs_b&#45;&gt;agent_b -->
+<!-- vtep_b&#45;&gt;ovs_b -->
+<!-- agent_b&#45;&gt;bgp_b -->
+<g id="edge23" class="edge">
+<title>agent_b&#45;&gt;bgp_b</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="1,5" d="M888.73,-285C888.73,-285 799.14,-285 799.14,-285"/>
+<polygon fill="#64748b" stroke="#64748b" points="799.14,-282.55 792.14,-285 799.14,-287.45 799.14,-282.55"/>
+<polygon fill="#64748b" stroke="#64748b" points="888.73,-287.45 895.73,-285 888.73,-282.55 888.73,-287.45"/>
+</g>
+<!-- netlink_b -->
+<g id="node20" class="node">
+<title>netlink_b</title>
+<path fill="#f8fafc" stroke="#64748b" d="M961,-216.74C961,-216.74 775,-216.74 775,-216.74 769,-216.74 763,-210.74 763,-204.74 763,-204.74 763,-190.74 763,-190.74 763,-184.74 769,-178.74 775,-178.74 775,-178.74 961,-178.74 961,-178.74 967,-178.74 973,-184.74 973,-190.74 973,-190.74 973,-204.74 973,-204.74 973,-210.74 967,-216.74 961,-216.74"/>
+<text text-anchor="middle" x="868" y="-201.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">Owned Netlink FDB / neighbor B</text>
+<text text-anchor="middle" x="868" y="-188.14" font-family="DejaVu Sans" font-size="12.00" fill="#0f172a">(not packet forwarding)</text>
+</g>
+<!-- agent_b&#45;&gt;netlink_b -->
+<g id="edge24" class="edge">
+<title>agent_b&#45;&gt;netlink_b</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="1,5" d="M934.5,-253.45C934.5,-253.45 934.5,-223.9 934.5,-223.9"/>
+<polygon fill="#64748b" stroke="#64748b" points="936.95,-223.9 934.5,-216.9 932.05,-223.9 936.95,-223.9"/>
+<text text-anchor="middle" x="880" y="-241.68" font-family="DejaVu Sans" font-size="10.00">proposed import state</text>
+</g>
+<!-- bgp_b&#45;&gt;agent_b -->
+<!-- netlink_b&#45;&gt;legend -->
+<!-- underlay&#45;&gt;vtep_b -->
+<g id="edge31" class="edge">
+<title>underlay&#45;&gt;vtep_b</title>
+<path fill="none" stroke="#15803d" stroke-width="1.5" stroke-dasharray="5,2" d="M666,-167.34C666,-167.34 666,-334.67 666,-334.67"/>
+<polygon fill="#15803d" stroke="#15803d" stroke-width="1.5" points="663.55,-334.67 666,-341.67 668.45,-334.67 663.55,-334.67"/>
+<polygon fill="#15803d" stroke="#15803d" stroke-width="1.5" points="668.45,-167.34 666,-160.34 663.55,-167.34 668.45,-167.34"/>
+</g>
+</g>
+</svg>

@@ -9,8 +9,8 @@
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(12.96 575.09)">
 <title>Attempt8</title>
 <polygon fill="#fcfcfd" stroke="transparent" points="-12.96,12.96 -12.96,-575.09 660.46,-575.09 660.46,12.96 -12.96,12.96"/>
-<text text-anchor="start" x="77.25" y="-546.33" font-family="DejaVu Sans" font-weight="bold" font-size="16.00" fill="#172b4d">Validated — scoped E2E | Attempt 8 two&#45;worker Type&#45;2</text>
-<text text-anchor="start" x="147.25" y="-535.93" font-family="DejaVu Sans" font-size="9.00" fill="#64748b">Only the exact inventory&#45;gated shared&#45;OVN / external&#45;FRR scenario is claimed</text>
+<text text-anchor="start" x="13.25" y="-546.33" font-family="DejaVu Sans" font-weight="bold" font-size="16.00" fill="#172b4d">Historical E2E · not v0.1.0 acceptance | Attempt 8 two&#45;worker Type&#45;2</text>
+<text text-anchor="start" x="47.75" y="-535.93" font-family="DejaVu Sans" font-size="9.00" fill="#64748b">Inventory&#45;gated · source archive SHA&#45;256: 0d05c1ec554f9f6f4fb5e1f9f8c5558b371589df8a7c4b66cd9b98ba25504cc7</text>
 <g id="clust1" class="cluster">
 <title>cluster_control</title>
 <path fill="#f8fafc" stroke="#d8e2ed" d="M20,-373.62C20,-373.62 364,-373.62 364,-373.62 370,-373.62 376,-379.62 376,-385.62 376,-385.62 376,-451.62 376,-451.62 376,-457.62 370,-463.62 364,-463.62 364,-463.62 20,-463.62 20,-463.62 14,-463.62 8,-457.62 8,-451.62 8,-451.62 8,-385.62 8,-385.62 8,-379.62 14,-373.62 20,-373.62"/>

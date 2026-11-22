@@ -97,13 +97,14 @@ func (s *Store) delete(key string) {
 
 type CNIServer struct {
 	nodeagentpb.UnimplementedNodeAgentCNIServer
-	operations        sync.Mutex
-	continuity        *cniContinuity
-	stopping          bool
-	store             *Store
-	endpoint          endpoint.EndpointManager
-	network           networkBackend
-	attachmentChecker attachmentStateChecker
+	operations             sync.Mutex
+	continuity             *cniContinuity
+	requirePeerCredentials bool
+	stopping               bool
+	store                  *Store
+	endpoint               endpoint.EndpointManager
+	network                networkBackend
+	attachmentChecker      attachmentStateChecker
 }
 
 type attachmentStateChecker interface {
@@ -485,7 +486,7 @@ func StartUnixServer(ctx context.Context, socketPath string, service nodeagentpb
 	}
 
 	var options []grpc.ServerOption
-	if cni, ok := service.(*CNIServer); ok && cni.continuity != nil && cni.continuity.authority != nil {
+	if cni, ok := service.(*CNIServer); ok && (cni.requirePeerCredentials || cni.continuity != nil && cni.continuity.authority != nil) {
 		options = append(options, grpc.Creds(newCNICallerCredentials()))
 	}
 	grpcServer := grpc.NewServer(options...)

@@ -123,6 +123,9 @@ spec:
                     exportConfigPath: {type: string}
                     exportStatusPath: {type: string}
                     exportInterval: {type: string}
+                    verifyNetlinkExportProvenance:
+                      type: boolean
+                      default: true
                     exportTimeout: {type: string}
                     remoteConfigPath: {type: string}
                     remoteStatusPath: {type: string}

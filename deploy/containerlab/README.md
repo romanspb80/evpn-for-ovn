@@ -4,9 +4,10 @@
 for all EVPN-for-OVN E2E tests.** It is not a Framework runtime, build, unit-test,
 or production dependency.
 
-Read [SECURITY.md](../../SECURITY.md) first. The kind/core application examples
-publish unauthenticated management NodePorts `30052`/`30053`; isolate and firewall
-every lab node before applying them. Containerlab TLS does not secure these RPCs.
+Read [SECURITY.md](../../SECURITY.md) first. The legacy Kind compatibility
+manifest keeps unauthenticated management APIs behind ClusterIP Services only;
+in-cluster callers can still reach them. Containerlab TLS does not secure these
+RPCs. Do not deploy the compatibility profile on a shared or untrusted cluster.
 
 ## Prerequisites
 
@@ -29,7 +30,6 @@ still-existing process remains an unknown host-or-foreign conflict; it is
 never treated as run-owned. A process in a different namespace is reported
 as unverified, not as evidence of ownership.
 
-The accepted host used Docker Engine **29.1.2** and kind CLI **v0.27.0**.
 The native kind topology pins the Kubernetes **v1.32.3** node image by digest;
 host kind CLI version and Kubernetes node version are different identities.
 
@@ -43,7 +43,7 @@ Go modules. Containerlab does not install these host tools.
 
 [`tools/e2e/containerlab.py`](../../tools/e2e/containerlab.py) renders a
 run-specific `lab.clab.yaml` and immutable-topology ownership `lab.json` in
-the evidence directory. Four profiles share this implementation:
+the evidence directory. Five profiles share this implementation:
 
 | Profile | Containerlab environment | Suite-specific setup |
 |---|---|---|
@@ -92,23 +92,19 @@ The bounded isolated secondary-CNI scenario is run with:
 bash tools/run-cni-isolated-secondary-e2e.sh
 ```
 
-The tested disposable Vagrant/libvirt VM used Ubuntu 22.04.3 (kernel
-5.15.0-91), 4 vCPU, 12 GiB RAM and a 128 GiB sparse virtual disk. Its root
-filesystem was 62 GiB. The tested tools were Vagrant 2.4.9, libvirt 10.0.0,
-Docker 29.1.3, kind 0.27.0, kubectl 1.32.3, Containerlab 0.79.0, Go 1.27.3
-and Python 3.11.0rc1. These are tested settings, not established minimums;
-the complete isolated secondary-CNI scenario passed on this configuration.
-The VM needs working Docker-managed `bridge` and `kind` networks, a loaded
+Use the [disposable VM guide](../../docs/testing/vm-e2e-lab.md) for
+resource defaults, provisioning and kernel prerequisites. The VM needs
+working Docker-managed `bridge` and `kind` networks, a loaded
 `openvswitch` kernel module, and the pinned images described above.
 
-The validated scope is two workloads on different Kind workers using Kindnet,
+The scenario tests two workloads on different Kind workers using Kindnet,
 Multus and a separate OVN domain: ADD, CHECK replayed from captured Multus
 arguments, exact Southbound bindings,
 bidirectional net1 and Geneve packet correlation, actual Multus DEL and owned
 endpoint cleanup, and primary address/route preservation and bidirectional
-Kindnet connectivity after DEL. The run did not test EVPN Type-2; it had no
-suitable pre-existing foreign OVN/OVS witness, so foreign-resource preservation
-was not demonstrated. This is not a claim about other environments.
+Kindnet connectivity after DEL. This runner does not test EVPN Type-2 or
+provide an independent synthetic foreign OVN/OVS witness. Its assertions do
+not establish arbitrary foreign-resource preservation or other environments.
 
 On workload failure, `workload-failure-evidence.json` records individual command
 statuses, Pod YAML/events, NADs, CNI binary/configuration and invocation
@@ -254,5 +250,5 @@ lab-local `ca` directory. A kind-only CNI profile records `NOT_USED` for
 Containerlab node TLS; kind manages Kubernetes PKI independently.
 These management certificates do **not** enable Framework gRPC TLS.
 
-See the [Testing Guide](../../TESTING_GUIDE.md) for accepted scopes, evidence,
+See the [Testing Guide](../../TESTING_GUIDE.md) for scenarios, evidence,
 discovery/classification and limitations.

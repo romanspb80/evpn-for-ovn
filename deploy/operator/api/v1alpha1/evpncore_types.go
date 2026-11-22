@@ -40,27 +40,29 @@ type BGPSpec struct {
 }
 
 type NodeAgentSpec struct {
-	Enabled                 bool                `json:"enabled,omitempty"`
-	Image                   string              `json:"image,omitempty"`
-	NodeSelector            map[string]string   `json:"nodeSelector,omitempty"`
-	Tolerations             []corev1.Toleration `json:"tolerations,omitempty"`
-	Mode                    string              `json:"mode,omitempty"`
-	NetworkBackend          string              `json:"networkBackend,omitempty"`
-	Socket                  string              `json:"socket,omitempty"`
-	OVNNBEndpoint           string              `json:"ovnNBEndpoint,omitempty"`
-	OVSDBEndpoint           string              `json:"ovsdbEndpoint,omitempty"`
-	OVNSBEndpoint           string              `json:"ovnSBEndpoint,omitempty"`
-	ExportConfigPath        string              `json:"exportConfigPath,omitempty"`
-	ExportStatusPath        string              `json:"exportStatusPath,omitempty"`
-	ExportInterval          string              `json:"exportInterval,omitempty"`
-	ExportTimeout           string              `json:"exportTimeout,omitempty"`
-	RemoteConfigPath        string              `json:"remoteConfigPath,omitempty"`
-	RemoteStatusPath        string              `json:"remoteStatusPath,omitempty"`
-	RemoteInterval          string              `json:"remoteInterval,omitempty"`
-	RemoteTimeout           string              `json:"remoteTimeout,omitempty"`
-	GoBGPHostPath           string              `json:"gobgpHostPath,omitempty"`
-	Type2JournalHostPath    string              `json:"type2JournalHostPath,omitempty"`
-	CNIContinuityConfigPath string              `json:"cniContinuityConfigPath,omitempty"`
+	Enabled          bool                `json:"enabled,omitempty"`
+	Image            string              `json:"image,omitempty"`
+	NodeSelector     map[string]string   `json:"nodeSelector,omitempty"`
+	Tolerations      []corev1.Toleration `json:"tolerations,omitempty"`
+	Mode             string              `json:"mode,omitempty"`
+	NetworkBackend   string              `json:"networkBackend,omitempty"`
+	Socket           string              `json:"socket,omitempty"`
+	OVNNBEndpoint    string              `json:"ovnNBEndpoint,omitempty"`
+	OVSDBEndpoint    string              `json:"ovsdbEndpoint,omitempty"`
+	OVNSBEndpoint    string              `json:"ovnSBEndpoint,omitempty"`
+	ExportConfigPath string              `json:"exportConfigPath,omitempty"`
+	ExportStatusPath string              `json:"exportStatusPath,omitempty"`
+	ExportInterval   string              `json:"exportInterval,omitempty"`
+	ExportTimeout    string              `json:"exportTimeout,omitempty"`
+	// VerifyNetlinkExportProvenance defaults to true. False is for isolated runs without recovery.
+	VerifyNetlinkExportProvenance *bool  `json:"verifyNetlinkExportProvenance,omitempty"`
+	RemoteConfigPath              string `json:"remoteConfigPath,omitempty"`
+	RemoteStatusPath              string `json:"remoteStatusPath,omitempty"`
+	RemoteInterval                string `json:"remoteInterval,omitempty"`
+	RemoteTimeout                 string `json:"remoteTimeout,omitempty"`
+	GoBGPHostPath                 string `json:"gobgpHostPath,omitempty"`
+	Type2JournalHostPath          string `json:"type2JournalHostPath,omitempty"`
+	CNIContinuityConfigPath       string `json:"cniContinuityConfigPath,omitempty"`
 	// ProviderAttestation enables local, read-only Kubernetes/containerd
 	// inspection. The host mounts remain an administrator privilege boundary.
 	ProviderAttestation bool   `json:"providerAttestation,omitempty"`
@@ -133,6 +135,10 @@ func (in *EvpnCore) DeepCopyInto(out *EvpnCore) {
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
 	out.Spec = in.Spec
+	if value := in.Spec.NodeAgent.VerifyNetlinkExportProvenance; value != nil {
+		copy := *value
+		out.Spec.NodeAgent.VerifyNetlinkExportProvenance = &copy
+	}
 	if in.Spec.WorkerInventory != nil {
 		inventory := *in.Spec.WorkerInventory
 		inventory.Workers = append([]workerinventory.Worker(nil), inventory.Workers...)

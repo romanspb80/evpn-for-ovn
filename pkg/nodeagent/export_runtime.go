@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/romanspb80/evpn-for-ovn/pkg/evpn"
+	"github.com/romanspb80/evpn-for-ovn/pkg/workerinventory"
 	nbdb "github.com/romanspb80/evpn-for-ovn/services/ovsdb_mgmt/ovnnb"
 	"github.com/vishvananda/netns"
 
@@ -26,15 +27,17 @@ import (
 )
 
 type ExportRuntimeOptions struct {
-	ConfigPath          string
-	StatusPath          string
-	SBEndpoint          string
-	Interval            time.Duration
-	Timeout             time.Duration
-	RequireLocalChassis bool
+	ConfigPath            string
+	StatusPath            string
+	SBEndpoint            string
+	Interval              time.Duration
+	Timeout               time.Duration
+	RequireLocalChassis   bool
+	SkipNetlinkProvenance bool
 	// PeerImportConfig is the startup snapshot of a co-hosted importer.
-	PeerImportConfig *RemoteRuntimeConfig
-	InventoryGate    func(context.Context, evpn.ExporterConfig) error
+	PeerImportConfig  *RemoteRuntimeConfig
+	InventoryGate     func(context.Context, evpn.ExporterConfig) error
+	InventoryRecovery *InventoryGate
 }
 
 type ExportStatus struct {
@@ -43,6 +46,8 @@ type ExportStatus struct {
 	Observations   []ExportObservation
 	Result         evpn.ExportResult
 	SpeakerProcess SpeakerProcessEvidence
+	InventoryTrust *workerinventory.TrustState   `json:",omitempty"`
+	RecoveryTarget *workerinventory.TrustBinding `json:",omitempty"`
 }
 
 func LoadExporterConfig(path string) (evpn.ExporterConfig, error) {
@@ -176,7 +181,7 @@ func validateLocalExportConfig(cfg evpn.ExporterConfig) error {
 // RunEndpointExporter is an optional periodic reader/application loop alongside
 // the existing CNI server. It never invokes CNI ADD/DEL or speaker session RPCs.
 func (s *CNIServer) RunEndpointExporter(ctx context.Context, runtime RuntimeOptions, opts ExportRuntimeOptions, report func(ExportStatus)) error {
-	return runEndpointExporter(ctx, runtime, opts, report, &cniExportBinding{server: s})
+	return runEndpointExporter(ctx, runtime, opts, report, &cniExportBinding{server: s, skipNetlinkProvenance: opts.SkipNetlinkProvenance})
 }
 
 func runEndpointExporter(
@@ -188,6 +193,9 @@ func runEndpointExporter(
 ) error {
 	if opts.ConfigPath == "" {
 		return nil
+	}
+	if opts.SkipNetlinkProvenance && (opts.InventoryGate != nil || opts.InventoryRecovery != nil) {
+		return fmt.Errorf("skipping Netlink export provenance is incompatible with worker inventory")
 	}
 	if runtime.Mode != RuntimeModeRealOVNOVS || runtime.NetworkBackend != "linux-veth" {
 		return fmt.Errorf("EVPN export requires real-ovn-ovs/linux-veth")
@@ -233,6 +241,9 @@ func runEndpointExporter(
 		status := ExportStatus{Time: time.Now().UTC(), Result: evpn.ExportResult{Applied: last.Applied}}
 		platform.beginCycle()
 		cfg, err := LoadExporterConfig(opts.ConfigPath)
+		if err == nil && opts.SkipNetlinkProvenance && (cfg.Enabled || cfg.Recovery != nil) {
+			err = ValidateNetlinkExportBenchmark(cfg)
+		}
 		stepCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 		defer cancel()
 		if err == nil && cfg.Enabled {
@@ -244,16 +255,31 @@ func runEndpointExporter(
 		if err == nil && opts.InventoryGate != nil {
 			err = opts.InventoryGate(stepCtx, cfg)
 		}
-		if err != nil && opts.InventoryGate != nil {
+		if err != nil && opts.InventoryGate != nil && !inventoryObservationCanceled(err) {
+			if opts.InventoryRecovery != nil {
+				err = errors.Join(err, opts.InventoryRecovery.RecordFailure(err, exporterRecovery))
+			}
 			err = fmt.Errorf("inventory-gated exporter blocked: %w", err)
+			withdrawCtx, done := context.WithTimeout(ctx, opts.Timeout)
+			defer done()
 			if exporterRecovery != nil {
-				result, withdrawalErr := withdrawFencedExport(stepCtx, exporter, exporterRecovery)
+				result, withdrawalErr := withdrawFencedExport(withdrawCtx, exporter, exporterRecovery)
 				last, status.Result = result, result
 				if withdrawalErr != nil {
 					err = errors.Join(err, fmt.Errorf("owned route withdrawal unresolved: %w", withdrawalErr))
 				}
 			} else {
-				err = errors.Join(err, fmt.Errorf("owned route withdrawal unavailable: durable exporter recovery not initialized"))
+				// Denial can precede the very first successful export cycle.
+				// Initialize only exact durable cleanup, never desired endpoints.
+				if authority != nil {
+					err = errors.Join(err, authority.Close())
+					authority = nil
+				}
+				result, withdrawalErr := WithdrawInventoryExports(withdrawCtx, runtime, opts, err)
+				last, status.Result = result, result
+				if withdrawalErr != nil {
+					err = errors.Join(err, fmt.Errorf("owned route withdrawal unresolved: %w", withdrawalErr))
+				}
 			}
 		}
 		if err == nil {
@@ -283,7 +309,7 @@ func runEndpointExporter(
 				nb, ovs, sb = nil, nil, nil
 			}
 		}
-		if err == nil && cfg.Enabled && opts.RequireLocalChassis {
+		if err == nil && cfg.Enabled && opts.RequireLocalChassis && opts.InventoryRecovery == nil {
 			if chassisLost == nil {
 				chassisLost = verifyLocalOVNChassis(stepCtx, ovs, sb, cfg.LocalChassis)
 			}
@@ -364,7 +390,17 @@ func runEndpointExporter(
 					}
 				}
 			}
-			if err == nil && exporterRecovery != nil && exporterRecovery.WithdrawalRequired() {
+			if err == nil && exporterRecovery != nil && opts.InventoryRecovery != nil {
+				err = opts.InventoryRecovery.CoordinateRecovery(stepCtx, exporter, exporterRecovery)
+				if err == nil {
+					exporter.Applier = inventoryRecoveryApplier{gate: opts.InventoryRecovery, recovery: exporterRecovery, observer: exporter.Observer}
+				} else {
+					status.Result.Applied = exporter.AppliedRoutes()
+					status.Result.RecoveryState = "RECOVERY_BLOCKED"
+					last = status.Result
+				}
+			}
+			if err == nil && exporterRecovery != nil && opts.InventoryRecovery == nil && exporterRecovery.WithdrawalRequired() {
 				status.Result, err = withdrawFencedExport(stepCtx, exporter, exporterRecovery)
 				last = status.Result
 				err = errors.Join(fmt.Errorf("exporter is durably fenced after local chassis identity loss; controlled recovery required"), err)
@@ -382,6 +418,9 @@ func runEndpointExporter(
 		status.SpeakerProcess = continuity.Evidence()
 		if !cfg.Enabled && err == nil {
 			status.Observations = []ExportObservation{{State: "disabled", Reason: "explicit export enablement is false"}}
+		}
+		if opts.InventoryRecovery != nil {
+			status.InventoryTrust, status.RecoveryTarget = opts.InventoryRecovery.RecoveryStatus(exporterRecovery)
 		}
 		if opts.StatusPath != "" {
 			if writeErr := writeExportStatus(opts.StatusPath, status); writeErr != nil {
@@ -421,12 +460,17 @@ func runEndpointExporter(
 			}
 			return nil
 		case <-ticker.C:
-			tick()
+			if ctx.Err() == nil {
+				tick()
+			}
 		}
 	}
 }
 
 func withdrawFencedExport(ctx context.Context, exporter *evpn.EndpointExporter, recovery *evpn.ExportRecovery) (evpn.ExportResult, error) {
+	if err := recovery.RecoverPending(ctx); err != nil {
+		return evpn.ExportResult{OwnershipUnverified: true}, fmt.Errorf("pending withdrawal ownership unresolved: %w", err)
+	}
 	if err := recovery.RequireWithdrawal(); err != nil {
 		return evpn.ExportResult{OwnershipUnverified: true}, fmt.Errorf("persist withdrawal fence: %w", err)
 	}

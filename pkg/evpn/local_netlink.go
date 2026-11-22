@@ -38,11 +38,25 @@ type LocalOVNNetlinkObserver struct {
 }
 
 func NewLocalOVNNetlinkObserver(cfg ExporterConfig, ports EndpointObserver) (*LocalOVNNetlinkObserver, error) {
+	if ports == nil {
+		return nil, fmt.Errorf("OVN local-port provenance source required")
+	}
+	return newLocalOVNNetlinkObserver(cfg, ports)
+}
+
+func NewLocalOVNNetlinkBenchmarkObserver(cfg ExporterConfig) (*LocalOVNNetlinkObserver, error) {
+	if cfg.Recovery != nil {
+		return nil, fmt.Errorf("Netlink-only observation cannot provide durable endpoint identity")
+	}
+	return newLocalOVNNetlinkObserver(cfg, nil)
+}
+
+func newLocalOVNNetlinkObserver(cfg ExporterConfig, ports EndpointObserver) (*LocalOVNNetlinkObserver, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if !cfg.Enabled || ports == nil {
-		return nil, fmt.Errorf("enabled exporter and OVN local-port provenance source required")
+	if !cfg.Enabled {
+		return nil, fmt.Errorf("enabled exporter required")
 	}
 	ns, err := netns.Get()
 	if err != nil {
@@ -155,9 +169,12 @@ func (o *LocalOVNNetlinkObserver) DesiredLocalEndpoints(ctx context.Context) (re
 	if err = o.checkDevices(false); err != nil {
 		return nil, err
 	}
-	before, err := o.ports.DesiredLocalEndpoints(ctx)
-	if err != nil {
-		return nil, err
+	var before []LocalEndpoint
+	if o.ports != nil {
+		before, err = o.ports.DesiredLocalEndpoints(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	for _, cfg := range o.config.Networks {
 		if !cfg.Enabled || cfg.ExportSource() != "ovn-netlink" {
@@ -194,6 +211,14 @@ func (o *LocalOVNNetlinkObserver) DesiredLocalEndpoints(ctx context.Context) (re
 			}
 			mac := entry.HardwareAddr.String()
 			ep, ok := ports[mac]
+			if o.ports == nil && len(entry.HardwareAddr) == 6 && entry.HardwareAddr[0]&1 == 0 && mac != "00:00:00:00:00:00" {
+				// These identities scope a live, non-recoverable observation; they are not OVN UUIDs.
+				ep = LocalEndpoint{NetworkID: cfg.NetworkID, EndpointID: "ovn-netlink-benchmark/" + mac,
+					Incarnation: fmt.Sprintf("ifindex/%d", adv.Ifindex), MACAddress: mac, VNI: cfg.VNI,
+					RouteDistinguisher: cfg.RouteDistinguisher, RouteTargets: append([]string(nil), cfg.RouteTargets...),
+					LocalVTEP: cfg.LocalVTEP, NodeName: o.config.NodeName, Chassis: o.config.LocalChassis, Advertise: true}
+				ok = true
+			}
 			if !ok {
 				continue
 			}
@@ -223,7 +248,7 @@ func (o *LocalOVNNetlinkObserver) DesiredLocalEndpoints(ctx context.Context) (re
 					(family == unix.AF_INET) != (entry.IP.To4() != nil) {
 					return nil, fmt.Errorf("invalid native local IP neighbor")
 				}
-				if !allowedIPs[entry.HardwareAddr.String()][entry.IP.String()] {
+				if o.ports != nil && !allowedIPs[entry.HardwareAddr.String()][entry.IP.String()] {
 					return nil, fmt.Errorf("native neighbor does not match local OVN static IP provenance")
 				}
 				ep.MACOnly, ep.IPAddresses = false, []string{entry.IP.String()}
@@ -235,12 +260,14 @@ func (o *LocalOVNNetlinkObserver) DesiredLocalEndpoints(ctx context.Context) (re
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].RouteKey() < result[j].RouteKey() })
-	after, err := o.ports.DesiredLocalEndpoints(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if !reflect.DeepEqual(before, after) {
-		return nil, fmt.Errorf("OVN local-port provenance changed during native snapshot")
+	if o.ports != nil {
+		after, err := o.ports.DesiredLocalEndpoints(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !reflect.DeepEqual(before, after) {
+			return nil, fmt.Errorf("OVN local-port provenance changed during native snapshot")
+		}
 	}
 	if err := o.checkDevices(false); err != nil {
 		return nil, err

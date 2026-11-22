@@ -253,6 +253,11 @@ func openAdministratorFileAt(rootFD int, path string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if fd >= 0 {
+			unix.Close(fd)
+		}
+	}()
 	unix.CloseOnExec(fd)
 	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
 	for i, part := range parts {

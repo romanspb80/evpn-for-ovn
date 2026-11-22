@@ -1,0 +1,54 @@
+@startuml
+title Independent OVN domains — proposed Type-2 and packet flow\nPLANNED — independent OVN domain interoperability not end-to-end validated
+top to bottom direction
+skinparam backgroundColor #FCFCFD
+skinparam shadowing false
+skinparam roundcorner 8
+skinparam defaultFontName DejaVu Sans
+skinparam defaultFontSize 13
+skinparam ArrowFontSize 12
+skinparam linetype ortho
+skinparam ArrowColor #475569
+skinparam componentStyle rectangle
+skinparam componentBackgroundColor #F8FAFC
+skinparam componentBorderColor #64748B
+skinparam packageBackgroundColor #FFFFFF
+skinparam packageBorderColor #94A3B8
+
+package "PROPOSED CONTROL PLANE — per-domain ownership" {
+  component "Domain A Node-Agent\n1. observe and authorize endpoint" as ExportA
+  component "GoBGP A\n2. AddPath owned Type-2" as GoBGPA
+  component "GoBGP B\n3. receive remote Type-2" as GoBGPB
+  component "Domain B Node-Agent\n4. read RIB; validate source, RT,\nVNI and VTEP next hop" as ImportB
+  component "5. Domain B import / mapping /\ntunnel reconciliation — OPEN" as ReconcileB
+
+  ExportA -[#64748B,dotted]-> GoBGPA : proposed cross-domain use
+  GoBGPA -[#2563EB,dashed]- GoBGPB : PLANNED BGP EVPN exchange
+  GoBGPB -[#64748B,dotted]-> ImportB : proposed RIB/API integration
+  ImportB -[#64748B,dotted]-> ReconcileB : not established end to end
+}
+
+package "PROPOSED DATA PLANE — no packet acceptance implied" {
+  component "Workload A" as WorkloadA
+  component "OVN/OVS A" as OVSA
+  component "VTEP A" as VTEPA
+  cloud "Underlay\nVXLAN tunnel" as Underlay
+  component "VTEP B" as VTEPB
+  component "OVN/OVS B" as OVSB
+  component "Workload B" as WorkloadB
+
+  WorkloadA -[#334155,bold]-> OVSA : proposed local forwarding
+  OVSA -[#15803D,dashed]-> VTEPA : proposed tunnel endpoint
+  VTEPA -[#15803D,dashed]-> Underlay : proposed VXLAN
+  Underlay -[#15803D,dashed]-> VTEPB : proposed VXLAN
+  VTEPB -[#15803D,dashed]-> OVSB : proposed tunnel endpoint
+  OVSB -[#334155,bold]-> WorkloadB : proposed local forwarding
+}
+
+legend bottom
+  Blue dashed line: proposed BGP EVPN route exchange (bidirectional)
+  Gray dotted arrows: proposed API / import reconciliation
+  Dark solid arrows: local workload forwarding (proposed cross-domain scenario)
+  Green dashed arrows: proposed, unvalidated VXLAN forwarding
+endlegend
+@enduml

@@ -56,9 +56,10 @@ in-memory CNI fixtures retain their prior behavior.
 
 The fixture explicitly installs the CNI binary, Multus and wrapper as
 root-owned files. Copying user-built artifacts into a container does not
-necessarily change their ownership. Matching hashes on UID-1000 executables
-were correctly rejected in real acceptance; changing their installed owner
-is provisioning, not an identity-check bypass.
+necessarily change their ownership. Matching hashes do not authorize
+UID-1000 executables; root ownership remains a prerequisite.
+Installing files with the required owner is provisioning,
+not an identity-check bypass.
 
 ## Durable lifecycle
 
@@ -86,10 +87,8 @@ resource identities; DEL uses acknowledged UUIDs and device identity rather
 than caller claims. Failed or uncertain external mutations preserve durable
 intent and require investigation.
 
-This design was recorded before implementation. Real operator-managed
-acceptance subsequently demonstrated authenticated creation, durable
-pending-to-active transitions, Type-2 exchange and bidirectional forwarding.
-Focused tests independently verify that pending endpoints cannot export.
+Tests of this boundary must check authenticated creation, durable
+pending-to-active transitions and rejection of export from pending endpoints.
 If the invocation chain cannot be attested, creation remains blocked rather
 than substituting metadata-only authority.
 
@@ -118,20 +117,9 @@ acknowledged endpoint before retrying workload creation. One pending or
 quarantined endpoint currently conservatively blocks desired-export validation
 for the installation, rather than exporting a partially verified set.
 
-<a id="creation-task-acceptance-and-subsequent-descriptor-correction"></a>
-## Historical recovery investigation
-
-An earlier combined test reached real endpoint activation, forwarding and
-agent recovery but failed to recover authoritative importer observation after
-speaker replacement; subsequent lifecycle and cleanup assertions were not
-reached. A transport-retry experiment did not resolve the problem and was
-reverted. The later investigation traced `GetBgp: DeadlineExceeded` to CNI
-`SO_PEERPIDFD` error cleanup closing an unrelated GoBGP descriptor. See
-[descriptor ownership](type2-restart-ownership.md#cni-peer-descriptor-ownership)
-and the [historical combined acceptance record](operator-type2-acceptance.md#combined-recovery-validation)
-for the correction, subsequent reported results and their limits.
-Neither replacement identity nor an unavailable RIB proves old routes absent;
-ambiguous AddPath recovery remains blocked. Historical private artifacts are
-not current-revision acceptance.
-
 <a id="creation-task-file-inventory"></a>
+
+Implementation entry points are the
+[CNI activation runtime](../../pkg/nodeagent/cni_activation.go),
+[caller authentication](../../pkg/nodeagent/cni_caller_linux.go), and
+[continuity runtime](../../pkg/nodeagent/cni_continuity_runtime.go).

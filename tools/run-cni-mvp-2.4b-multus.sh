@@ -262,6 +262,9 @@ if [[ "${EVPN_EXPORT_TEST:-0}" == 1 ]]; then
   source "${ROOT}/tools/lib/cni-evpn-export-test.sh"
   if [[ "${EVPN_FRR_INTEROP_TEST}" == 1 ]]; then
     interop_setup_provider
+  elif [[ "${EVPN_IMPORT_TEST:-0}" == 1 && "${EVPN_GAP_CLOSURE:-0}" == 1 ]]; then
+    source "${ROOT}/tools/lib/cni-evpn-import-test.sh"
+    import_gap_setup_provider
   else
     export_setup_provider
     if [[ "${EVPN_IMPORT_TEST:-0}" == 1 ]]; then
@@ -497,7 +500,10 @@ spec:
     command: ["/bin/sh", "-c", "sleep infinity"]
 EOF
 }
-if [[ "${EVPN_EXPORT_TEST:-0}" == 1 && "${EVPN_FRR_INTEROP_TEST}" != 1 ]]; then export_before_pods; fi
+if [[ "${EVPN_EXPORT_TEST:-0}" == 1 && "${EVPN_FRR_INTEROP_TEST}" != 1 &&
+      !( "${EVPN_IMPORT_TEST:-0}" == 1 && "${EVPN_GAP_CLOSURE:-0}" == 1 ) ]]; then
+  export_before_pods
+fi
 if [[ "${EVPN_FRR_INTEROP_BINDING_DIAGNOSTIC}" == 1 ]]; then
   interop_diagnostic_preflight
 fi
@@ -518,6 +524,12 @@ if [[ "${EVPN_EXPORT_TEST:-0}" == 1 ]]; then
     fi
     interop_verify
     echo "CNI-MVP-3.3b.3 FRR interoperability scenario=PASS"
+    exit 0
+  fi
+  if [[ "${EVPN_IMPORT_TEST:-0}" == 1 && "${EVPN_GAP_CLOSURE:-0}" == 1 ]]; then
+    import_gap_ready
+    import_verify
+    echo "CNI importer gap selectors=PASS"
     exit 0
   fi
   export_verify_dry_and_enable

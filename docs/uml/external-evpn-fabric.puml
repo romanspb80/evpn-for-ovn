@@ -1,67 +1,69 @@
 @startuml
-title External EVPN fabric - PLANNED / NOT EXECUTED
+title OVN workload to external EVPN/VXLAN fabric
+top to bottom direction
 skinparam backgroundColor #FCFCFD
 skinparam shadowing false
-skinparam roundcorner 12
+skinparam roundcorner 8
 skinparam defaultFontName DejaVu Sans
+skinparam defaultFontSize 13
+skinparam ArrowFontSize 12
+skinparam linetype ortho
+skinparam ArrowColor #475569
 skinparam componentStyle rectangle
-skinparam ArrowColor #64748B
-skinparam nodeBackgroundColor #F3F4F6
-skinparam componentBackgroundColor #FAFAFA
+skinparam componentBackgroundColor #F8FAFC
+skinparam componentBorderColor #64748B
+skinparam databaseBackgroundColor #EFF6FF
+skinparam databaseBorderColor #64748B
+skinparam packageBackgroundColor #FFFFFF
+skinparam packageBorderColor #94A3B8
 
-node "Local Kubernetes / OVN cluster" {
-  database "Shared OVN NB / SB" as DB
-  node "Worker Node A" {
-    component "Node-Agent A" as AA
-    component "GoBGP A" as GA
-    component "OVN / OVS\nVTEP A" as OA
-    component "Local endpoint A" as EA
+package "OVN-managed site — experimental" {
+  package "OVN control plane" {
+    database "OVN Northbound DB" as NB
+    component "ovn-northd" as Northd
+    database "OVN Southbound DB" as SB
   }
-  node "Worker Node B" {
-    component "Node-Agent B" as AB
-    component "GoBGP B" as GB
-    component "OVN / OVS\nVTEP B" as OB
-    component "Local endpoint B" as EB
+
+  package "Local host / chassis" {
+    component "Node-Agent\nendpoint observation, authorization,\nType-2 export/import policy" as Agent
+    component "GoBGP speaker\nEVPN control plane" as GoBGP
+    component "OVN logical switch\nworkload endpoint" as LocalWorkload
+    component "ovn-controller" as Controller
+    component "Open vSwitch\nbr-int + local VXLAN VTEP" as LocalOVS
+    component "Linux Netlink FDB / neighbor\n(supporting state only)" as Netlink
   }
-}
-node "External Domain 1" {
-  component "FRR / zebra" as F
-  component "Linux bridge / VXLAN\nVTEP R1" as D1
-  component "External endpoint R1" as E1
-}
-node "External Domain 2" {
-  component "GoBGP Remote2" as G2
-  component "Test-only RIB projector" as P2
-  component "Linux bridge / VXLAN\nVTEP R2" as D2
-  component "External endpoint R2" as E2
 }
 
-DB -- AA
-DB -- AB
-DB -- OA
-DB -- OB
-AA -[#2563EB]-> GA : exact route operations
-AB -[#2563EB]-> GB : exact route operations
-AA --> OA : owned Netlink sync
-AB --> OB : owned Netlink sync
-GA <-[#2563EB]-> F : BGP EVPN / RT 64512:1000
-GB <-[#2563EB]-> G2 : BGP EVPN / RT 64513:2000
-F --> D1 : kernel programming
-G2 --> P2 : authoritative RIB
-P2 --> D2 : owned FDB / neighbor
-EA -- OA
-EB -- OB
-E1 -- D1
-E2 -- D2
-OA <-[#16A34A]-> D1 : VXLAN 4789 / VNI 1000
-OB <-[#16A34A]-> D2 : VXLAN 4789 / VNI 2000
-OA <-[#9CA3AF,dashed]-> OB : internal Geneve 6081
+package "External EVPN/VXLAN fabric" {
+  component "External BGP EVPN speaker\n(for example, FRR reference peer)" as Peer
+  cloud "IP underlay" as Underlay
+  component "External VTEP" as RemoteVTEP
+  component "Remote endpoint" as RemoteWorkload
+}
+
+NB -[#64748B,dashed]-> Northd : logical state
+Northd -[#64748B,dashed]-> SB : translated state
+SB -[#64748B,dashed]-> Controller : chassis programming state
+Controller -[#64748B,dashed]-> LocalOVS : configures OVS forwarding
+
+NB -[#64748B,dashed]-> Agent : read logical ports / switches
+SB -[#64748B,dashed]-> Agent : read port binding / chassis
+LocalOVS -[#64748B,dashed]-> Agent : read and verify OVS state
+Agent -[#64748B,dotted]-> GoBGP : AddPath / DeletePath(UUID)
+GoBGP -[#64748B,dotted]-> Agent : ListPath EVPN RIB
+Agent -[#64748B,dotted]-> Netlink : validated, owned sync state
+
+LocalWorkload -[#334155,bold]-> LocalOVS : local workload forwarding
+GoBGP -[#2563EB,dashed]- Peer : BGP EVPN Type-2 route exchange
+LocalOVS -[#15803D,bold]right-> Underlay : VXLAN packet path
+Underlay -[#15803D,bold]right-> RemoteVTEP : VXLAN / UDP 4789
+RemoteVTEP -[#15803D,bold]right-> RemoteWorkload : decapsulated packet
 
 legend bottom
-  Blue: control plane | Green: external packets
-  Gray dashed: local OVN overlay
-  Geneve baseline uses a separate shared logical switch.
-  Local Linux VXLAN 60100 is synchronization, not workload forwarding.
-  External domains do not share OVN NB/SB or transit each other.
+  Blue dashed line: BGP EVPN route exchange (bidirectional)
+  Gray dashed arrows: OVN desired state and read-only observation
+  Gray dotted arrows: Node-Agent API / reconciliation operations
+  Dark solid arrow: local workload forwarding
+  Green solid arrows: VXLAN workload packet path
 endlegend
 @enduml

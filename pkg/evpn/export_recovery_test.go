@@ -127,6 +127,97 @@ func TestExportRecoveryCrashBoundaries(t *testing.T) {
 	}
 }
 
+func TestWithdrawalResolvesPendingOwnershipBeforeCheckpoint(t *testing.T) {
+	for _, boundary := range []string{"delete-intent", "delete-executed", "checkpoint", "add-executed"} {
+		t.Run(boundary, func(t *testing.T) {
+			cfg := testExportRecoveryConfig(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			s, adapter := newType2TestSpeaker(t)
+			if err := s.StartBgp(ctx, &api.StartBgpRequest{Global: &api.Global{Asn: 65000, RouterId: "192.0.2.1", ListenPort: -1}}); err != nil {
+				t.Fatal(err)
+			}
+			peer := &testVerifiedSpeaker{id: "surviving-peer"}
+			r, err := OpenExportRecovery(cfg, adapter, adapter, peer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.Recover(ctx); err != nil {
+				t.Fatal(err)
+			}
+			route := mustProviderRoute(t, sampleEndpoint())
+			foreignEndpoint := sampleEndpoint()
+			foreignEndpoint.MACAddress, foreignEndpoint.IPAddresses = "02:00:00:00:00:ff", []string{"10.251.1.99"}
+			if _, err := adapter.Add(ctx, mustProviderRoute(t, foreignEndpoint)); err != nil {
+				t.Fatal(err)
+			}
+			crash := errors.New("interrupted durable mutation")
+			if boundary == "add-executed" {
+				r.fault = func(at string) error {
+					if at == boundary {
+						return crash
+					}
+					return nil
+				}
+				if _, err := r.Add(ctx, route); !errors.Is(err, crash) {
+					t.Fatal(err)
+				}
+			} else {
+				id, err := r.Add(ctx, route)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if boundary == "checkpoint" {
+					next := r.state
+					next.WithdrawalRequired = true
+					if _, err := r.journal.Begin("export-checkpoint", next); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					r.fault = func(at string) error {
+						if at == boundary {
+							return crash
+						}
+						return nil
+					}
+					if err := r.Delete(ctx, OwnedType2Route{Endpoint: route.Endpoint, PathUUID: id}); !errors.Is(err, crash) {
+						t.Fatal(err)
+					}
+				}
+			}
+			if err := r.Close(); err != nil {
+				t.Fatal(err)
+			}
+			r, err = OpenExportRecovery(cfg, adapter, adapter, peer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+			err = r.RecoverPending(ctx)
+			if boundary == "add-executed" {
+				paths, readErr := adapter.Snapshot(ctx)
+				if !errors.Is(err, ownership.ErrBlocked) || readErr != nil || len(paths) != 2 {
+					t.Fatalf("ambiguous pending Add was adopted or removed: %v %v %v", err, readErr, paths)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := r.RequireWithdrawal(); err != nil {
+				t.Fatal(err)
+			}
+			exporter := &EndpointExporter{Gate: peer, Continuity: peer, Source: adapter, Applier: r, Recovery: r}
+			result, err := exporter.WithdrawAll(ctx)
+			paths, readErr := adapter.Snapshot(ctx)
+			if err != nil || readErr != nil || len(result.Applied) != 0 || len(paths) != 1 ||
+				!ribPathMatchesEndpoint(paths[0], foreignEndpoint) || !r.WithdrawalRequired() {
+				t.Fatalf("pending withdrawal damaged ownership: %+v %v %v %v", result, paths, err, readErr)
+			}
+		})
+	}
+}
+
 func TestExportRecoveryIncarnationAndForeignConflicts(t *testing.T) {
 	cfg := testExportRecoveryConfig(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

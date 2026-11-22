@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -50,12 +51,13 @@ func readSpeakerRootIdentity(pid int32) (speakerRootIdentity, error) {
 // unixSpeakerContinuity pins the peer of the actual gRPC transport, not a
 // separately probed socket. The pidfd remains tied to that process after exit.
 type unixSpeakerContinuity struct {
-	mu       sync.Mutex
-	fd       int
-	bound    bool
-	evidence SpeakerProcessEvidence
-	attestor speakerAttestor
-	closed   bool
+	mu          sync.Mutex
+	fd          int
+	bound       bool
+	evidence    SpeakerProcessEvidence
+	attestor    speakerAttestor
+	closed      bool
+	dialFailure error
 }
 
 func pollSpeakerPIDFD(fds []unix.PollFd, poll func([]unix.PollFd, int) (int, error)) error {
@@ -77,8 +79,11 @@ func (s *unixSpeakerContinuity) checkLocked() error {
 	if err != nil {
 		return fmt.Errorf("speaker pidfd check: %w", err)
 	}
+	if fds[0].Revents&unix.POLLIN != 0 {
+		return &inventoryFailure{Cause: "verified-speaker-exit", Err: fmt.Errorf("original speaker process exited (pid=%d start=%s); receipts invalid for a new speaker", s.evidence.PID, s.evidence.StartTicks)}
+	}
 	if fds[0].Revents != 0 {
-		return fmt.Errorf("original speaker process exited (pid=%d start=%s); receipts invalid for a new speaker", s.evidence.PID, s.evidence.StartTicks)
+		return fmt.Errorf("speaker pidfd returned unexpected events: %#x", fds[0].Revents)
 	}
 	return nil
 }
@@ -94,7 +99,7 @@ func (s *unixSpeakerContinuity) Check(ctx context.Context) error {
 	}
 	process, err := readSpeakerProcess(s.evidence.PID, s.evidence.UID)
 	if err != nil {
-		return err
+		return speakerProcessFailure(err, s.evidence.PID, s.fd)
 	}
 	process.Workload = s.evidence.Workload
 	process.Standalone = s.evidence.Standalone
@@ -103,7 +108,7 @@ func (s *unixSpeakerContinuity) Check(ctx context.Context) error {
 	}
 	identity, err := s.attestor.attest(ctx, process)
 	if err != nil {
-		return err
+		return speakerProcessFailure(err, s.evidence.PID, s.fd)
 	}
 	if identity.SpeakerWorkloadEvidence != s.evidence.Workload ||
 		!standaloneEvidenceEqual(identity.Standalone, s.evidence.Standalone) {
@@ -111,7 +116,7 @@ func (s *unixSpeakerContinuity) Check(ctx context.Context) error {
 	}
 	after, err := readSpeakerProcess(s.evidence.PID, s.evidence.UID)
 	if err != nil {
-		return err
+		return speakerProcessFailure(err, s.evidence.PID, s.fd)
 	}
 	after.Workload = identity.SpeakerWorkloadEvidence
 	after.Standalone = s.evidence.Standalone
@@ -182,9 +187,10 @@ func (s *unixSpeakerContinuity) Close() error {
 	return err
 }
 
-func (s *unixSpeakerContinuity) DialContext(ctx context.Context, target string) (net.Conn, error) {
+func (s *unixSpeakerContinuity) DialContext(ctx context.Context, target string) (conn net.Conn, result error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer func() { s.dialFailure = result }()
 	if s.closed {
 		return nil, fmt.Errorf("speaker continuity closed; create a new attested transport")
 	}
@@ -198,6 +204,9 @@ func (s *unixSpeakerContinuity) DialContext(ctx context.Context, target string) 
 	}
 	c, err := (&net.Dialer{}).DialContext(ctx, "unix", strings.TrimPrefix(target, "unix://"))
 	if err != nil {
+		if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ECONNREFUSED) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, &inventoryFailure{Cause: "speaker-transport-unavailable", Err: err}
+		}
 		return nil, err
 	}
 	if err := s.bind(ctx, c.(*net.UnixConn)); err != nil {
@@ -237,11 +246,11 @@ func (s *unixSpeakerContinuity) bind(ctx context.Context, c *net.UnixConn) error
 	}
 	evidence, err := readSpeakerProcess(cred.Pid, cred.Uid)
 	if err != nil {
-		return err
+		return speakerProcessFailure(err, cred.Pid, fd)
 	}
 	identity, err := s.attestor.attest(ctx, evidence)
 	if err != nil {
-		return err
+		return speakerProcessFailure(err, cred.Pid, fd)
 	}
 	evidence.Workload = identity.SpeakerWorkloadEvidence
 	if identity.Standalone.ServiceUID != "" {
@@ -250,7 +259,7 @@ func (s *unixSpeakerContinuity) bind(ctx context.Context, c *net.UnixConn) error
 	}
 	after, err := readSpeakerProcess(cred.Pid, cred.Uid)
 	if err != nil {
-		return err
+		return speakerProcessFailure(err, cred.Pid, fd)
 	}
 	after.Workload = identity.SpeakerWorkloadEvidence
 	after.Standalone = evidence.Standalone
@@ -259,7 +268,13 @@ func (s *unixSpeakerContinuity) bind(ctx context.Context, c *net.UnixConn) error
 	}
 	fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
 	if err := pollSpeakerPIDFD(fds, unix.Poll); err != nil || fds[0].Revents != 0 {
-		return fmt.Errorf("speaker peer exited while binding evidence: %v", err)
+		if err == nil && fds[0].Revents&unix.POLLIN != 0 {
+			return &inventoryFailure{Cause: "verified-speaker-exit", Err: fmt.Errorf("actual peer pidfd exited while binding evidence")}
+		}
+		if err == nil {
+			return fmt.Errorf("speaker peer pidfd returned unexpected events: %#x", fds[0].Revents)
+		}
+		return fmt.Errorf("speaker peer pidfd observation failed: %w", err)
 	}
 	if s.bound {
 		if !sameSpeakerProcessEvidence(evidence, s.evidence) {
@@ -270,6 +285,23 @@ func (s *unixSpeakerContinuity) bind(ctx context.Context, c *net.UnixConn) error
 	s.fd, s.bound, s.evidence = fd, true, evidence
 	fd = -1
 	return nil
+}
+
+func speakerProcessFailure(err error, pid int32, fd int) error {
+	var pathErr *os.PathError
+	if errors.Is(err, os.ErrNotExist) && errors.As(err, &pathErr) &&
+		strings.HasPrefix(pathErr.Path, fmt.Sprintf("/proc/%d/", pid)) {
+		fds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
+		// procfs teardown can precede pidfd readability during exit. Only
+		// the actual peer's exit, never the missing path alone, is transient.
+		poll := func(fds []unix.PollFd, _ int) (int, error) {
+			return unix.Poll(fds, 100)
+		}
+		if pollSpeakerPIDFD(fds, poll) == nil && fds[0].Revents&unix.POLLIN != 0 {
+			return &inventoryFailure{Cause: "verified-speaker-exit", Err: err}
+		}
+	}
+	return err
 }
 
 func speakerPeerCredentials(socket int) (*unix.Ucred, int, error) {

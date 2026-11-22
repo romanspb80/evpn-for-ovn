@@ -207,6 +207,26 @@ class OperatorOwnershipTests(unittest.TestCase):
                 self.assertEqual(detail["expectedRevision"], 1)
                 self.assertEqual(detail["publishedDigest"], cm["data"]["sha256"])
 
+    def test_new_publication_acceptance_does_not_authorize_security_recovery(self):
+        *args, cm, journals = inventory_fixture()
+        args[2]["spec"]["template"]["spec"]["containers"][0]["args"].append(
+            "--worker-inventory-recovery-file=/var/lib/evpn-node-agent/inventory/recovery-request.json")
+        for node, raw in list(journals.items()):
+            record = json.loads(raw)["Record"]
+            record["State"].update(version=2, trust={
+                "Publication": "cni-test/evpn-worker-inventory/publication-uid",
+                "Phase": "FENCED", "Security": True, "Binding": None})
+            encoded = json.dumps(record, separators=(",", ":"), ensure_ascii=False)
+            journals[node] = '{"Record":' + encoded + ',"SHA256":"' + hashlib.sha256(encoded.encode()).hexdigest() + '"}'
+        with self.assertRaisesRegex(ValueError, "authorization is not current"):
+            ownership.verify_external_ovn(*args, inventory_publication=cm, inventory_journals=journals)
+        ownership.verify_external_ovn(*args, inventory_publication=cm, inventory_journals=journals,
+                                      require_fenced=True)
+        alter_record(journals, lambda r: r["State"]["trust"].update(Security=False))
+        with self.assertRaisesRegex(ValueError, "retain the security fence"):
+            ownership.verify_external_ovn(*args, inventory_publication=cm, inventory_journals=journals,
+                                          require_fenced=True)
+
     def test_inventory_evidence_cli(self):
         core, lease, ds, pods, nodes, selector, cm, journals = inventory_fixture()
         objects = (core, lease, ds, {"items": pods}, {"items": nodes}, selector, cm, journals)

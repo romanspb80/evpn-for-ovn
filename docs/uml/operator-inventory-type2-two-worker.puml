@@ -3,7 +3,7 @@ digraph Attempt8 {
   graph [rankdir=TB, bgcolor="#FCFCFD", pad="0.18", nodesep="0.24", ranksep="0.34",
          splines=ortho, compound=true, newrank=true, outputorder=edgesfirst,
          fontname="DejaVu Sans", labelloc=t,
-         label=<<FONT POINT-SIZE="16" COLOR="#172B4D"><B>Validated — scoped E2E | Attempt 8 two-worker Type-2</B></FONT><BR/><FONT POINT-SIZE="9" COLOR="#64748B">Only the exact inventory-gated shared-OVN / external-FRR scenario is claimed</FONT>>];
+         label=<<FONT POINT-SIZE="16" COLOR="#172B4D"><B>Historical E2E · not v0.1.0 acceptance | Attempt 8 two-worker Type-2</B></FONT><BR/><FONT POINT-SIZE="9" COLOR="#64748B">Inventory-gated · source archive SHA-256: 0d05c1ec554f9f6f4fb5e1f9f8c5558b371589df8a7c4b66cd9b98ba25504cc7</FONT>>];
   node [shape=box, style="rounded,filled", fontname="DejaVu Sans", fontsize=9,
         fontcolor="#172B4D", color="#64748B", fillcolor="white", penwidth=1.1,
         margin="0.14,0.10"];

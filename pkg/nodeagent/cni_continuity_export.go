@@ -11,8 +11,8 @@ import (
 )
 
 // ValidateContinuity is fail-closed on unavailable identity/resource evidence.
-// Disabled continuity retains existing behavior. Known deleted Pods are omitted
-// from the store without recreating or deleting their residual resources.
+// Disabled continuity retains existing behavior. Retired Pods are cleaned only
+// through their durable receipt before they are removed from the export store.
 func (s *CNIServer) ValidateContinuity(ctx context.Context) error {
 	s.operations.Lock()
 	defer s.operations.Unlock()
@@ -34,12 +34,14 @@ func (s *CNIServer) validateContinuityLocked(ctx context.Context) error {
 		if ack.State != "active" {
 			continue
 		}
-		deleted, err := c.workload.Verify(ctx, ack.Spec.Workload, ack.Runtime.GetContainerId(), ack.Runtime.GetNetnsPath())
+		deleted, err := cniWorkloadRetired(ctx, c.workload, ack)
 		if err != nil {
 			return err
 		}
 		if deleted {
-			s.store.delete(key)
+			if err := s.cleanupOrphanLocked(ctx, c, key, ack, 0); err != nil {
+				return fmt.Errorf("orphan cleanup for %q: %w", key, err)
+			}
 			continue
 		}
 		if err := c.verifyResources(ctx, s, ack); err != nil {

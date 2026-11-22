@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -19,7 +20,7 @@ func main() {
 	os.Exit(run())
 }
 
-func run() int {
+func run() (exitCode int) {
 	var socketPath string
 	var runtimeMode string
 	var networkBackend string
@@ -44,6 +45,7 @@ func run() int {
 	flag.StringVar(&exportOptions.StatusPath, "evpn-export-status", "", "Optional exporter status JSON file")
 	flag.StringVar(&exportOptions.SBEndpoint, "ovn-sb-endpoint", "unix:/var/run/ovn/ovnsb_db.sock", "OVN SBDB endpoint for EVPN readiness reads")
 	flag.BoolVar(&exportOptions.RequireLocalChassis, "evpn-export-verify-local-chassis", false, "Verify local OVS system-id against the configured OVN Southbound chassis before every export cycle")
+	flag.BoolVar(&exportOptions.SkipNetlinkProvenance, "evpn-export-skip-netlink-provenance", false, "Trust native OVN Netlink export records without per-endpoint NB/SB verification (isolated benchmarks only, incompatible with recovery)")
 	flag.DurationVar(&exportOptions.Interval, "evpn-export-interval", 2*time.Second, "EVPN observation interval")
 	flag.DurationVar(&exportOptions.Timeout, "evpn-export-timeout", 5*time.Second, "Timeout for one EVPN observation/application cycle")
 	flag.StringVar(&remoteOptions.ConfigPath, "evpn-remote-config", "", "Optional node-local remote EVPN import JSON config; disabled by default")
@@ -55,6 +57,7 @@ func run() int {
 	flag.StringVar(&inventoryOptions.ClusterUID, "worker-inventory-cluster-uid", "", "Trusted inventory cluster UID")
 	flag.StringVar(&inventoryOptions.InstallationUID, "worker-inventory-installation-uid", "", "Trusted EvpnCore installation UID")
 	flag.StringVar(&inventoryOptions.JournalDirectory, "worker-inventory-journal", "", "Dedicated durable node-local inventory fence directory")
+	flag.StringVar(&inventoryOptions.RecoveryFile, "worker-inventory-recovery-file", "", "Opt in to versioned trust recovery; absolute protected host-administrator recovery request path")
 	flag.Parse()
 
 	var err error
@@ -63,6 +66,16 @@ func run() int {
 		exportConfig, err = nodeagent.LoadExporterConfig(exportOptions.ConfigPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "invalid EVPN exporter configuration: %v\n", err)
+			return 1
+		}
+	}
+	if exportOptions.SkipNetlinkProvenance {
+		if standaloneImportOnly || standaloneExportConfigPath != "" || cniContinuityConfig != "" || inventoryOptions.Namespace != "" {
+			fmt.Fprintln(os.Stderr, "skipping Netlink export provenance is incompatible with standalone modes, CNI continuity or worker inventory")
+			return 1
+		}
+		if err := nodeagent.ValidateNetlinkExportBenchmark(exportConfig); err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 	}
@@ -157,19 +170,45 @@ func run() int {
 				fmt.Fprintf(os.Stderr, "inventory gate close failed: %v\n", err)
 			}
 		}()
-		checkCtx, done := context.WithTimeout(ctx, 30*time.Second)
-		err = gate.CheckExporter(checkCtx, exportConfig)
-		if err == nil {
-			err = gate.CheckImporter(checkCtx, remoteConfig)
+		exportOptions.InventoryGate = gate.CheckExporter
+		if inventoryOptions.RecoveryFile != "" {
+			exportOptions.InventoryRecovery = gate
 		}
-		done()
+		remoteOptions.InventoryGate = gate.CheckImporter
+		inventoryGate = gate
+		err = checkInventoryStartup(ctx,
+			func(checkCtx context.Context) error {
+				if err := gate.CheckExporter(checkCtx, exportConfig); err != nil {
+					return err
+				}
+				return gate.CheckImporter(checkCtx, remoteConfig)
+			},
+			func(cleanupCtx context.Context, failure error) error {
+				result, err := nodeagent.WithdrawInventoryExports(cleanupCtx, nodeagent.RuntimeOptions{
+					Mode: runtimeMode, NetworkBackend: networkBackend, OVNNBEndpoint: ovnNBEndpoint, OVSDBEndpoint: ovsDBEndpoint,
+				}, exportOptions, failure)
+				fmt.Fprintf(os.Stderr, "inventory startup withdrawal: state=%s remaining=%d unverified=%t error=%v\n",
+					result.RecoveryState, len(result.Applied), result.OwnershipUnverified, err)
+				return err
+			})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "inventory startup blocked: %v\n", err)
 			return 1
 		}
-		exportOptions.InventoryGate = gate.CheckExporter
-		remoteOptions.InventoryGate = gate.CheckImporter
-		inventoryGate = gate
+		// Later CNI/importer initialization can deny inventory after preflight.
+		// Runtime callers cancel and join both loops before this defer runs.
+		defer func() {
+			if exitCode == 0 {
+				return
+			}
+			cleanupCtx, done := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer done()
+			result, err := nodeagent.WithdrawInventoryExports(cleanupCtx, nodeagent.RuntimeOptions{
+				Mode: runtimeMode, NetworkBackend: networkBackend, OVNNBEndpoint: ovnNBEndpoint, OVSDBEndpoint: ovsDBEndpoint,
+			}, exportOptions, fmt.Errorf("inventory runtime terminated before safe completion"))
+			fmt.Fprintf(os.Stderr, "inventory fatal-exit withdrawal: state=%s remaining=%d unverified=%t error=%v\n",
+				result.RecoveryState, len(result.Applied), result.OwnershipUnverified, err)
+		}()
 	}
 
 	options := nodeagent.RuntimeOptions{
@@ -202,7 +241,22 @@ func run() int {
 		}
 		return 0
 	}
-	service, cleanup, err := nodeagent.BuildServerForOptions(ctx, nodeagent.NewStore(), options, nil)
+	var service *nodeagent.CNIServer
+	var cleanup func()
+	build := func(ctx context.Context) error {
+		var err error
+		service, cleanup, err = nodeagent.BuildServerForOptions(ctx, nodeagent.NewStore(), options, nil)
+		return err
+	}
+	if cniContinuityConfig != "" {
+		err = nodeagent.WaitForCNIBackends(ctx, func(ctx context.Context) error {
+			attempt, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			return build(attempt)
+		})
+	} else {
+		err = build(ctx)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to configure evpn-node-agent runtime: %v\n", err)
 		return 1
@@ -222,7 +276,12 @@ func run() int {
 				return 1
 			}
 		}
-		closeContinuity, err := service.EnableCNIContinuity(ctx, cfg, options)
+		var closeContinuity func() error
+		err = nodeagent.WaitForCNIBackends(ctx, func(ctx context.Context) error {
+			var err error
+			closeContinuity, err = service.EnableCNIContinuity(ctx, cfg, options)
+			return err
+		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "CNI recovery blocked: %v\n", err)
 			return 1
@@ -292,6 +351,23 @@ func run() int {
 		runtimes.Wait()
 		return 1
 	}
+}
+
+func checkInventoryStartup(ctx context.Context, check func(context.Context) error, withdraw func(context.Context, error) error) error {
+	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	err := check(checkCtx)
+	cancel()
+	if err == nil {
+		return nil
+	}
+	// Give owned cleanup its own bounded budget, not the failed observation's
+	// canceled/expired child context. Parent shutdown still cancels cleanup.
+	cleanupCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if cleanupErr := withdraw(cleanupCtx, err); cleanupErr != nil {
+		return errors.Join(err, fmt.Errorf("owned startup withdrawal unresolved: %w", cleanupErr))
+	}
+	return err
 }
 
 type standaloneRunners struct {

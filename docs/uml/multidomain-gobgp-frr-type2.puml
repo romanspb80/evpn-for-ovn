@@ -1,5 +1,5 @@
 @startuml
-title Validated — scoped E2E | GoBGP / FRR Type-2, one OVN chassis
+title Historical, not v0.1.0 acceptance | GoBGP / FRR Type-2, one OVN chassis
 top to bottom direction
 skinparam backgroundColor #FCFCFD
 skinparam defaultFontName DejaVu Sans
@@ -32,7 +32,7 @@ ovs -[#15803D]- bridge : VXLAN packets
 
 legend bottom
   Solid blue: control | Solid green: packet path
-  Validated boundary: one OVN chassis with external FRR/Linux peer.
+  docs/archive/validation-record.md | attempt-20261108T190549Z-46ea1d2e
   Type-2 import/export, forwarding, withdrawal and cleanup are scoped
   to the cited one-chassis acceptance; not multi-domain OVN validation.
   Bare-speaker GoBGP/FRR fixture is control-plane only.

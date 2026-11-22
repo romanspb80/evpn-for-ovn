@@ -220,6 +220,25 @@ func TestLocalNetlinkDiscoveryAndReconciliation(t *testing.T) {
 	}
 }
 
+func TestLocalNetlinkBenchmarkUsesKernelOnly(t *testing.T) {
+	o, kernel, ports := localObserverFixture(t)
+	o.config.Networks[0].RouteDistinguisher = ports.desired[0].RouteDistinguisher
+	o.config.Networks[0].RouteTargets = ports.desired[0].RouteTargets
+	ports.desired = nil
+	confirmLocal(t, o, 0)
+	o.ports = nil
+	for _, ep := range confirmLocal(t, o, 3) {
+		if !ep.Advertise || ep.EndpointID != "ovn-netlink-benchmark/"+ep.MACAddress {
+			t.Fatalf("unexpected benchmark endpoint: %+v", ep)
+		}
+	}
+	kernel.entries[0].Flags |= netlink.NTF_EXT_LEARNED
+	if got, err := o.DesiredLocalEndpoints(context.Background()); err == nil || len(got) != 0 {
+		t.Fatalf("first disappearance must be unconfirmed: %+v %v", got, err)
+	}
+	confirmLocal(t, o, 0)
+}
+
 func TestLocalNetlinkClassificationAndFencing(t *testing.T) {
 	for _, cause := range []string{"extern-fdb", "extern-neighbor", "permanent", "vlan-duplicate", "no-local-fdb",
 		"wrong-vni", "wrong-vtep", "wrong-master", "device-recreated", "link-events-lost", "duplicate-owner", "foreign-static-ip"} {

@@ -17,30 +17,24 @@ schema release. The generated `model.go` embeds an `OVN_Northbound` schema with
 version `7.19.0`, and `schema_compat_test.go` checks that version and
 representative schema fields.
 
-The generated model provenance was independently reproduced against the
-official OVN v26.09.0 schema at
+The default generator input is the official OVN v26.09.0 schema at
 [`ovn-nb.ovsschema`](https://github.com/ovn-org/ovn/blob/v26.09.0/ovn-nb.ovsschema).
-The read-only fetch returned 45,507 bytes with SHA-256
-`e3dabf87e82201255d12fb719d051acb61d394700451bb73c8fa195b9abbd617`; the
-source declares schema name `OVN_Northbound`, version `7.19.0`, and checksum
-`2631744256 45474`. The source repository's official
+The source repository's official
 [`LICENSE`](https://github.com/ovn-org/ovn/blob/v26.09.0/LICENSE) identifies
 the work as Apache-2.0 and states `Copyright The Open vSwitch Authors`.
-The fetched license was 10,767 bytes with SHA-256
-`f41f887b04dd604250193ddd88691ecd168dacdecca2d0d6581d8840e3f0b0dc`.
 That attribution is retained in [`../../NOTICE`](../../NOTICE); no copyright
 year is supplied because the source notice supplies none.
 
-For the reproducibility check, the schema was fetched into a scratch directory
-inside the repository and passed to the same `go run -mod=readonly
+To check reproducibility without overwriting the models, fetch the official
+schema into a private scratch directory and use `go run -mod=readonly
 github.com/ovn-kubernetes/libovsdb/cmd/modelgen -p ovnnb -o <output>
-<schema>` generator invocation used by `tools/regen-ovn-nb-models.sh`. The
-wrapper itself was not run: it deletes and replaces the checked-in model
-directory. All 40 generated outputs byte-matched the checked-in model files;
-the scratch directory was then removed. The embedded schema in `model.go` is
+<schema>`, matching `tools/regen-ovn-nb-models.sh`. Compare the generated
+files with the checked-in models, then remove only that scratch directory.
+Do not use the wrapper for a read-only comparison: it deletes and replaces
+the checked-in model directory. The embedded schema in `model.go` is
 the generator's libovsdb representation, not a byte-for-byte copy of the
-upstream JSON. The provenance comparison is based on reproducing all generated
-files from the official source input. The model generator is from
+upstream JSON. Compare generated files rather than embedded JSON formatting.
+The model generator is from
 `github.com/ovn-kubernetes/libovsdb`; its pinned dependency license and
 attribution are also recorded in [`../../NOTICE`](../../NOTICE).
 
@@ -50,49 +44,15 @@ three `.proto` files. Their headers report `protoc-gen-go v1.36.11`,
 files, and `protoc v3.21.12`; the `.proto` inputs are present under `proto/`.
 No copied third-party `.proto` source was identified in those inputs.
 
-## Verified Go dependency findings
+## Go dependency licensing
 
-The historical module graph inventory below was made from `go.mod`, `go.sum`,
-`go list -m all`, and license/notice files available in the local Go module
-cache. The module graph contains entries that do not provide packages to this
-project's source build or tests; its totals are not the count of dependencies
-whose code is bundled in a source-only publication. These aggregate counts
-predate final dependency hardening and are not a current-cache inventory.
-The final graph has 92 requirements (19 direct, 73 indirect) and 275 external
-resolved modules. The current direct-version license check is recorded below;
-the historical indirect-cache inventory is preserved, not silently refreshed:
+Use `go.mod`, `go.sum`, `go list -m all`, and exact-version license/notice
+files to review the selected module graph. Use `go list -deps -test ./...`
+to identify packages for that build/test selection; repeat the review for
+different targets or distribution modes. A resolved module is not necessarily
+a bundled dependency, and a missing local cache file is not a license finding.
 
-| Inventory | Count |
-| --- | ---: |
-| Go module requirements declared in `go.mod` | 91 |
-| Direct requirements | 17 |
-| Indirect requirements | 74 |
-| External modules in `go list -m all` (excluding this project) | 270 |
-| `go.sum` checksum records | 250 |
-| Distinct module/version pairs represented in `go.sum` | 130 |
-| Resolved modules with a root license document found locally | 158 |
-| Resolved modules without locally available root license evidence | 112 |
-
-The 158 locally documented module roots classify by inspected license text as
-Apache-2.0 (74), MIT (50), BSD-3-Clause (29), BSD-2-Clause (4), and ISC (1).
-The local cache contained extracted source for 120 resolved modules and
-archives for 39; one available archive, `github.com/NYTimes/gziphandler`,
-contained no root license document. These aggregate counts describe available
-evidence, not a distribution of bundled third-party source.
-
-On this Linux/amd64 environment, `go list -deps -test ./...` completed with
-exit status 0, no package errors, and 1,030 packages (including standard
-library and project packages). The graph contains 90 distinct external
-modules contributing packages to the source build or tests. All 90 have a
-root license file in their version-specific local module source. The license
-texts classify as Apache-2.0 (39), MIT (33), BSD-3-Clause (17), and ISC (1).
-Thus none of the 112 modules listed below for missing local-cache evidence
-contributes a package to this command's source build or tests. The remaining
-180 resolved modules likewise did not appear in that package graph; 68 of
-those have root license evidence locally and are not listed below.
-
-These are source-build/test dependency findings, not a claim that the source
-distribution bundles the dependency sources. The repository has no vendored
+The repository has no vendored
 Go dependency tree; dependency contents are not included in this source-only
 publication, apart from the generated OVN schema-derived models attributed
 above. `NOTICE` preserves the ten third-party NOTICE files found in locally
@@ -100,9 +60,9 @@ available module source. A binary or other package bundling dependencies
 would need its own distribution-specific review and inclusion of the
 applicable license texts and notices.
 
-All 19 current direct requirements below have a root `LICENSE` file in the local module
-cache. The license names are based on those files, not inferred from project
-names or websites.
+The direct-version license mapping below records the applicable root
+`LICENSE` texts, not licenses inferred from project names or websites.
+Check the exact inputs and distribution requirements when packaging binaries.
 
 | Module | Version from `go.mod` | License evidence |
 | --- | --- | --- |
@@ -126,20 +86,14 @@ names or websites.
 | `sigs.k8s.io/controller-runtime` | `v0.23.1` | Apache-2.0 (`LICENSE`) |
 | `sigs.k8s.io/yaml` | `v1.6.0` | Apache-2.0 (`LICENSE`) |
 
-## Unused modules without local-cache license evidence
+## Additional module license-review inventory
 
-The following 112 modules have no root license evidence in the inspected local
-cache. They are all absent from the `go list -deps -test ./...` package graph
-above and therefore are not required to provide a package to that source
-build/test selection. For 111, the module source archive was not available in
-the local cache; the `github.com/NYTimes/gziphandler` archive was available
-but contained no root license file. Their licenses were not inferred or
-declared here. These entries are not a blocker to the stated source-only
-publication because no module contents are being redistributed. If a
-different build target or distribution mode brings one of these modules'
-contents into a release package, verify its exact-version license and notices
-before distributing that package. The project license does not relicense
-these modules.
+The following module/version inventory retains the previously identified
+license-review candidates. It is not a current package-usage assessment or
+an assertion that these modules lack licenses. No license is inferred or
+declared for these entries. If the selected build target or distribution
+bundles any of their contents, inspect the exact-version license and notices
+before distribution. The project license does not relicense these modules.
 
 | Module | Version |
 | --- | --- |
